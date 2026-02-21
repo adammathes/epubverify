@@ -8,13 +8,19 @@
 //  4. Write a new EPUB with all fixes applied
 //  5. Re-validate the output to confirm fixes worked
 //
-// Tier 1 fixes (implemented):
-//   - OCF-001/002/003/004/005: mimetype file issues (missing, wrong content,
-//     not first, extra field, compressed) — all handled by correct ZIP writing
+// Tier 1 fixes (safe, deterministic, content-preserving):
+//   - OCF-001/002/003/004/005: mimetype file issues — all handled by correct ZIP writing
 //   - OPF-004: missing dcterms:modified — adds current timestamp
 //   - OPF-024/MED-001: media-type mismatch — corrects based on file magic bytes
 //   - HTM-005/006/007: missing manifest properties — adds scripted/svg/mathml
 //   - HTM-010/011: wrong DOCTYPE — replaces with <!DOCTYPE html>
+//
+// Tier 2 fixes (low-to-medium complexity, still safe):
+//   - OPF-039: deprecated <guide> element in EPUB 3 — removes it
+//   - OPF-036: bad dc:date format — reformats to W3CDTF
+//   - RSC-002: files in container but not in manifest — adds manifest entries
+//   - HTM-003: empty href="" on <a> elements — removes the href attribute
+//   - HTM-004: obsolete HTML elements (center, big, strike, tt, etc.) — replaces with styled modern equivalents
 package doctor
 
 import (
@@ -102,6 +108,23 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 
 	// Content-level: fix DOCTYPE declarations
 	allFixes = append(allFixes, fixDoctype(files, ep)...)
+
+	// --- Tier 2 fixes ---
+
+	// OPF-level: remove deprecated <guide> element (EPUB 3)
+	allFixes = append(allFixes, fixGuideElement(files, ep)...)
+
+	// OPF-level: reformat bad dc:date values
+	allFixes = append(allFixes, fixDCDateFormat(files, ep)...)
+
+	// OPF-level: add unlisted container files to manifest
+	allFixes = append(allFixes, fixFilesNotInManifest(files, ep)...)
+
+	// Content-level: remove empty href attributes
+	allFixes = append(allFixes, fixEmptyHref(files, ep)...)
+
+	// Content-level: replace obsolete HTML elements
+	allFixes = append(allFixes, fixObsoleteElements(files, ep)...)
 
 	if len(allFixes) == 0 {
 		ep.Close()

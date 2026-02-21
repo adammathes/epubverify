@@ -451,6 +451,431 @@ func findClosingTag(content, tagName string) int {
 	return -1
 }
 
+// --- Tier 2 fixes ---
+
+// fixGuideElement removes the <guide> element from EPUB 3 OPF documents.
+// Fixes OPF-039.
+func fixGuideElement(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil || ep.Package.Version < "3.0" || !ep.Package.HasGuide {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	content := string(opfData)
+	// Match <guide>...</guide> or <guide.../> including any namespace prefix
+	guideRe := regexp.MustCompile(`(?s)\s*<guide\b[^>]*>.*?</guide>`)
+	if !guideRe.MatchString(content) {
+		// Try self-closing
+		guideRe = regexp.MustCompile(`(?s)\s*<guide\b[^/]*/\s*>`)
+		if !guideRe.MatchString(content) {
+			return nil
+		}
+	}
+
+	newContent := guideRe.ReplaceAllString(content, "")
+	files[ep.RootfilePath] = []byte(newContent)
+
+	return []Fix{{
+		CheckID:     "OPF-039",
+		Description: "Removed deprecated <guide> element from EPUB 3 package document",
+		File:        ep.RootfilePath,
+	}}
+}
+
+// fixEmptyHref removes empty href="" attributes from <a> elements in XHTML content.
+// Fixes HTM-003.
+func fixEmptyHref(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	var fixes []Fix
+	// Match <a ... href="" ...> and remove the href="" part
+	emptyHrefRe := regexp.MustCompile(`(<a\b[^>]*?)\s+href\s*=\s*["'](\s*)["']`)
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		if !emptyHrefRe.MatchString(content) {
+			continue
+		}
+
+		// Count fixes before replacing
+		matches := emptyHrefRe.FindAllString(content, -1)
+		newContent := emptyHrefRe.ReplaceAllString(content, "$1")
+		files[fullPath] = []byte(newContent)
+
+		fixes = append(fixes, Fix{
+			CheckID:     "HTM-003",
+			Description: fmt.Sprintf("Removed %d empty href attribute(s) from <a> elements", len(matches)),
+			File:        fullPath,
+		})
+	}
+
+	return fixes
+}
+
+// fixDCDateFormat reformats dc:date values that don't follow W3CDTF.
+// Fixes OPF-036.
+func fixDCDateFormat(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil || len(ep.Package.Metadata.Dates) == 0 {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	w3cdtfRe := regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?)?)?$`)
+
+	var fixes []Fix
+	content := string(opfData)
+
+	for _, date := range ep.Package.Metadata.Dates {
+		if w3cdtfRe.MatchString(date) {
+			continue
+		}
+
+		reformatted := tryReformatDate(date)
+		if reformatted == "" || reformatted == date {
+			continue
+		}
+
+		// Replace the date value in the OPF
+		dateRe := regexp.MustCompile(`(<dc:date[^>]*>)\s*` + regexp.QuoteMeta(date) + `\s*(</dc:date>)`)
+		if dateRe.MatchString(content) {
+			content = dateRe.ReplaceAllString(content, "${1}"+reformatted+"${2}")
+			fixes = append(fixes, Fix{
+				CheckID:     "OPF-036",
+				Description: fmt.Sprintf("Reformatted dc:date from '%s' to '%s'", date, reformatted),
+				File:        ep.RootfilePath,
+			})
+		}
+	}
+
+	if len(fixes) > 0 {
+		files[ep.RootfilePath] = []byte(content)
+	}
+
+	return fixes
+}
+
+// tryReformatDate attempts to parse common non-W3CDTF date formats and
+// returns a W3CDTF-compliant string, or "" if unparseable.
+func tryReformatDate(s string) string {
+	s = strings.TrimSpace(s)
+
+	// Common patterns in real-world EPUBs:
+	// "January 1, 2024" / "Jan 1, 2024"
+	// "1/15/2024" or "01/15/2024" (US format)
+	// "2024/01/15"
+	// "2024.01.15"
+	// "15 January 2024"
+
+	months := map[string]string{
+		"january": "01", "february": "02", "march": "03", "april": "04",
+		"may": "05", "june": "06", "july": "07", "august": "08",
+		"september": "09", "october": "10", "november": "11", "december": "12",
+		"jan": "01", "feb": "02", "mar": "03", "apr": "04",
+		"jun": "06", "jul": "07", "aug": "08", "sep": "09",
+		"oct": "10", "nov": "11", "dec": "12",
+	}
+
+	// "Month Day, Year" or "Month Day Year"
+	monthDayYear := regexp.MustCompile(`(?i)^(\w+)\s+(\d{1,2}),?\s+(\d{4})$`)
+	if m := monthDayYear.FindStringSubmatch(s); m != nil {
+		month, ok := months[strings.ToLower(m[1])]
+		if ok {
+			return fmt.Sprintf("%s-%s-%02s", m[3], month, zeroPad(m[2]))
+		}
+	}
+
+	// "Day Month Year" (e.g., "15 January 2024")
+	dayMonthYear := regexp.MustCompile(`(?i)^(\d{1,2})\s+(\w+)\s+(\d{4})$`)
+	if m := dayMonthYear.FindStringSubmatch(s); m != nil {
+		month, ok := months[strings.ToLower(m[2])]
+		if ok {
+			return fmt.Sprintf("%s-%s-%02s", m[3], month, zeroPad(m[1]))
+		}
+	}
+
+	// "YYYY/MM/DD" or "YYYY.MM.DD"
+	slashDot := regexp.MustCompile(`^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$`)
+	if m := slashDot.FindStringSubmatch(s); m != nil {
+		return fmt.Sprintf("%s-%02s-%02s", m[1], zeroPad(m[2]), zeroPad(m[3]))
+	}
+
+	// "MM/DD/YYYY" (US format) — only if year is 4 digits
+	usDate := regexp.MustCompile(`^(\d{1,2})/(\d{1,2})/(\d{4})$`)
+	if m := usDate.FindStringSubmatch(s); m != nil {
+		return fmt.Sprintf("%s-%02s-%02s", m[3], zeroPad(m[1]), zeroPad(m[2]))
+	}
+
+	return ""
+}
+
+func zeroPad(s string) string {
+	if len(s) == 1 {
+		return "0" + s
+	}
+	return s
+}
+
+// fixFilesNotInManifest adds manifest entries for container files not listed in the OPF.
+// Fixes RSC-002.
+func fixFilesNotInManifest(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	manifestPaths := make(map[string]bool)
+	manifestIDs := make(map[string]bool)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestPaths[ep.ResolveHref(item.Href)] = true
+		}
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+
+	// Files that are expected to be outside the manifest
+	ignorePaths := map[string]bool{
+		"mimetype":                true,
+		"META-INF/container.xml":  true,
+		"META-INF/encryption.xml": true,
+		"META-INF/manifest.xml":   true,
+		"META-INF/metadata.xml":   true,
+		"META-INF/rights.xml":     true,
+		"META-INF/signatures.xml": true,
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	var fixes []Fix
+	content := string(opfData)
+
+	// Find insertion point: just before </manifest>
+	manifestClose := strings.Index(content, "</manifest>")
+	if manifestClose == -1 {
+		manifestClose = findClosingTag(content, "manifest")
+	}
+	if manifestClose == -1 {
+		return nil
+	}
+
+	var insertions []string
+	for name := range files {
+		if ignorePaths[name] {
+			continue
+		}
+		if strings.HasPrefix(name, "META-INF/") {
+			continue
+		}
+		if name == ep.RootfilePath {
+			continue
+		}
+		if manifestPaths[name] {
+			continue
+		}
+
+		// Generate a unique ID
+		id := generateUniqueID(name, manifestIDs)
+		manifestIDs[id] = true
+
+		// Determine relative href from OPF directory
+		href := relativeHref(ep.RootfilePath, name)
+
+		// Guess media type from extension
+		ext := strings.ToLower(path.Ext(name))
+		mediaType := extensionToMediaType(ext)
+		if mediaType == "" {
+			mediaType = "application/octet-stream"
+		}
+
+		insertions = append(insertions, fmt.Sprintf(`    <item id="%s" href="%s" media-type="%s"/>`, id, href, mediaType))
+		fixes = append(fixes, Fix{
+			CheckID:     "RSC-002",
+			Description: fmt.Sprintf("Added '%s' to manifest (id='%s', media-type='%s')", name, id, mediaType),
+			File:        ep.RootfilePath,
+		})
+	}
+
+	if len(insertions) == 0 {
+		return nil
+	}
+
+	// Sort for deterministic output
+	sortStrings(insertions)
+	insertion := strings.Join(insertions, "\n") + "\n  "
+	newContent := content[:manifestClose] + insertion + content[manifestClose:]
+	files[ep.RootfilePath] = []byte(newContent)
+
+	return fixes
+}
+
+// generateUniqueID creates a unique manifest item ID based on the filename.
+func generateUniqueID(filePath string, existing map[string]bool) string {
+	// Use the filename without extension as the base
+	base := strings.TrimSuffix(path.Base(filePath), path.Ext(filePath))
+	// Sanitize: only allow alphanumeric, hyphens, underscores
+	sanitized := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(base, "_")
+	if sanitized == "" {
+		sanitized = "item"
+	}
+	// Ensure it starts with a letter (XML ID requirement)
+	if sanitized[0] >= '0' && sanitized[0] <= '9' {
+		sanitized = "item_" + sanitized
+	}
+
+	id := sanitized
+	counter := 2
+	for existing[id] {
+		id = fmt.Sprintf("%s_%d", sanitized, counter)
+		counter++
+	}
+	return id
+}
+
+// relativeHref computes the relative path from the OPF file to a target file.
+func relativeHref(opfPath, targetPath string) string {
+	opfDir := path.Dir(opfPath)
+	if opfDir == "." {
+		return targetPath
+	}
+	// If target is under the same directory as OPF, strip the prefix
+	if strings.HasPrefix(targetPath, opfDir+"/") {
+		return strings.TrimPrefix(targetPath, opfDir+"/")
+	}
+	// Otherwise, use ../ navigation
+	return "../" + targetPath
+}
+
+// sortStrings sorts a slice of strings in place (simple insertion sort to avoid importing sort).
+func sortStrings(ss []string) {
+	for i := 1; i < len(ss); i++ {
+		for j := i; j > 0 && ss[j] < ss[j-1]; j-- {
+			ss[j], ss[j-1] = ss[j-1], ss[j]
+		}
+	}
+}
+
+// fixObsoleteElements replaces common obsolete HTML elements with styled equivalents.
+// Fixes HTM-004.
+func fixObsoleteElements(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	// Define replacements for common obsolete elements
+	type replacement struct {
+		openTag  string // replacement opening tag
+		closeTag string // replacement closing tag
+	}
+
+	// These are the safe, common replacements
+	replacements := map[string]replacement{
+		"center":  {openTag: `<div style="text-align: center;">`, closeTag: "</div>"},
+		"big":     {openTag: `<span style="font-size: larger;">`, closeTag: "</span>"},
+		"strike":  {openTag: `<span style="text-decoration: line-through;">`, closeTag: "</span>"},
+		"tt":      {openTag: `<span style="font-family: monospace;">`, closeTag: "</span>"},
+		"acronym": {openTag: "<abbr>", closeTag: "</abbr>"},
+		"dir":     {openTag: "<ul>", closeTag: "</ul>"},
+	}
+
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		modified := false
+		var replaced []string
+
+		for elemName, repl := range replacements {
+			// Match opening tag with optional attributes
+			openRe := regexp.MustCompile(`<` + elemName + `(\s[^>]*)?>`)
+			closeRe := regexp.MustCompile(`</` + elemName + `\s*>`)
+
+			if !openRe.MatchString(content) {
+				continue
+			}
+
+			// For elements like <center class="foo">, preserve the style approach
+			// but for <acronym title="...">, we want to preserve attributes
+			if elemName == "acronym" {
+				// Preserve attributes for acronym → abbr
+				content = openRe.ReplaceAllString(content, "<abbr${1}>")
+			} else if elemName == "dir" {
+				content = openRe.ReplaceAllString(content, "<ul${1}>")
+			} else {
+				// For styled replacements, any existing attributes get merged into the replacement
+				content = openRe.ReplaceAllStringFunc(content, func(match string) string {
+					// Extract existing attributes
+					attrs := openRe.FindStringSubmatch(match)
+					if len(attrs) > 1 && strings.TrimSpace(attrs[1]) != "" {
+						existingAttrs := strings.TrimSpace(attrs[1])
+						// If there's an existing style attribute, merge
+						if strings.Contains(existingAttrs, "style=") {
+							styleRe := regexp.MustCompile(`style\s*=\s*["']([^"']*)["']`)
+							if sm := styleRe.FindStringSubmatch(existingAttrs); sm != nil {
+								newStyle := strings.TrimSuffix(strings.TrimSpace(sm[1]), ";")
+								// Extract the style from our replacement
+								replStyleRe := regexp.MustCompile(`style="([^"]*)"`)
+								if rm := replStyleRe.FindStringSubmatch(repl.openTag); rm != nil {
+									mergedStyle := newStyle + "; " + rm[1]
+									return replStyleRe.ReplaceAllString(repl.openTag, `style="`+mergedStyle+`"`)
+								}
+							}
+						}
+					}
+					return repl.openTag
+				})
+			}
+			content = closeRe.ReplaceAllString(content, repl.closeTag)
+			modified = true
+			replaced = append(replaced, elemName)
+		}
+
+		if modified {
+			files[fullPath] = []byte(content)
+			sortStrings(replaced)
+			fixes = append(fixes, Fix{
+				CheckID:     "HTM-004",
+				Description: fmt.Sprintf("Replaced obsolete element(s) %s with modern equivalents", strings.Join(replaced, ", ")),
+				File:        fullPath,
+			})
+		}
+	}
+
+	return fixes
+}
+
 // navDocHasToc checks whether a navigation document has epub:type="toc".
 // Used by doctor mode to scan content features.
 func navDocHasToc(data []byte) bool {
