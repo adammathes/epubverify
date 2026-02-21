@@ -876,6 +876,330 @@ func fixObsoleteElements(files map[string][]byte, ep *epub.EPUB) []Fix {
 	return fixes
 }
 
+// --- Tier 3 fixes ---
+
+// fixCSSImports inlines @import rules in CSS files by replacing them with the
+// imported file's contents. Fixes CSS-005.
+func fixCSSImports(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	importRe := regexp.MustCompile(`@import\s+(?:url\(\s*['"]?([^'")]+)['"]?\s*\)|['"]([^'"]+)['"]);?`)
+
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "text/css" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		if !importRe.MatchString(content) {
+			continue
+		}
+
+		cssDir := path.Dir(fullPath)
+		modified := false
+		importCount := 0
+
+		// Replace @import rules with inlined content (up to 10 per file)
+		result := importRe.ReplaceAllStringFunc(content, func(match string) string {
+			if importCount >= 10 {
+				return match // Safety limit
+			}
+
+			submatch := importRe.FindStringSubmatch(match)
+			importHref := submatch[1]
+			if importHref == "" {
+				importHref = submatch[2]
+			}
+			if importHref == "" {
+				return match
+			}
+
+			// Skip remote URLs
+			if strings.HasPrefix(importHref, "http://") || strings.HasPrefix(importHref, "https://") {
+				return match
+			}
+
+			// Resolve the import path
+			importPath := resolveCSSPath(cssDir, importHref)
+			importedData, exists := files[importPath]
+			if !exists {
+				return match // Can't inline missing file
+			}
+
+			importCount++
+			modified = true
+			// Return the imported CSS content with a comment showing the source
+			return "/* inlined from " + importHref + " */\n" + string(importedData) + "\n"
+		})
+
+		if modified {
+			files[fullPath] = []byte(result)
+			fixes = append(fixes, Fix{
+				CheckID:     "CSS-005",
+				Description: fmt.Sprintf("Inlined %d @import rule(s)", importCount),
+				File:        fullPath,
+			})
+		}
+	}
+
+	return fixes
+}
+
+// resolveCSSPath resolves a relative path against a CSS file's directory.
+func resolveCSSPath(cssDir, rel string) string {
+	if path.IsAbs(rel) {
+		return rel[1:]
+	}
+	return path.Clean(cssDir + "/" + rel)
+}
+
+// fixEncodingDeclaration fixes non-UTF-8 encoding declarations in XHTML content.
+// For ENC-001: changes encoding declaration to UTF-8, transcoding if needed.
+// For ENC-002: transcodes UTF-16 files to UTF-8.
+func fixEncodingDeclaration(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	xmlEncodingRe := regexp.MustCompile(`(<\?xml[^?]*encoding=["'])([^"']+)(["'])`)
+	utf16LEBOM := []byte{0xff, 0xfe}
+	utf16BEBOM := []byte{0xfe, 0xff}
+
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		// ENC-002: UTF-16 detection and transcoding
+		if bytes.HasPrefix(data, utf16LEBOM) {
+			utf8Data, err := transcodeUTF16ToUTF8(data, false) // little-endian
+			if err == nil {
+				files[fullPath] = utf8Data
+				fixes = append(fixes, Fix{
+					CheckID:     "ENC-002",
+					Description: fmt.Sprintf("Transcoded from UTF-16LE to UTF-8"),
+					File:        fullPath,
+				})
+			}
+			continue
+		}
+		if bytes.HasPrefix(data, utf16BEBOM) {
+			utf8Data, err := transcodeUTF16ToUTF8(data, true) // big-endian
+			if err == nil {
+				files[fullPath] = utf8Data
+				fixes = append(fixes, Fix{
+					CheckID:     "ENC-002",
+					Description: fmt.Sprintf("Transcoded from UTF-16BE to UTF-8"),
+					File:        fullPath,
+				})
+			}
+			continue
+		}
+
+		// ENC-001: non-UTF-8 encoding declaration
+		header := string(data[:min(200, len(data))])
+		matches := xmlEncodingRe.FindStringSubmatch(header)
+		if len(matches) < 3 {
+			continue
+		}
+		declaredEnc := strings.ToLower(matches[2])
+		if declaredEnc == "utf-8" {
+			continue
+		}
+
+		// Try to transcode the body if it's a known encoding
+		transcoded, didTranscode := transcodeToUTF8(data, declaredEnc)
+		if didTranscode {
+			// Fix the encoding declaration
+			newData := xmlEncodingRe.ReplaceAll(transcoded, []byte("${1}UTF-8${3}"))
+			files[fullPath] = newData
+			fixes = append(fixes, Fix{
+				CheckID:     "ENC-001",
+				Description: fmt.Sprintf("Transcoded from %s to UTF-8", matches[2]),
+				File:        fullPath,
+			})
+		} else if isValidUTF8(data) {
+			// File is actually valid UTF-8, just fix the declaration
+			content := string(data)
+			newContent := xmlEncodingRe.ReplaceAllString(content, "${1}UTF-8${3}")
+			files[fullPath] = []byte(newContent)
+			fixes = append(fixes, Fix{
+				CheckID:     "ENC-001",
+				Description: fmt.Sprintf("Fixed encoding declaration from '%s' to 'UTF-8' (content was already UTF-8)", matches[2]),
+				File:        fullPath,
+			})
+		}
+	}
+
+	return fixes
+}
+
+// transcodeUTF16ToUTF8 converts UTF-16 data (with BOM) to UTF-8.
+func transcodeUTF16ToUTF8(data []byte, bigEndian bool) ([]byte, error) {
+	// Skip BOM (2 bytes)
+	if len(data) < 2 {
+		return nil, fmt.Errorf("data too short")
+	}
+	data = data[2:]
+
+	// Must be even length
+	if len(data)%2 != 0 {
+		data = data[:len(data)-1]
+	}
+
+	// Convert to uint16 code units
+	codeUnits := make([]uint16, len(data)/2)
+	for i := 0; i < len(data); i += 2 {
+		if bigEndian {
+			codeUnits[i/2] = uint16(data[i])<<8 | uint16(data[i+1])
+		} else {
+			codeUnits[i/2] = uint16(data[i]) | uint16(data[i+1])<<8
+		}
+	}
+
+	// Decode UTF-16 surrogate pairs to runes, then encode as UTF-8
+	var buf bytes.Buffer
+	i := 0
+	for i < len(codeUnits) {
+		cu := codeUnits[i]
+		if cu >= 0xD800 && cu <= 0xDBFF && i+1 < len(codeUnits) {
+			// High surrogate
+			low := codeUnits[i+1]
+			if low >= 0xDC00 && low <= 0xDFFF {
+				r := 0x10000 + rune(cu-0xD800)*0x400 + rune(low-0xDC00)
+				buf.WriteRune(r)
+				i += 2
+				continue
+			}
+		}
+		buf.WriteRune(rune(cu))
+		i++
+	}
+
+	return buf.Bytes(), nil
+}
+
+// transcodeToUTF8 attempts to transcode data from a known single-byte encoding to UTF-8.
+// Returns the transcoded data and true, or nil and false if the encoding is unsupported.
+func transcodeToUTF8(data []byte, encoding string) ([]byte, bool) {
+	encoding = strings.ToLower(strings.TrimSpace(encoding))
+
+	switch encoding {
+	case "iso-8859-1", "latin1", "latin-1", "iso_8859-1":
+		return transcodeLatin1ToUTF8(data), true
+	case "windows-1252", "cp1252", "cp-1252":
+		return transcodeWindows1252ToUTF8(data), true
+	default:
+		return nil, false
+	}
+}
+
+// transcodeLatin1ToUTF8 converts ISO-8859-1 encoded data to UTF-8.
+// ISO-8859-1 maps 1:1 to Unicode code points 0x00-0xFF.
+func transcodeLatin1ToUTF8(data []byte) []byte {
+	var buf bytes.Buffer
+	buf.Grow(len(data) * 2) // worst case: all high bytes double in size
+	for _, b := range data {
+		buf.WriteRune(rune(b))
+	}
+	return buf.Bytes()
+}
+
+// Windows-1252 differs from ISO-8859-1 in the 0x80-0x9F range.
+var windows1252Table = map[byte]rune{
+	0x80: 0x20AC, // €
+	0x82: 0x201A, // ‚
+	0x83: 0x0192, // ƒ
+	0x84: 0x201E, // „
+	0x85: 0x2026, // …
+	0x86: 0x2020, // †
+	0x87: 0x2021, // ‡
+	0x88: 0x02C6, // ˆ
+	0x89: 0x2030, // ‰
+	0x8A: 0x0160, // Š
+	0x8B: 0x2039, // ‹
+	0x8C: 0x0152, // Œ
+	0x8E: 0x017D, // Ž
+	0x91: 0x2018, // '
+	0x92: 0x2019, // '
+	0x93: 0x201C, // "
+	0x94: 0x201D, // "
+	0x95: 0x2022, // •
+	0x96: 0x2013, // –
+	0x97: 0x2014, // —
+	0x98: 0x02DC, // ˜
+	0x99: 0x2122, // ™
+	0x9A: 0x0161, // š
+	0x9B: 0x203A, // ›
+	0x9C: 0x0153, // œ
+	0x9E: 0x017E, // ž
+	0x9F: 0x0178, // Ÿ
+}
+
+// transcodeWindows1252ToUTF8 converts Windows-1252 encoded data to UTF-8.
+func transcodeWindows1252ToUTF8(data []byte) []byte {
+	var buf bytes.Buffer
+	buf.Grow(len(data) * 2)
+	for _, b := range data {
+		if r, ok := windows1252Table[b]; ok {
+			buf.WriteRune(r)
+		} else {
+			buf.WriteRune(rune(b))
+		}
+	}
+	return buf.Bytes()
+}
+
+// isValidUTF8 checks if the data is valid UTF-8.
+func isValidUTF8(data []byte) bool {
+	for i := 0; i < len(data); {
+		if data[i] < 0x80 {
+			i++
+			continue
+		}
+		// Multi-byte sequences
+		var size int
+		switch {
+		case data[i]&0xE0 == 0xC0:
+			size = 2
+		case data[i]&0xF0 == 0xE0:
+			size = 3
+		case data[i]&0xF8 == 0xF0:
+			size = 4
+		default:
+			return false
+		}
+		if i+size > len(data) {
+			return false
+		}
+		for j := 1; j < size; j++ {
+			if data[i+j]&0xC0 != 0x80 {
+				return false
+			}
+		}
+		i += size
+	}
+	return true
+}
+
 // navDocHasToc checks whether a navigation document has epub:type="toc".
 // Used by doctor mode to scan content features.
 func navDocHasToc(data []byte) bool {

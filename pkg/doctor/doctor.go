@@ -21,6 +21,11 @@
 //   - RSC-002: files in container but not in manifest — adds manifest entries
 //   - HTM-003: empty href="" on <a> elements — removes the href attribute
 //   - HTM-004: obsolete HTML elements (center, big, strike, tt, etc.) — replaces with styled modern equivalents
+//
+// Tier 3 fixes (higher complexity):
+//   - CSS-005: @import rules — inlines imported CSS content
+//   - ENC-001: non-UTF-8 encoding declaration — transcodes (iso-8859-1, windows-1252) or fixes declaration
+//   - ENC-002: UTF-16 encoded content — transcodes to UTF-8
 package doctor
 
 import (
@@ -125,6 +130,14 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 
 	// Content-level: replace obsolete HTML elements
 	allFixes = append(allFixes, fixObsoleteElements(files, ep)...)
+
+	// --- Tier 3 fixes ---
+
+	// CSS-level: inline @import rules
+	allFixes = append(allFixes, fixCSSImports(files, ep)...)
+
+	// Encoding: fix non-UTF-8 encoding declarations and transcode
+	allFixes = append(allFixes, fixEncodingDeclaration(files, ep)...)
 
 	if len(allFixes) == 0 {
 		ep.Close()

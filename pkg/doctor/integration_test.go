@@ -322,6 +322,143 @@ func TestDoctorIntegrationTier2Problems(t *testing.T) {
 	zr.Close()
 }
 
+// TestDoctorIntegrationTier3Problems creates an EPUB with Tier 3 issues:
+// CSS @import and non-UTF-8 encoding declaration.
+func TestDoctorIntegrationTier3Problems(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "broken3.epub")
+	output := filepath.Join(dir, "fixed3.epub")
+
+	f, err := os.Create(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := zip.NewWriter(f)
+
+	// Mimetype
+	header := &zip.FileHeader{Name: "mimetype", Method: zip.Store}
+	mw, _ := w.CreateHeader(header)
+	mw.Write([]byte("application/epub+zip"))
+
+	// Container
+	cw, _ := w.Create("META-INF/container.xml")
+	cw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`))
+
+	// OPF
+	ow, _ := w.Create("OEBPS/content.opf")
+	ow.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Tier 3 Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="main-css" href="styles/main.css" media-type="text/css"/>
+    <item id="base-css" href="styles/base.css" media-type="text/css"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>`))
+
+	// Nav
+	nw, _ := w.Create("OEBPS/nav.xhtml")
+	nw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Navigation</title></head>
+<body>
+<nav epub:type="toc"><ol><li><a href="chapter1.xhtml">Chapter 1</a></li></ol></nav>
+</body>
+</html>`))
+
+	// Chapter with iso-8859-1 encoding declaration (but actually UTF-8 content)
+	chw, _ := w.Create("OEBPS/chapter1.xhtml")
+	chw.Write([]byte(`<?xml version="1.0" encoding="iso-8859-1"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title><link rel="stylesheet" href="styles/main.css"/></head>
+<body><p>Hello world</p></body>
+</html>`))
+
+	// CSS with @import
+	cssw, _ := w.Create("OEBPS/styles/main.css")
+	cssw.Write([]byte(`@import "base.css";
+body { color: #333; }
+`))
+
+	// Base CSS
+	basew, _ := w.Create("OEBPS/styles/base.css")
+	basew.Write([]byte(`html { font-size: 100%; }
+`))
+
+	w.Close()
+	f.Close()
+
+	// Validate before
+	beforeReport, err := validate.Validate(input)
+	if err != nil {
+		t.Fatalf("Pre-validation failed: %v", err)
+	}
+	beforeErrors := beforeReport.ErrorCount() + beforeReport.FatalCount()
+	beforeWarnings := beforeReport.WarningCount()
+	t.Logf("Before: %d errors, %d warnings", beforeErrors, beforeWarnings)
+	for _, msg := range beforeReport.Messages {
+		t.Logf("  %s", msg)
+	}
+
+	// Run doctor
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	t.Logf("\nApplied %d fixes:", len(result.Fixes))
+	for _, fix := range result.Fixes {
+		t.Logf("  [%s] %s", fix.CheckID, fix.Description)
+	}
+
+	afterErrors := result.AfterReport.ErrorCount() + result.AfterReport.FatalCount()
+	afterWarnings := result.AfterReport.WarningCount()
+	t.Logf("\nAfter: %d errors, %d warnings", afterErrors, afterWarnings)
+	for _, msg := range result.AfterReport.Messages {
+		t.Logf("  %s", msg)
+	}
+
+	// Verify expected fixes
+	expectedFixes := map[string]bool{
+		"CSS-005": false, // @import inlined
+		"ENC-001": false, // encoding declaration fixed
+	}
+	for _, fix := range result.Fixes {
+		if _, ok := expectedFixes[fix.CheckID]; ok {
+			expectedFixes[fix.CheckID] = true
+		}
+	}
+	for checkID, found := range expectedFixes {
+		if !found {
+			t.Errorf("Expected fix for %s but it was not applied", checkID)
+		}
+	}
+
+	// Verify issue count improved
+	totalBefore := beforeErrors + beforeWarnings
+	totalAfter := afterErrors + afterWarnings
+	if totalAfter >= totalBefore {
+		t.Errorf("Expected fewer total issues after fix: before=%d, after=%d", totalBefore, totalAfter)
+	}
+}
+
 // TestDoctorRoundTrip verifies that running doctor on a valid EPUB
 // produces identical validation results.
 func TestDoctorRoundTrip(t *testing.T) {

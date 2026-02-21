@@ -2,7 +2,7 @@
 
 ## Summary
 
-**Verdict: This is a promising direction.** The implementation covers 13 fix types across Tier 1 and Tier 2. Tier 1 reduces a 6-error EPUB to 0 errors; Tier 2 handles 5 additional issue types (obsolete elements, bad dates, orphan files, empty hrefs, deprecated guide). The architecture is extensible.
+**Verdict: This is a promising direction.** The implementation covers 16 fix types across Tier 1, Tier 2, and Tier 3. Tier 1 handles 8 ZIP/OPF/content structural issues; Tier 2 adds 5 more (obsolete elements, bad dates, orphan files, empty hrefs, deprecated guide); Tier 3 handles CSS @import inlining and encoding transcoding (ISO-8859-1, Windows-1252, UTF-16). All tiers take broken EPUBs to 0 errors in integration tests.
 
 ## How It Works
 
@@ -64,10 +64,10 @@ After: 0 errors, 0 warnings
 ```
 pkg/doctor/
   doctor.go       — orchestrator: validate → fix → write → re-validate
-  fixes.go        — individual fix functions + helpers (Tier 1 + Tier 2)
+  fixes.go        — individual fix functions + helpers (Tier 1 + Tier 2 + Tier 3)
   writer.go       — EPUB ZIP writer (correct mimetype handling by construction)
-  doctor_test.go  — unit tests (15 tests: Tier 1, Tier 2, date parsing, round-trip)
-  integration_test.go — multi-problem integration tests (Tier 1 + Tier 2)
+  doctor_test.go  — unit tests (22 tests: all tiers, encoding transcoding, date parsing, round-trip)
+  integration_test.go — multi-problem integration tests (Tier 1 + Tier 2 + Tier 3)
 ```
 
 Key design decisions:
@@ -130,14 +130,51 @@ Applied 5 fixes:
 After: 0 errors, 0 warnings
 ```
 
-## Potential Tier 3 Fixes (Future)
+## Tier 3 Fixes (Implemented)
 
-These are high-complexity and would need significant care:
+These are higher-complexity fixes requiring encoding awareness and cross-file operations:
 
-| Check ID | Problem | Fix Approach | Complexity |
-|----------|---------|-------------|------------|
-| CSS-005 | `@import` rules | Inline the imported CSS | High |
-| ENC-001 | Non-UTF-8 encoding declared | Transcode to UTF-8 | High |
+| Check ID | Problem | Fix | Risk |
+|----------|---------|-----|------|
+| CSS-005 | `@import` rules in CSS | Inline imported CSS file contents | Low — file must exist in container |
+| ENC-001 | Non-UTF-8 encoding declaration | Transcode from declared encoding to UTF-8; supports ISO-8859-1, Windows-1252 | Low — well-defined mappings |
+| ENC-002 | UTF-16 encoded content | Transcode UTF-16 (LE/BE with BOM) to UTF-8 | Low — standard library Unicode handling |
+
+### CSS @import inlining (CSS-005)
+
+Handles all common `@import` syntax variants:
+- `@import url("style.css");`
+- `@import url('style.css');`
+- `@import "style.css";`
+- `@import 'style.css';`
+
+The imported file's contents replace the `@import` rule inline. Relative paths are resolved correctly. Remote URLs are left unchanged. Safety limit of 10 inlines per file.
+
+### Encoding transcoding (ENC-001/ENC-002)
+
+**ENC-001** (non-UTF-8 declaration): Two paths:
+1. If the file declares a non-UTF-8 encoding and the content is actually valid UTF-8 → just fix the declaration
+2. If the file contains genuine non-UTF-8 bytes → transcode using the declared encoding:
+   - **ISO-8859-1/Latin-1**: Direct 1:1 byte-to-codepoint mapping
+   - **Windows-1252**: Same as Latin-1 except bytes 0x80-0x9F (smart quotes, euro sign, etc.) map to specific Unicode codepoints
+
+**ENC-002** (UTF-16): Detects BOM (FF FE for LE, FE FF for BE), decodes UTF-16 code units including surrogate pairs, and re-encodes as UTF-8. No external dependencies — uses pure Go standard library.
+
+## Tier 3 Integration Test Results
+
+A test EPUB with both CSS @import and encoding issues:
+
+```
+Before: 1 errors, 1 warnings
+  ERROR(ENC-001): Content document 'chapter1.xhtml' must be encoded in UTF-8, but declares encoding 'iso-8859-1'
+  WARNING(CSS-005): @import rules should not be used in EPUB CSS stylesheets
+
+Applied 2 fixes:
+  [CSS-005] Inlined 1 @import rule(s)
+  [ENC-001] Transcoded from iso-8859-1 to UTF-8
+
+After: 0 errors, 0 warnings
+```
 
 ## What Won't Work in Doctor Mode
 
@@ -152,8 +189,8 @@ Some issues are fundamentally unfixable automatically:
 
 ## Recommendation
 
-Ship this as an experimental `--doctor` flag. The architecture is clean, the fixes are safe, and the test coverage is good (18 tests total). Tier 1 + Tier 2 together handle the most common "my EPUB won't pass validation" problems that have mechanical solutions — covering 13 distinct fix types.
+Ship this as an experimental `--doctor` flag. The architecture is clean, the fixes are safe, and the test coverage is comprehensive (26 tests: 22 unit + 4 integration). Tiers 1-3 together handle the most common "my EPUB won't pass validation" problems — covering 16 distinct fix types across ZIP structure, OPF metadata, XHTML content, CSS, and encoding.
 
-The regex-based OPF editing continues to work well for Tier 2 (guide removal, date reformatting, manifest additions). For any future Tier 3 fixes involving more complex XML structural changes, consider:
+The regex-based approach works well for all current fix types. For future enhancements requiring more complex XML structural changes, consider:
 1. A proper XML serializer that preserves formatting
 2. Or, byte-level splicing using the parsed positions from `encoding/xml`
