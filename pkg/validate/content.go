@@ -14,8 +14,8 @@ import (
 	"github.com/adammathes/epubcheck-go/pkg/report"
 )
 
-// checkContent validates XHTML content documents.
-func checkContent(ep *epub.EPUB, r *report.Report) {
+// checkContentWithSkips validates XHTML content documents, skipping files with known encoding issues.
+func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string]bool) {
 	if ep.Package == nil {
 		return
 	}
@@ -39,14 +39,25 @@ func checkContent(ep *epub.EPUB, r *report.Report) {
 		}
 
 		fullPath := ep.ResolveHref(item.Href)
+
+		// Skip files with encoding errors
+		if skipFiles[fullPath] {
+			continue
+		}
+
 		data, err := ep.ReadFile(fullPath)
 		if err != nil {
 			continue // Missing file reported by RSC-001
 		}
 
+		isNav := hasProperty(item.Properties, "nav")
+
 		// HTM-001: XHTML must be well-formed XML
-		if !checkXHTMLWellFormed(data, fullPath, r) {
-			continue // Can't check further if not well-formed
+		// Skip nav docs - NAV-011 handles them
+		if !isNav {
+			if !checkXHTMLWellFormed(data, fullPath, r) {
+				continue // Can't check further if not well-formed
+			}
 		}
 
 		// HTM-002: content should have title (WARNING)
@@ -55,7 +66,7 @@ func checkContent(ep *epub.EPUB, r *report.Report) {
 		// HTM-004: no obsolete elements
 		checkNoObsoleteElements(data, fullPath, r)
 
-		// HTM-010/HTM-011: DOCTYPE and namespace checks (EPUB 3 only)
+		// HTM-011/HTM-012: DOCTYPE and namespace checks (EPUB 3 only)
 		if ep.Package.Version >= "3.0" {
 			checkDoctype(data, fullPath, r)
 		}
@@ -74,15 +85,39 @@ func checkContent(ep *epub.EPUB, r *report.Report) {
 			}
 		}
 
-		// RSC-003: fragment identifiers must resolve
-		checkFragmentIdentifiers(ep, data, fullPath, r)
+		// RSC-003: fragment identifiers must resolve (skip nav - handled by NAV checks)
+		if !isNav {
+			checkFragmentIdentifiers(ep, data, fullPath, r)
+		}
 
 		// RSC-004: no remote resources (img src with http://)
 		// RSC-008: no remote stylesheets
 		checkNoRemoteResources(ep, data, fullPath, item, r)
 
 		// HTM-008 / RSC-007: check internal links and resource references
-		checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
+		// Skip nav document - its links are checked by NAV-003/006/007
+		if !isNav {
+			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
+		}
+
+		// HTM-016: unique IDs within content document
+		checkUniqueIDs(data, fullPath, r)
+
+		// HTM-018: single body element
+		checkSingleBody(data, fullPath, r)
+
+		// HTM-019: html root element
+		checkHTMLRootElement(data, fullPath, r)
+
+		// HTM-022: object data references must resolve
+		if !isNav {
+			checkObjectReferences(ep, data, fullPath, r)
+		}
+
+		// HTM-023: no parent directory links that escape container
+		if !isNav {
+			checkNoParentDirLinks(ep, data, fullPath, r)
+		}
 	}
 }
 
@@ -95,9 +130,17 @@ func checkXHTMLWellFormed(data []byte, location string, r *report.Report) bool {
 			break
 		}
 		if err != nil {
-			r.AddWithLocation(report.Fatal, "HTM-001",
-				"Content document is not well-formed XML: element not terminated by the matching end-tag",
-				location)
+			errMsg := err.Error()
+			// HTM-017: HTML entity references not valid in XHTML
+			if strings.Contains(errMsg, "invalid character entity") || strings.Contains(errMsg, "entity") {
+				r.AddWithLocation(report.Fatal, "HTM-017",
+					fmt.Sprintf("Content document is not well-formed: entity was referenced but not declared"),
+					location)
+			} else {
+				r.AddWithLocation(report.Fatal, "HTM-001",
+					"Content document is not well-formed XML: element not terminated by the matching end-tag",
+					location)
+			}
 			return false
 		}
 	}
@@ -182,7 +225,7 @@ func checkNoObsoleteElements(data []byte, location string, r *report.Report) {
 	}
 }
 
-// HTM-010: DOCTYPE check for EPUB 3
+// HTM-011: DOCTYPE check for EPUB 3
 func checkDoctype(data []byte, location string, r *report.Report) {
 	content := string(data)
 	// Look for DOCTYPE declaration
@@ -201,13 +244,13 @@ func checkDoctype(data []byte, location string, r *report.Report) {
 	// EPUB 3 should use HTML5 DOCTYPE: <!DOCTYPE html> (case insensitive)
 	// It should NOT have PUBLIC or SYSTEM identifiers
 	if strings.Contains(doctype, "PUBLIC") || strings.Contains(doctype, "SYSTEM") {
-		r.AddWithLocation(report.Error, "HTM-010",
+		r.AddWithLocation(report.Error, "HTM-011",
 			"Irregular DOCTYPE: EPUB 3 content documents should use <!DOCTYPE html>",
 			location)
 	}
 }
 
-// HTM-011: XHTML namespace check
+// HTM-012: XHTML namespace check
 func checkXHTMLNamespace(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 
@@ -220,7 +263,7 @@ func checkXHTMLNamespace(data []byte, location string, r *report.Report) {
 			if se.Name.Local == "html" {
 				ns := se.Name.Space
 				if ns != "" && ns != "http://www.w3.org/1999/xhtml" {
-					r.AddWithLocation(report.Error, "HTM-011",
+					r.AddWithLocation(report.Error, "HTM-012",
 						fmt.Sprintf("The html element namespace is wrong: '%s'", ns),
 						location)
 				}
@@ -388,7 +431,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 	if refPath == "" {
 		// Self-reference fragment
 		if !localIDs[fragment] {
-			r.AddWithLocation(report.Error, "RSC-012",
+			r.AddWithLocation(report.Error, "RSC-003",
 				fmt.Sprintf("Fragment identifier is not defined: '#%s'", fragment),
 				location)
 		}
@@ -404,7 +447,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 
 	targetIDs := collectIDs(targetData)
 	if !targetIDs[fragment] {
-		r.AddWithLocation(report.Error, "RSC-012",
+		r.AddWithLocation(report.Error, "RSC-003",
 			fmt.Sprintf("Fragment identifier is not defined: '%s#%s'", refPath, fragment),
 			location)
 	}
@@ -447,7 +490,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-006",
+					r.AddWithLocation(report.Error, "RSC-004",
 						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
 						location)
 				}
@@ -458,7 +501,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-006",
+					r.AddWithLocation(report.Error, "RSC-004",
 						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
 						location)
 				}
@@ -477,7 +520,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 				}
 			}
 			if rel == "stylesheet" && isRemoteURL(href) {
-				r.AddWithLocation(report.Error, "RSC-006",
+				r.AddWithLocation(report.Error, "RSC-008",
 					fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
 					location)
 			}
@@ -588,4 +631,150 @@ func resolvePath(baseDir, rel string) string {
 		return rel[1:] // strip leading /
 	}
 	return path.Clean(baseDir + "/" + rel)
+}
+
+// HTM-016: IDs must be unique within a content document
+func checkUniqueIDs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	seen := make(map[string]bool)
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" {
+				if seen[attr.Value] {
+					r.AddWithLocation(report.Error, "HTM-016",
+						fmt.Sprintf("Duplicate ID '%s'", attr.Value),
+						location)
+				}
+				seen[attr.Value] = true
+			}
+		}
+	}
+}
+
+// HTM-018: content document must have exactly one body element
+func checkSingleBody(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	bodyCount := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if se.Name.Local == "body" {
+				bodyCount++
+			}
+		}
+	}
+	if bodyCount > 1 {
+		r.AddWithLocation(report.Error, "HTM-018",
+			"Element body is not allowed here: content documents must have exactly one body element",
+			location)
+	}
+}
+
+// HTM-019: content document must have html as root element
+func checkHTMLRootElement(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		// First element should be html
+		if se.Name.Local != "html" {
+			r.AddWithLocation(report.Error, "HTM-019",
+				fmt.Sprintf("Element body is not allowed here: expected element 'html' as root, but found '%s'", se.Name.Local),
+				location)
+		}
+		break // Only check first element
+	}
+}
+
+// HTM-022: object data references must exist
+func checkObjectReferences(ep *epub.EPUB, data []byte, fullPath string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	itemDir := path.Dir(fullPath)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "object" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" && attr.Value != "" {
+					u, err := url.Parse(attr.Value)
+					if err != nil || u.Scheme != "" {
+						continue
+					}
+					target := resolvePath(itemDir, u.Path)
+					if _, exists := ep.Files[target]; !exists {
+						r.AddWithLocation(report.Error, "HTM-022",
+							fmt.Sprintf("Referenced resource '%s' could not be found in the container", attr.Value),
+							fullPath)
+					}
+				}
+			}
+		}
+	}
+}
+
+// HTM-023: links must not escape the container via parent directory traversal
+func checkNoParentDirLinks(ep *epub.EPUB, data []byte, fullPath string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	itemDir := path.Dir(fullPath)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+
+		var hrefs []string
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "href" || attr.Name.Local == "src" {
+				hrefs = append(hrefs, attr.Value)
+			}
+		}
+
+		for _, href := range hrefs {
+			if href == "" {
+				continue
+			}
+			u, err := url.Parse(href)
+			if err != nil || u.Scheme != "" {
+				continue
+			}
+			if u.Path == "" {
+				continue
+			}
+			resolved := resolvePath(itemDir, u.Path)
+			if strings.HasPrefix(resolved, "..") || strings.HasPrefix(resolved, "/") {
+				r.AddWithLocation(report.Error, "HTM-023",
+					fmt.Sprintf("Referenced resource '%s' leaks outside the container", href),
+					fullPath)
+			}
+		}
+	}
 }

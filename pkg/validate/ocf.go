@@ -3,6 +3,7 @@ package validate
 import (
 	"archive/zip"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"strings"
 
@@ -53,6 +54,17 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	if !fatal && !checkRootfileExists(ep, r) {
 		return true
 	}
+
+	// OCF-010: META-INF/encryption.xml must be valid if present
+	checkEncryptionXML(ep, r)
+
+	// OCF-011: all rootfiles must exist
+	if checkAllRootfilesExist(ep, r) {
+		return true
+	}
+
+	// OCF-012: rootfile media-type must be correct
+	checkRootfileMediaType(ep, r)
 
 	return fatal
 }
@@ -204,6 +216,57 @@ func checkRootfileExists(ep *epub.EPUB, r *report.Report) bool {
 		return false
 	}
 	return true
+}
+
+// OCF-010: META-INF/encryption.xml must be complete if present
+func checkEncryptionXML(ep *epub.EPUB, r *report.Report) {
+	_, exists := ep.Files["META-INF/encryption.xml"]
+	if !exists {
+		return
+	}
+	data, err := ep.ReadFile("META-INF/encryption.xml")
+	if err != nil {
+		return
+	}
+	// Check if encryption.xml has actual content (EncryptedData elements)
+	content := string(data)
+	if !strings.Contains(content, "EncryptedData") && !strings.Contains(content, "EncryptionMethod") {
+		r.Add(report.Error, "OCF-010",
+			"META-INF/encryption.xml is incomplete: no encryption data found")
+	}
+}
+
+// OCF-011: all rootfile elements must point to existing files
+func checkAllRootfilesExist(ep *epub.EPUB, r *report.Report) bool {
+	if len(ep.AllRootfiles) <= 1 {
+		return false
+	}
+	for _, rf := range ep.AllRootfiles {
+		if rf.FullPath == ep.RootfilePath {
+			continue // Already checked by OCF-009
+		}
+		if _, exists := ep.Files[rf.FullPath]; !exists {
+			r.Add(report.Fatal, "OCF-011",
+				fmt.Sprintf("Rootfile '%s' was not found in the container", rf.FullPath))
+			return true
+		}
+	}
+	return false
+}
+
+// OCF-012: rootfile media-type must be application/oebps-package+xml
+func checkRootfileMediaType(ep *epub.EPUB, r *report.Report) {
+	hasCorrectMediaType := false
+	for _, rf := range ep.AllRootfiles {
+		if rf.MediaType == "application/oebps-package+xml" {
+			hasCorrectMediaType = true
+			break
+		}
+	}
+	if len(ep.AllRootfiles) > 0 && !hasCorrectMediaType {
+		r.Add(report.Error, "OCF-012",
+			"No rootfile tag with media type 'application/oebps-package+xml' found")
+	}
 }
 
 func readZipFile(f *zip.File) ([]byte, error) {

@@ -22,6 +22,18 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 	// RSC-001: every manifest href must exist in the zip
 	checkManifestFilesExist(ep, r)
 
+	// RSC-010: manifest hrefs must be valid URLs
+	checkManifestHrefValidURL(ep, r)
+
+	// RSC-011: manifest hrefs must not use path traversal
+	checkManifestNoPathTraversal(ep, r)
+
+	// RSC-012: no duplicate zip entries
+	checkNoDuplicateZipEntries(ep, r)
+
+	// RSC-013: manifest hrefs must not be absolute paths
+	checkManifestNoAbsolutePath(ep, r)
+
 	// RSC-006: resources referenced in content must be in manifest
 	checkResourcesInManifest(ep, r)
 
@@ -35,21 +47,42 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 	checkNavHasToc(ep, r)
 }
 
-// RSC-001
+// RSC-001 / RSC-005 / RSC-009: manifest file existence checks
 func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 	for _, item := range ep.Package.Manifest {
-		if item.Href == "\x00MISSING" {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue // Empty href handled by OPF-030
+		}
+		// Skip NCX files in EPUB 2 - handled by E2-001
+		if ep.Package.Version < "3.0" && item.MediaType == "application/x-dtbncx+xml" {
+			continue
+		}
+		// Skip absolute paths - handled by RSC-013
+		if strings.HasPrefix(item.Href, "/") {
 			continue
 		}
 		fullPath := ep.ResolveHref(item.Href)
 		if _, exists := ep.Files[fullPath]; !exists {
-			r.Add(report.Error, "RSC-001",
+			checkID := "RSC-001"
+			if item.MediaType == "text/css" {
+				checkID = "RSC-005"
+			} else if isFontMediaType(item.MediaType) {
+				checkID = "RSC-009"
+			}
+			r.Add(report.Error, checkID,
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", item.Href))
 		}
 	}
 }
 
-// RSC-006: resources referenced in content documents must be declared in the OPF manifest
+func isFontMediaType(mt string) bool {
+	return strings.HasPrefix(mt, "font/") ||
+		mt == "application/font-woff" ||
+		mt == "application/font-sfnt" ||
+		mt == "application/vnd.ms-opentype"
+}
+
+// RSC-005/RSC-006/RSC-009: resources referenced in content documents checks
 func checkResourcesInManifest(ep *epub.EPUB, r *report.Report) {
 	manifestHrefs := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -106,16 +139,22 @@ func checkReferencedResourcesInManifest(ep *epub.EPUB, data []byte, fullPath str
 					continue // skip remote/invalid
 				}
 				target := resolvePath(itemDir, u.Path)
-				if !manifestHrefs[target] {
-					// The file exists in the zip but is not in the manifest
-					if _, exists := ep.Files[target]; exists {
-						r.AddWithLocation(report.Error, "RSC-008",
-							fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", href),
-							fullPath)
-					}
+				if _, exists := ep.Files[target]; !exists {
+					// RSC-005: CSS file doesn't exist
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+						fullPath)
+				} else if !manifestHrefs[target] {
+					// RSC-006: file exists in zip but is not in manifest
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", href),
+						fullPath)
 				}
 			}
 		}
+
+		// Check font references via @font-face in inline styles or link tags
+		// (font file missing is checked via RSC-009 in content checks)
 	}
 }
 
@@ -180,7 +219,7 @@ func checkNavHasToc(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// checkNavigation validates the navigation document (Level 2 checks).
+// checkNavigation validates the navigation document (Level 2+3 checks).
 func checkNavigation(ep *epub.EPUB, r *report.Report) {
 	if ep.Package == nil || ep.Package.Version < "3.0" {
 		return
@@ -203,7 +242,18 @@ func checkNavigation(ep *epub.EPUB, r *report.Report) {
 		return
 	}
 
+	// NAV-011: nav document must be well-formed XHTML
+	if !checkNavWellFormed(data, fullPath, r) {
+		return // Can't check further
+	}
+
 	navInfo := parseNavDocument(ep, data, fullPath)
+
+	// NAV-008: toc nav must have ol element
+	if navInfo.tocCount > 0 && !navInfo.tocHasOl {
+		r.Add(report.Error, "NAV-008",
+			"Navigation document toc nav is missing required element 'ol'")
+	}
 
 	// NAV-003: TOC links must resolve
 	for _, link := range navInfo.tocLinks {
@@ -251,6 +301,25 @@ type navDocInfo struct {
 	landmarkLinks []navLink
 	pageListLinks []navLink
 	tocCount      int
+	tocHasOl      bool
+}
+
+// NAV-011: nav document must be well-formed XHTML
+func checkNavWellFormed(data []byte, location string, r *report.Report) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		_, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			r.AddWithLocation(report.Fatal, "NAV-011",
+				"Navigation document is not well-formed: element must be terminated by the matching end-tag",
+				location)
+			return false
+		}
+	}
+	return true
 }
 
 func parseNavDocument(ep *epub.EPUB, data []byte, navPath string) navDocInfo {
@@ -291,6 +360,9 @@ func parseNavDocument(ep *epub.EPUB, data []byte, navPath string) navDocInfo {
 						inNav = true
 					}
 				}
+			}
+			if inNav && currentNavType == "toc" && t.Name.Local == "ol" {
+				info.tocHasOl = true
 			}
 			if inNav && t.Name.Local == "a" {
 				inAnchor = true
@@ -349,6 +421,80 @@ func checkNavLinkResolves(ep *epub.EPUB, href, navFullPath, checkID string, r *r
 		r.AddWithLocation(report.Error, checkID,
 			fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 			navFullPath)
+	}
+}
+
+// RSC-010: manifest hrefs must be valid URLs
+func checkManifestHrefValidURL(ep *epub.EPUB, r *report.Report) {
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		_, err := url.Parse(item.Href)
+		if err != nil {
+			r.Add(report.Error, "RSC-010",
+				fmt.Sprintf("Manifest item href '%s' is not a valid URL", item.Href))
+			continue
+		}
+		// Check for bad percent encoding
+		if strings.Contains(item.Href, "%") {
+			// Verify all percent-encoded sequences are valid
+			for i := 0; i < len(item.Href); i++ {
+				if item.Href[i] == '%' {
+					if i+2 >= len(item.Href) || !isHexDigit(item.Href[i+1]) || !isHexDigit(item.Href[i+2]) {
+						r.Add(report.Error, "RSC-010",
+							fmt.Sprintf("Manifest item href '%s' is not a valid URL: bad percent-encoding", item.Href))
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+func isHexDigit(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// RSC-011: manifest hrefs must not use path traversal
+func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		if strings.Contains(item.Href, "..") {
+			r.Add(report.Error, "RSC-011",
+				fmt.Sprintf("Referenced resource '%s' could not be found in the container: path traversal not allowed", item.Href))
+		}
+	}
+}
+
+// RSC-012: no duplicate zip entries
+func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
+	// Check for files that map to the same case-insensitive path
+	seen := make(map[string]string) // lowercase -> original
+	for _, f := range ep.ZipFile.File {
+		lower := strings.ToLower(f.Name)
+		if existing, ok := seen[lower]; ok {
+			if existing != f.Name {
+				r.Add(report.Error, "RSC-012",
+					fmt.Sprintf("Duplicate entry in the ZIP file: '%s' and '%s'", existing, f.Name))
+			}
+		}
+		seen[lower] = f.Name
+	}
+}
+
+// RSC-013: manifest hrefs must not be absolute paths
+func checkManifestNoAbsolutePath(ep *epub.EPUB, r *report.Report) {
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		if strings.HasPrefix(item.Href, "/") {
+			r.Add(report.Error, "RSC-013",
+				fmt.Sprintf("Referenced resource '%s' leaks outside the container: absolute paths not allowed", item.Href))
+		}
 	}
 }
 

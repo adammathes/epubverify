@@ -9,27 +9,40 @@ type EPUB struct {
 	Files   map[string]*zip.File // path -> zip.File
 
 	// Parsed from container.xml
-	RootfilePath string
+	RootfilePath  string
+	AllRootfiles  []Rootfile // all rootfile elements from container.xml
+	ContainerData []byte     // raw container.xml bytes
 
 	// Parsed from OPF
 	Package *Package
 
 	// Raw OPF parse info (set during ParseOPF)
-	OPFParseError    error
-	HasMetadata      bool
-	HasManifest      bool
-	HasSpine         bool
+	OPFParseError error
+	HasMetadata   bool
+	HasManifest   bool
+	HasSpine      bool
+}
+
+// Rootfile represents a rootfile element from container.xml.
+type Rootfile struct {
+	FullPath  string
+	MediaType string
 }
 
 // Package represents the OPF package document.
 type Package struct {
 	UniqueIdentifier string
 	Version          string
+	Dir              string // dir attribute on package element
 	Metadata         Metadata
 	Manifest         []ManifestItem
 	Spine            []SpineItemref
 	SpineToc         string // EPUB 2 spine toc attribute
 	RenditionLayout  string // "pre-paginated" or "reflowable"
+	Guide            []GuideReference
+	ModifiedCount    int // number of dcterms:modified meta elements
+	RenditionOrientation string
+	RenditionSpread      string
 }
 
 // Metadata holds the OPF metadata section.
@@ -58,5 +71,13 @@ type ManifestItem struct {
 
 // SpineItemref represents a single itemref in the OPF spine.
 type SpineItemref struct {
-	IDRef string
+	IDRef      string
+	Properties string
+}
+
+// GuideReference represents a guide reference element in EPUB 2.
+type GuideReference struct {
+	Type  string
+	Title string
+	Href  string
 }

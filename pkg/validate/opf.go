@@ -99,6 +99,30 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-025: cover-image must be on image media type
 	checkCoverImageIsImage(pkg, r)
 
+	// OPF-027: package unique-identifier attribute present
+	checkPackageUniqueIdentifierAttr(pkg, r)
+
+	// OPF-028: dcterms:modified must occur exactly once
+	checkDCTermsModifiedExactlyOnce(pkg, r)
+
+	// OPF-029: manifest property values must be valid
+	checkManifestPropertyValid(pkg, r)
+
+	// OPF-030: manifest href must not be empty
+	checkManifestHrefNotEmpty(pkg, r)
+
+	// OPF-031: dc:identifier must not be empty
+	checkDCIdentifierNotEmpty(pkg, r)
+
+	// OPF-032: dc:title must not be empty
+	checkDCTitleNotEmpty(pkg, r)
+
+	// OPF-033: manifest href must not contain fragment
+	checkManifestHrefNoFragment(pkg, r)
+
+	// OPF-034: package dir attribute must be valid
+	checkPackageDirValid(pkg, r)
+
 	return false
 }
 
@@ -308,20 +332,27 @@ func checkFallbackNoCycle(pkg *epub.Package, r *report.Report) {
 		}
 	}
 
-	reported := make(map[string]bool)
+	// Track all items already identified as part of any cycle
+	inCycle := make(map[string]bool)
 	for id := range fallbackMap {
+		if inCycle[id] {
+			continue
+		}
 		visited := make(map[string]bool)
+		var chain []string
 		current := id
 		for {
 			if visited[current] {
-				if !reported[id] {
-					r.Add(report.Error, "OPF-022",
-						fmt.Sprintf("Manifest fallback chain contains a circular reference starting at '%s'", id))
-					reported[id] = true
+				// Mark all chain items to avoid duplicate reports
+				for _, c := range chain {
+					inCycle[c] = true
 				}
+				r.Add(report.Error, "OPF-022",
+					fmt.Sprintf("Manifest fallback chain contains a circular reference starting at '%s'", id))
 				break
 			}
 			visited[current] = true
+			chain = append(chain, current)
 			next, ok := fallbackMap[current]
 			if !ok {
 				break
@@ -407,6 +438,14 @@ func checkMediaTypeMatches(ep *epub.EPUB, r *report.Report) {
 		}
 
 		if item.MediaType != expectedType {
+			// Skip image-to-image mismatches - handled by MED-001
+			if strings.HasPrefix(item.MediaType, "image/") && strings.HasPrefix(expectedType, "image/") {
+				continue
+			}
+			// Skip SVG mismatch - handled by MED-004
+			if expectedType == "image/svg+xml" {
+				continue
+			}
 			r.Add(report.Error, "OPF-024",
 				fmt.Sprintf("The file '%s' does not appear to match the media type '%s'", item.Href, item.MediaType))
 		}
@@ -449,6 +488,122 @@ func extensionToMediaType(ext string) string {
 		return "application/smil+xml"
 	default:
 		return ""
+	}
+}
+
+// Valid manifest item properties (EPUB 3)
+var validManifestProperties = map[string]bool{
+	"cover-image":      true,
+	"mathml":           true,
+	"nav":              true,
+	"remote-resources": true,
+	"scripted":         true,
+	"svg":              true,
+	"switch":           true,
+}
+
+// Valid spine itemref properties
+var validSpineProperties = map[string]bool{
+	"page-spread-left":        true,
+	"page-spread-right":       true,
+	"rendition:layout-pre-paginated": true,
+	"rendition:layout-reflowable":    true,
+	"rendition:orientation-auto":     true,
+	"rendition:orientation-landscape": true,
+	"rendition:orientation-portrait":  true,
+	"rendition:spread-auto":          true,
+	"rendition:spread-landscape":     true,
+	"rendition:spread-both":          true,
+	"rendition:spread-none":          true,
+}
+
+// OPF-027: package element must have unique-identifier attribute
+func checkPackageUniqueIdentifierAttr(pkg *epub.Package, r *report.Report) {
+	if pkg.UniqueIdentifier == "" {
+		r.Add(report.Error, "OPF-027", "Package element is missing unique-identifier attribute")
+	}
+}
+
+// OPF-028: dcterms:modified must occur exactly once (EPUB 3)
+func checkDCTermsModifiedExactlyOnce(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	if pkg.ModifiedCount > 1 {
+		r.Add(report.Error, "OPF-028",
+			fmt.Sprintf("Element dcterms:modified must occur exactly once, but found %d", pkg.ModifiedCount))
+	}
+}
+
+// OPF-029: manifest item properties must be valid
+func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, item := range pkg.Manifest {
+		if item.Properties == "" {
+			continue
+		}
+		for _, prop := range strings.Fields(item.Properties) {
+			if !validManifestProperties[prop] {
+				r.Add(report.Error, "OPF-029",
+					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
+			}
+		}
+	}
+}
+
+// OPF-030: manifest href must not be empty
+func checkManifestHrefNotEmpty(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "" {
+			r.Add(report.Error, "OPF-030",
+				fmt.Sprintf("Manifest must not list the package document: item '%s' has empty href", item.ID))
+		}
+	}
+}
+
+// OPF-031: dc:identifier must not be empty
+func checkDCIdentifierNotEmpty(pkg *epub.Package, r *report.Report) {
+	for _, id := range pkg.Metadata.Identifiers {
+		if strings.TrimSpace(id.Value) == "" {
+			r.Add(report.Error, "OPF-031",
+				"Element dc:identifier has invalid value: must not be empty")
+		}
+	}
+}
+
+// OPF-032: dc:title must not be empty
+func checkDCTitleNotEmpty(pkg *epub.Package, r *report.Report) {
+	for _, t := range pkg.Metadata.Titles {
+		if strings.TrimSpace(t) == "" {
+			r.Add(report.Error, "OPF-032",
+				"Element dc:title has invalid value: must not be empty")
+		}
+	}
+}
+
+// OPF-033: manifest href must not contain a fragment identifier
+func checkManifestHrefNoFragment(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		if strings.Contains(item.Href, "#") {
+			r.Add(report.Error, "OPF-033",
+				fmt.Sprintf("Manifest item href must not have a fragment identifier: '%s'", item.Href))
+		}
+	}
+}
+
+// OPF-034: package dir attribute must be valid
+func checkPackageDirValid(pkg *epub.Package, r *report.Report) {
+	if pkg.Dir == "" {
+		return
+	}
+	if pkg.Dir != "ltr" && pkg.Dir != "rtl" {
+		r.Add(report.Error, "OPF-034",
+			fmt.Sprintf("Package element dir attribute value '%s' is invalid: must be equal to 'ltr' or 'rtl'", pkg.Dir))
 	}
 }
 

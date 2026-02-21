@@ -45,10 +45,22 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 	// Phase 4: Navigation document checks
 	checkNavigation(ep, r)
 
-	// Phase 5: Content document checks
-	checkContent(ep, r)
+	// Phase 5: Encoding checks (before content to identify bad files)
+	badEncoding := checkEncoding(ep, r)
 
-	// Phase 6: EPUB 2 specific checks
+	// Phase 6: Content document checks
+	checkContentWithSkips(ep, r, badEncoding)
+
+	// Phase 7: CSS checks
+	checkCSS(ep, r)
+
+	// Phase 8: Fixed-layout checks
+	checkFXL(ep, r)
+
+	// Phase 9: Media checks
+	checkMedia(ep, r)
+
+	// Phase 10: EPUB 2 specific checks
 	checkEPUB2(ep, r)
 
 	return r, nil

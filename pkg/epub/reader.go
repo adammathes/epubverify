@@ -74,10 +74,19 @@ func (ep *EPUB) ParseContainer() error {
 	if err != nil {
 		return err
 	}
+	ep.ContainerData = data
 
 	var c containerXML
 	if err := xml.Unmarshal(data, &c); err != nil {
 		return fmt.Errorf("parsing container.xml: %w", err)
+	}
+
+	// Store all rootfiles
+	for _, rf := range c.RootFiles.RootFile {
+		ep.AllRootfiles = append(ep.AllRootfiles, Rootfile{
+			FullPath:  rf.FullPath,
+			MediaType: rf.MediaType,
+		})
 	}
 
 	for _, rf := range c.RootFiles.RootFile {
@@ -121,6 +130,7 @@ func (ep *EPUB) ParseOPF() error {
 	p := &Package{
 		UniqueIdentifier: structInfo.uniqueIdentifier,
 		Version:          structInfo.version,
+		Dir:              structInfo.dir,
 		SpineToc:         structInfo.spineToc,
 	}
 
@@ -129,15 +139,22 @@ func (ep *EPUB) ParseOPF() error {
 		p.Metadata = parseMetadata(data)
 	}
 
-	// Parse rendition:layout from metadata metas
+	// Parse rendition properties from metadata metas
+	modifiedCount := 0
 	for _, m := range structInfo.metas {
-		if m.property == "dcterms:modified" {
+		switch m.property {
+		case "dcterms:modified":
 			p.Metadata.Modified = m.value
-		}
-		if m.property == "rendition:layout" {
+			modifiedCount++
+		case "rendition:layout":
 			p.RenditionLayout = m.value
+		case "rendition:orientation":
+			p.RenditionOrientation = m.value
+		case "rendition:spread":
+			p.RenditionSpread = m.value
 		}
 	}
+	p.ModifiedCount = modifiedCount
 
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
@@ -149,6 +166,9 @@ func (ep *EPUB) ParseOPF() error {
 	// Parse spine
 	p.Spine = structInfo.spineItems
 
+	// Parse guide (EPUB 2)
+	p.Guide = structInfo.guideRefs
+
 	ep.Package = p
 	return nil
 }
@@ -156,12 +176,14 @@ func (ep *EPUB) ParseOPF() error {
 type opfStructInfo struct {
 	version          string
 	uniqueIdentifier string
+	dir              string
 	hasMetadata      bool
 	hasManifest      bool
 	hasSpine         bool
 	spineToc         string
 	spineItems       []SpineItemref
 	metas            []metaInfo
+	guideRefs        []GuideReference
 }
 
 type metaInfo struct {
@@ -196,6 +218,8 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					info.version = attr.Value
 				case "unique-identifier":
 					info.uniqueIdentifier = attr.Value
+				case "dir":
+					info.dir = attr.Value
 				}
 			}
 		case "metadata":
@@ -210,13 +234,31 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				}
 			}
 		case "itemref":
-			var idref string
+			var idref, props string
 			for _, attr := range se.Attr {
-				if attr.Name.Local == "idref" {
+				switch attr.Name.Local {
+				case "idref":
 					idref = attr.Value
+				case "properties":
+					props = attr.Value
 				}
 			}
-			info.spineItems = append(info.spineItems, SpineItemref{IDRef: idref})
+			info.spineItems = append(info.spineItems, SpineItemref{IDRef: idref, Properties: props})
+		case "reference":
+			var refType, refTitle, refHref string
+			for _, attr := range se.Attr {
+				switch attr.Name.Local {
+				case "type":
+					refType = attr.Value
+				case "title":
+					refTitle = attr.Value
+				case "href":
+					refHref = attr.Value
+				}
+			}
+			info.guideRefs = append(info.guideRefs, GuideReference{
+				Type: refType, Title: refTitle, Href: refHref,
+			})
 		case "meta":
 			var prop, val string
 			for _, attr := range se.Attr {
@@ -261,9 +303,8 @@ func parseMetadata(data []byte) Metadata {
 			}
 			switch t.Name.Local {
 			case "title":
-				if text := readElementText(decoder); text != "" {
-					md.Titles = append(md.Titles, text)
-				}
+				text := readElementText(decoder)
+				md.Titles = append(md.Titles, text)
 			case "identifier":
 				id := ""
 				for _, attr := range t.Attr {
