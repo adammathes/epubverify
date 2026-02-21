@@ -13,7 +13,7 @@ A Go-based EPUB validator that checks EPUB files for compliance with standards.
 ### go install
 
 ```bash
-go install github.com/adammathes/epubverify/cmd/epubverify@latest
+go install github.com/adammathes/epubverify@latest
 ```
 
 This installs the `epubverify` binary to `$GOPATH/bin` (or `$HOME/go/bin`).
@@ -23,7 +23,7 @@ This installs the `epubverify` binary to `$GOPATH/bin` (or `$HOME/go/bin`).
 ```bash
 git clone https://github.com/adammathes/epubverify.git
 cd epubverify
-go build -o epubverify ./cmd/epubverify/
+go build -o epubverify .
 ```
 
 The compiled binary will be created as `epubverify` in the current directory.
@@ -97,8 +97,7 @@ make clean       Remove built binary
 
 ```
 epubverify-go/
-├── cmd/epubverify/    # CLI entry point
-│   └── main.go
+├── main.go               # CLI entry point
 ├── pkg/
 │   ├── epub/          # EPUB file parsing and zip handling
 │   ├── validate/      # Validation logic (OCF, OPF, HTML, CSS, nav, etc.)

@@ -4,7 +4,7 @@ EPUBCHECK_JAR ?= $(HOME)/tools/epubcheck-5.3.0/epubcheck.jar
 .PHONY: build test spec-test compare bench clean
 
 build:                       ## Build the binary
-	go build -o epubverify ./cmd/epubverify/
+	go build -o epubverify .
 
 test:                        ## Run unit tests
 	go test ./pkg/...
