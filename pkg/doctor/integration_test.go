@@ -459,6 +459,170 @@ body { color: #333; }
 	}
 }
 
+// TestDoctorIntegrationTier4Problems creates an EPUB with multiple Tier 4
+// issues and verifies the doctor fixes all of them simultaneously.
+// Uses two chapters: ch1 for OPF-033 (fragment href), ch2 for XHTML fixes.
+func TestDoctorIntegrationTier4Problems(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "broken4.epub")
+	output := filepath.Join(dir, "fixed4.epub")
+
+	f, err := os.Create(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := zip.NewWriter(f)
+
+	// Mimetype (correct)
+	header := &zip.FileHeader{Name: "mimetype", Method: zip.Store}
+	mw, _ := w.CreateHeader(header)
+	mw.Write([]byte("application/epub+zip"))
+
+	// Container
+	cw, _ := w.Create("META-INF/container.xml")
+	cw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`))
+
+	// OPF with multiple Tier 4 OPF-level issues:
+	// 1. Duplicate dcterms:modified (OPF-028)
+	// 2. Fragment in manifest href for ch1 (OPF-033)
+	// 3. Duplicate spine idref for ch2 (OPF-017)
+	// 4. Invalid linear="true" on ch2 (OPF-038)
+	// XHTML issues are on ch2 (which has a clean manifest href):
+	// 5. Processing instruction (HTM-020)
+	// 6. lang/xml:lang mismatch (HTM-026)
+	// 7. Missing <title> (HTM-002)
+	// 8. <base> element (HTM-009)
+	ow, _ := w.Create("OEBPS/content.opf")
+	ow.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Tier 4 Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+    <meta property="dcterms:modified">2024-06-15T12:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml#intro" media-type="application/xhtml+xml"/>
+    <item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch2" linear="true"/>
+    <itemref idref="ch2"/>
+  </spine>
+</package>`))
+
+	// Nav doc
+	nw, _ := w.Create("OEBPS/nav.xhtml")
+	nw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Navigation</title></head>
+<body>
+<nav epub:type="toc"><ol>
+<li><a href="chapter1.xhtml">Chapter 1</a></li>
+<li><a href="chapter2.xhtml">Chapter 2</a></li>
+</ol></nav>
+</body>
+</html>`))
+
+	// Chapter 1 — clean content, used for OPF-033 fragment test
+	chw1, _ := w.Create("OEBPS/chapter1.xhtml")
+	chw1.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Chapter 1</title></head>
+<body><p id="intro">Chapter one content</p></body>
+</html>`))
+
+	// Chapter 2 — has all XHTML-level Tier 4 issues
+	chw2, _ := w.Create("OEBPS/chapter2.xhtml")
+	chw2.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<?oxygen RNGSchema="test.rng"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-GB">
+<head><base href="http://example.com/"/></head>
+<body><p>Chapter two content</p></body>
+</html>`))
+
+	w.Close()
+	f.Close()
+
+	// Validate before
+	beforeReport, err := validate.Validate(input)
+	if err != nil {
+		t.Fatalf("Pre-validation failed: %v", err)
+	}
+	beforeErrors := beforeReport.ErrorCount() + beforeReport.FatalCount()
+	beforeWarnings := beforeReport.WarningCount()
+	t.Logf("Before: %d errors, %d warnings", beforeErrors, beforeWarnings)
+	for _, msg := range beforeReport.Messages {
+		t.Logf("  %s", msg)
+	}
+
+	// Run doctor
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	t.Logf("\nApplied %d fixes:", len(result.Fixes))
+	for _, fix := range result.Fixes {
+		t.Logf("  [%s] %s", fix.CheckID, fix.Description)
+	}
+
+	afterErrors := result.AfterReport.ErrorCount() + result.AfterReport.FatalCount()
+	afterWarnings := result.AfterReport.WarningCount()
+	t.Logf("\nAfter: %d errors, %d warnings", afterErrors, afterWarnings)
+	for _, msg := range result.AfterReport.Messages {
+		t.Logf("  %s", msg)
+	}
+
+	// Verify all expected Tier 4 fixes were applied
+	expectedFixes := map[string]bool{
+		"OPF-028": false, // duplicate dcterms:modified
+		"OPF-033": false, // fragment in manifest href
+		"OPF-017": false, // duplicate spine idref
+		"OPF-038": false, // invalid linear value
+		"HTM-020": false, // processing instruction
+		"HTM-026": false, // lang/xml:lang mismatch
+		"HTM-002": false, // missing title
+		"HTM-009": false, // base element
+	}
+	for _, fix := range result.Fixes {
+		if _, ok := expectedFixes[fix.CheckID]; ok {
+			expectedFixes[fix.CheckID] = true
+		}
+	}
+	for checkID, found := range expectedFixes {
+		if !found {
+			t.Errorf("Expected fix for %s but it was not applied", checkID)
+		}
+	}
+
+	// Verify combined issue count improved
+	totalBefore := beforeErrors + beforeWarnings
+	totalAfter := afterErrors + afterWarnings
+	if totalAfter >= totalBefore {
+		t.Errorf("Expected fewer total issues after fix: before=%d, after=%d", totalBefore, totalAfter)
+	}
+
+	// Verify output is a valid ZIP
+	zr, err := zip.OpenReader(output)
+	if err != nil {
+		t.Fatalf("Output is not a valid ZIP: %v", err)
+	}
+	zr.Close()
+}
+
 // TestDoctorRoundTrip verifies that running doctor on a valid EPUB
 // produces identical validation results.
 func TestDoctorRoundTrip(t *testing.T) {

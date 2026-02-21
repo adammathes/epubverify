@@ -1200,6 +1200,404 @@ func isValidUTF8(data []byte) bool {
 	return true
 }
 
+// --- Tier 4 fixes ---
+
+// fixExtraDCTermsModified removes duplicate dcterms:modified elements, keeping
+// only the first occurrence. Fixes OPF-028.
+func fixExtraDCTermsModified(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil || ep.Package.Version < "3.0" || ep.Package.ModifiedCount <= 1 {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	content := string(opfData)
+	// Match <meta property="dcterms:modified">...</meta>
+	modifiedRe := regexp.MustCompile(`(?s)\s*<meta\s+property\s*=\s*["']dcterms:modified["'][^>]*>[^<]*</meta>`)
+	matches := modifiedRe.FindAllStringIndex(content, -1)
+	if len(matches) <= 1 {
+		return nil
+	}
+
+	// Remove all but the first match (iterate in reverse to preserve indices)
+	removed := 0
+	for i := len(matches) - 1; i >= 1; i-- {
+		content = content[:matches[i][0]] + content[matches[i][1]:]
+		removed++
+	}
+
+	files[ep.RootfilePath] = []byte(content)
+	return []Fix{{
+		CheckID:     "OPF-028",
+		Description: fmt.Sprintf("Removed %d duplicate dcterms:modified element(s)", removed),
+		File:        ep.RootfilePath,
+	}}
+}
+
+// fixManifestHrefFragment strips fragment identifiers from manifest item hrefs.
+// Fixes OPF-033.
+func fixManifestHrefFragment(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	content := string(opfData)
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" || !strings.Contains(item.Href, "#") {
+			continue
+		}
+
+		cleanHref := strings.SplitN(item.Href, "#", 2)[0]
+		// Replace in the OPF: href="original#fragment" → href="clean"
+		content = strings.Replace(content, `href="`+item.Href+`"`, `href="`+cleanHref+`"`, 1)
+		content = strings.Replace(content, `href='`+item.Href+`'`, `href='`+cleanHref+`'`, 1)
+		fixes = append(fixes, Fix{
+			CheckID:     "OPF-033",
+			Description: fmt.Sprintf("Stripped fragment from manifest href '%s' → '%s'", item.Href, cleanHref),
+			File:        ep.RootfilePath,
+		})
+	}
+
+	if len(fixes) > 0 {
+		files[ep.RootfilePath] = []byte(content)
+	}
+	return fixes
+}
+
+// fixDuplicateSpineIdrefs removes duplicate spine itemref entries, keeping
+// only the first occurrence of each idref. Fixes OPF-017.
+func fixDuplicateSpineIdrefs(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	// Check for duplicates
+	seen := make(map[string]bool)
+	hasDups := false
+	for _, ref := range ep.Package.Spine {
+		if ref.IDRef == "" {
+			continue
+		}
+		if seen[ref.IDRef] {
+			hasDups = true
+			break
+		}
+		seen[ref.IDRef] = true
+	}
+	if !hasDups {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	content := string(opfData)
+	removed := 0
+	seen = make(map[string]bool)
+
+	for _, ref := range ep.Package.Spine {
+		if ref.IDRef == "" {
+			continue
+		}
+		if seen[ref.IDRef] {
+			// Remove this duplicate itemref
+			itemrefRe := regexp.MustCompile(`\s*<itemref\s[^>]*idref\s*=\s*["']` + regexp.QuoteMeta(ref.IDRef) + `["'][^>]*/?\s*>`)
+			// Find all matches and remove only the second (and subsequent)
+			locs := itemrefRe.FindAllStringIndex(content, -1)
+			if len(locs) > 1 {
+				// Remove the last occurrence (to keep the first)
+				last := locs[len(locs)-1]
+				content = content[:last[0]] + content[last[1]:]
+				removed++
+			}
+		}
+		seen[ref.IDRef] = true
+	}
+
+	if removed == 0 {
+		return nil
+	}
+
+	files[ep.RootfilePath] = []byte(content)
+	return []Fix{{
+		CheckID:     "OPF-017",
+		Description: fmt.Sprintf("Removed %d duplicate spine itemref(s)", removed),
+		File:        ep.RootfilePath,
+	}}
+}
+
+// fixInvalidLinear fixes invalid spine linear attribute values.
+// Valid values are "yes" or "no". Fixes OPF-038.
+func fixInvalidLinear(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	opfData, ok := files[ep.RootfilePath]
+	if !ok {
+		return nil
+	}
+
+	content := string(opfData)
+	var fixes []Fix
+
+	for _, ref := range ep.Package.Spine {
+		if ref.Linear == "" || ref.Linear == "yes" || ref.Linear == "no" {
+			continue
+		}
+
+		// Map common invalid values
+		replacement := "yes"
+		lower := strings.ToLower(ref.Linear)
+		if lower == "false" || lower == "0" || lower == "n" {
+			replacement = "no"
+		}
+
+		old := `linear="` + ref.Linear + `"`
+		new := `linear="` + replacement + `"`
+		if strings.Contains(content, old) {
+			content = strings.Replace(content, old, new, 1)
+			fixes = append(fixes, Fix{
+				CheckID:     "OPF-038",
+				Description: fmt.Sprintf("Fixed invalid linear='%s' to '%s'", ref.Linear, replacement),
+				File:        ep.RootfilePath,
+			})
+		}
+	}
+
+	if len(fixes) > 0 {
+		files[ep.RootfilePath] = []byte(content)
+	}
+	return fixes
+}
+
+// fixBaseElement removes <base> elements from XHTML content documents.
+// Fixes HTM-009.
+func fixBaseElement(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	baseRe := regexp.MustCompile(`\s*<base\b[^>]*/?>`)
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		if !baseRe.MatchString(content) {
+			continue
+		}
+
+		newContent := baseRe.ReplaceAllString(content, "")
+		files[fullPath] = []byte(newContent)
+		fixes = append(fixes, Fix{
+			CheckID:     "HTM-009",
+			Description: "Removed <base> element",
+			File:        fullPath,
+		})
+	}
+
+	return fixes
+}
+
+// fixProcessingInstructions removes non-XML processing instructions from content.
+// Fixes HTM-020.
+func fixProcessingInstructions(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	// Match all PIs — we'll skip <?xml ...?> manually since Go regexp lacks lookahead.
+	piRe := regexp.MustCompile(`\s*<\?[a-zA-Z][a-zA-Z0-9_-]*[^?]*\?>`)
+	xmlDeclRe := regexp.MustCompile(`^<\?xml\s`)
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		count := 0
+		newContent := piRe.ReplaceAllStringFunc(content, func(match string) string {
+			trimmed := strings.TrimSpace(match)
+			if xmlDeclRe.MatchString(trimmed) {
+				return match // preserve <?xml ...?>
+			}
+			count++
+			return ""
+		})
+
+		if count == 0 {
+			continue
+		}
+
+		files[fullPath] = []byte(newContent)
+		fixes = append(fixes, Fix{
+			CheckID:     "HTM-020",
+			Description: fmt.Sprintf("Removed %d processing instruction(s)", count),
+			File:        fullPath,
+		})
+	}
+
+	return fixes
+}
+
+// fixLangXMLLangMismatch syncs lang and xml:lang attributes when both are
+// present but have different values. Sets lang to match xml:lang.
+// Fixes HTM-026.
+func fixLangXMLLangMismatch(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+		// Find the html element and check for lang/xml:lang mismatch
+		// Pattern: <html ... lang="X" ... xml:lang="Y" ...> or reverse order
+		htmlRe := regexp.MustCompile(`(?s)(<html\b[^>]*>)`)
+		htmlMatch := htmlRe.FindString(content)
+		if htmlMatch == "" {
+			continue
+		}
+
+		langRe := regexp.MustCompile(`\blang\s*=\s*["']([^"']*)["']`)
+		xmlLangRe := regexp.MustCompile(`\bxml:lang\s*=\s*["']([^"']*)["']`)
+
+		langMatch := langRe.FindStringSubmatch(htmlMatch)
+		xmlLangMatch := xmlLangRe.FindStringSubmatch(htmlMatch)
+
+		if langMatch == nil || xmlLangMatch == nil {
+			continue
+		}
+		if strings.EqualFold(langMatch[1], xmlLangMatch[1]) {
+			continue
+		}
+
+		// Set lang to match xml:lang (xml:lang is the authoritative one in XHTML)
+		newHtml := langRe.ReplaceAllString(htmlMatch, `lang="`+xmlLangMatch[1]+`"`)
+		content = strings.Replace(content, htmlMatch, newHtml, 1)
+		files[fullPath] = []byte(content)
+
+		fixes = append(fixes, Fix{
+			CheckID:     "HTM-026",
+			Description: fmt.Sprintf("Synced lang='%s' to match xml:lang='%s'", langMatch[1], xmlLangMatch[1]),
+			File:        fullPath,
+		})
+	}
+
+	return fixes
+}
+
+// fixMissingTitle adds a <title> element to content documents that lack one.
+// Fixes HTM-002.
+func fixMissingTitle(files map[string][]byte, ep *epub.EPUB) []Fix {
+	if ep.Package == nil {
+		return nil
+	}
+
+	var fixes []Fix
+
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, ok := files[fullPath]
+		if !ok {
+			continue
+		}
+
+		content := string(data)
+
+		// Check if title exists in head
+		if hasTitleInHead(data) {
+			continue
+		}
+
+		// Find <head> and insert <title> right after it
+		headRe := regexp.MustCompile(`(<head\b[^>]*>)`)
+		if !headRe.MatchString(content) {
+			continue
+		}
+
+		newContent := headRe.ReplaceAllString(content, "${1}<title>Untitled</title>")
+		files[fullPath] = []byte(newContent)
+		fixes = append(fixes, Fix{
+			CheckID:     "HTM-002",
+			Description: "Added missing <title> element",
+			File:        fullPath,
+		})
+	}
+
+	return fixes
+}
+
+// hasTitleInHead checks whether an XHTML document has a <title> in <head>.
+func hasTitleInHead(data []byte) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inHead := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "head" {
+				inHead = true
+			}
+			if inHead && t.Name.Local == "title" {
+				return true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "head" {
+				return false
+			}
+		}
+	}
+}
+
 // navDocHasToc checks whether a navigation document has epub:type="toc".
 // Used by doctor mode to scan content features.
 func navDocHasToc(data []byte) bool {

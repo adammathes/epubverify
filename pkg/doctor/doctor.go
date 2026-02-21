@@ -26,6 +26,16 @@
 //   - CSS-005: @import rules — inlines imported CSS content
 //   - ENC-001: non-UTF-8 encoding declaration — transcodes (iso-8859-1, windows-1252) or fixes declaration
 //   - ENC-002: UTF-16 encoded content — transcodes to UTF-8
+//
+// Tier 4 fixes (cleanup and consistency):
+//   - OPF-028: multiple dcterms:modified — removes duplicates
+//   - OPF-033: fragment in manifest href — strips fragment identifier
+//   - OPF-017: duplicate spine idrefs — removes duplicate itemrefs
+//   - OPF-038: invalid spine linear value — normalizes to "yes"/"no"
+//   - HTM-009: <base> element present — removes it
+//   - HTM-020: processing instructions — removes non-XML PIs
+//   - HTM-026: lang/xml:lang mismatch — syncs lang to match xml:lang
+//   - HTM-002: missing <title> element — adds <title>Untitled</title>
 package doctor
 
 import (
@@ -138,6 +148,32 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 
 	// Encoding: fix non-UTF-8 encoding declarations and transcode
 	allFixes = append(allFixes, fixEncodingDeclaration(files, ep)...)
+
+	// --- Tier 4 fixes ---
+
+	// OPF-level: remove extra dcterms:modified elements
+	allFixes = append(allFixes, fixExtraDCTermsModified(files, ep)...)
+
+	// OPF-level: strip fragment identifiers from manifest hrefs
+	allFixes = append(allFixes, fixManifestHrefFragment(files, ep)...)
+
+	// OPF-level: remove duplicate spine idrefs
+	allFixes = append(allFixes, fixDuplicateSpineIdrefs(files, ep)...)
+
+	// OPF-level: fix invalid spine linear attribute values
+	allFixes = append(allFixes, fixInvalidLinear(files, ep)...)
+
+	// Content-level: remove <base> elements
+	allFixes = append(allFixes, fixBaseElement(files, ep)...)
+
+	// Content-level: remove processing instructions
+	allFixes = append(allFixes, fixProcessingInstructions(files, ep)...)
+
+	// Content-level: sync lang/xml:lang mismatch
+	allFixes = append(allFixes, fixLangXMLLangMismatch(files, ep)...)
+
+	// Content-level: add missing <title> element
+	allFixes = append(allFixes, fixMissingTitle(files, ep)...)
 
 	if len(allFixes) == 0 {
 		ep.Close()

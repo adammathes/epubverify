@@ -1164,3 +1164,453 @@ func TestTranscodeUTF16(t *testing.T) {
 		t.Errorf("Expected 'Hi', got %q", string(result))
 	}
 }
+
+// --- Tier 4 unit tests ---
+
+// createCustomEPUB builds a custom EPUB from raw parts for targeted testing.
+func createCustomEPUB(t *testing.T, opf, chapter string, extraFiles map[string][]byte) string {
+	t.Helper()
+	dir := t.TempDir()
+	epubPath := filepath.Join(dir, "test.epub")
+
+	f, err := os.Create(epubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := zip.NewWriter(f)
+
+	header := &zip.FileHeader{Name: "mimetype", Method: zip.Store}
+	mw, _ := w.CreateHeader(header)
+	mw.Write([]byte("application/epub+zip"))
+
+	cw, _ := w.Create("META-INF/container.xml")
+	cw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`))
+
+	ow, _ := w.Create("OEBPS/content.opf")
+	ow.Write([]byte(opf))
+
+	nw, _ := w.Create("OEBPS/nav.xhtml")
+	nw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Navigation</title></head>
+<body>
+<nav epub:type="toc"><ol><li><a href="chapter1.xhtml">Chapter 1</a></li></ol></nav>
+</body>
+</html>`))
+
+	chw, _ := w.Create("OEBPS/chapter1.xhtml")
+	chw.Write([]byte(chapter))
+
+	for name, data := range extraFiles {
+		ew, _ := w.Create(name)
+		ew.Write(data)
+	}
+
+	w.Close()
+	f.Close()
+	return epubPath
+}
+
+func TestDoctorFixesExtraDCTermsModified(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+    <meta property="dcterms:modified">2024-06-15T12:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch</title></head><body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "OPF-028" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected OPF-028 fix for duplicate dcterms:modified")
+	}
+
+	for _, msg := range result.AfterReport.Messages {
+		if msg.CheckID == "OPF-028" {
+			t.Errorf("OPF-028 still present after fix: %s", msg.Message)
+		}
+	}
+}
+
+func TestDoctorFixesManifestHrefFragment(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml#intro" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch</title></head><body><p id="intro">Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "OPF-033" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected OPF-033 fix for fragment in manifest href")
+	}
+
+	for _, msg := range result.AfterReport.Messages {
+		if msg.CheckID == "OPF-033" {
+			t.Errorf("OPF-033 still present after fix: %s", msg.Message)
+		}
+	}
+}
+
+func TestDoctorFixesDuplicateSpineIdrefs(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+    <itemref idref="ch1"/>
+  </spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch</title></head><body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "OPF-017" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected OPF-017 fix for duplicate spine idrefs")
+	}
+
+	for _, msg := range result.AfterReport.Messages {
+		if msg.CheckID == "OPF-017" {
+			t.Errorf("OPF-017 still present after fix: %s", msg.Message)
+		}
+	}
+}
+
+func TestDoctorFixesInvalidLinear(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1" linear="true"/>
+  </spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Ch</title></head><body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "OPF-038" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected OPF-038 fix for invalid linear value")
+	}
+
+	for _, msg := range result.AfterReport.Messages {
+		if msg.CheckID == "OPF-038" {
+			t.Errorf("OPF-038 still present after fix: %s", msg.Message)
+		}
+	}
+}
+
+func TestDoctorFixesBaseElement(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Ch</title><base href="http://example.com/"/></head>
+<body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "HTM-009" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected HTM-009 fix for <base> element")
+	}
+
+	ep, err := epub.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ep.Close()
+	data, _ := ep.ReadFile("OEBPS/chapter1.xhtml")
+	if strings.Contains(string(data), "<base") {
+		t.Error("Output still contains <base> element")
+	}
+}
+
+func TestDoctorFixesProcessingInstructions(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<?oxygen RNGSchema="test.rng"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Ch</title></head>
+<body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "HTM-020" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected HTM-020 fix for processing instructions")
+	}
+
+	ep, err := epub.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ep.Close()
+	data, _ := ep.ReadFile("OEBPS/chapter1.xhtml")
+	if strings.Contains(string(data), "<?oxygen") {
+		t.Error("Output still contains processing instruction")
+	}
+	// XML declaration should be preserved
+	if !strings.Contains(string(data), "<?xml") {
+		t.Error("XML declaration should be preserved")
+	}
+}
+
+func TestDoctorFixesLangMismatch(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-GB">
+<head><title>Ch</title></head>
+<body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "HTM-026" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected HTM-026 fix for lang/xml:lang mismatch")
+	}
+
+	ep, err := epub.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ep.Close()
+	data, _ := ep.ReadFile("OEBPS/chapter1.xhtml")
+	content := string(data)
+	// Both should now be en-GB
+	if !strings.Contains(content, `lang="en-GB"`) {
+		t.Error("Expected lang to be synced to en-GB")
+	}
+}
+
+func TestDoctorFixesMissingTitle(t *testing.T) {
+	opf := `<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+  </metadata>
+  <manifest>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="ch1"/></spine>
+</package>`
+	chapter := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head></head>
+<body><p>Hi</p></body></html>`
+
+	input := createCustomEPUB(t, opf, chapter, nil)
+	output := filepath.Join(t.TempDir(), "fixed.epub")
+
+	result, err := Repair(input, output)
+	if err != nil {
+		t.Fatalf("Repair failed: %v", err)
+	}
+
+	foundFix := false
+	for _, fix := range result.Fixes {
+		if fix.CheckID == "HTM-002" {
+			foundFix = true
+			break
+		}
+	}
+	if !foundFix {
+		t.Error("Expected HTM-002 fix for missing title")
+	}
+
+	ep, err := epub.Open(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ep.Close()
+	data, _ := ep.ReadFile("OEBPS/chapter1.xhtml")
+	if !strings.Contains(string(data), "<title>") {
+		t.Error("Output should contain a <title> element")
+	}
+}
