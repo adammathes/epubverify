@@ -12,7 +12,7 @@ import (
 
 // checkOCF runs all OCF container checks. Returns true if a fatal error
 // was found that prevents further processing.
-func checkOCF(ep *epub.EPUB, r *report.Report) bool {
+func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	fatal := false
 
 	// OCF-001: mimetype file must be present
@@ -28,8 +28,11 @@ func checkOCF(ep *epub.EPUB, r *report.Report) bool {
 	checkMimetypeNoExtraField(ep, r)
 
 	// OCF-005: mimetype must be stored, not compressed
-	// Note: epubcheck 5.3.0 does not flag compressed mimetype entries,
-	// so we skip this check to match expected behavior.
+	// epubcheck 5.3.0 does not flag compressed mimetype entries.
+	// Only check in strict mode to better follow the spec.
+	if opts.Strict {
+		checkMimetypeStored(ep, r)
+	}
 
 	// OCF-006: container.xml must be present
 	if !checkContainerPresent(ep, r) {
@@ -148,6 +151,17 @@ func mimetypeLocalHeaderHasExtra(path string) (bool, error) {
 
 	extraLen := binary.LittleEndian.Uint16(header[28:30])
 	return extraLen > 0, nil
+}
+
+// OCF-005: mimetype must be stored, not compressed (strict mode only)
+func checkMimetypeStored(ep *epub.EPUB, r *report.Report) {
+	f, exists := ep.Files["mimetype"]
+	if !exists {
+		return
+	}
+	if f.Method != zip.Store {
+		r.Add(report.Error, "OCF-005", "The mimetype file must be stored (not compressed) in the zip archive")
+	}
 }
 
 // OCF-006: META-INF/container.xml must be present

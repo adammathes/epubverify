@@ -13,6 +13,12 @@ type EPUB struct {
 
 	// Parsed from OPF
 	Package *Package
+
+	// Raw OPF parse info (set during ParseOPF)
+	OPFParseError    error
+	HasMetadata      bool
+	HasManifest      bool
+	HasSpine         bool
 }
 
 // Package represents the OPF package document.
@@ -22,6 +28,8 @@ type Package struct {
 	Metadata         Metadata
 	Manifest         []ManifestItem
 	Spine            []SpineItemref
+	SpineToc         string // EPUB 2 spine toc attribute
+	RenditionLayout  string // "pre-paginated" or "reflowable"
 }
 
 // Metadata holds the OPF metadata section.
@@ -44,6 +52,8 @@ type ManifestItem struct {
 	Href       string
 	MediaType  string
 	Properties string
+	Fallback   string
+	HasID      bool // false when id attribute is missing
 }
 
 // SpineItemref represents a single itemref in the OPF spine.
