@@ -1,1 +1,1 @@
-# epubcheck-go
+# epubverify

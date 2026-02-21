@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/adammathes/epubcheck-go/pkg/epub"
-	"github.com/adammathes/epubcheck-go/pkg/report"
+	"github.com/adammathes/epubverify/pkg/epub"
+	"github.com/adammathes/epubverify/pkg/report"
 )
 
 // checkFXL validates fixed-layout properties.

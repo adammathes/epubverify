@@ -1,3 +1,3 @@
-module github.com/adammathes/epubcheck-go
+module github.com/adammathes/epubverify
 
 go 1.24.7

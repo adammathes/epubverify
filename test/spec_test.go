@@ -7,8 +7,8 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/adammathes/epubcheck-go/pkg/report"
-	"github.com/adammathes/epubcheck-go/pkg/validate"
+	"github.com/adammathes/epubverify/pkg/report"
+	"github.com/adammathes/epubverify/pkg/validate"
 )
 
 type checksFile struct {

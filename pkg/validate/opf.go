@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/adammathes/epubcheck-go/pkg/epub"
-	"github.com/adammathes/epubcheck-go/pkg/report"
+	"github.com/adammathes/epubverify/pkg/epub"
+	"github.com/adammathes/epubverify/pkg/report"
 )
 
 // checkOPF parses the OPF and runs all package document checks.

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/adammathes/epubcheck-go/pkg/report"
-	"github.com/adammathes/epubcheck-go/pkg/validate"
+	"github.com/adammathes/epubverify/pkg/report"
+	"github.com/adammathes/epubverify/pkg/validate"
 )
 
 const version = "0.1.0"
@@ -14,14 +14,14 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: epubcheck <file.epub> [--json <output.json | ->] [--version]")
+		fmt.Fprintln(os.Stderr, "Usage: epubverify <file.epub> [--json <output.json | ->] [--version]")
 		os.Exit(2)
 	}
 
 	// Handle --version
 	for _, arg := range args {
 		if arg == "--version" {
-			fmt.Printf("epubcheck-go %s\n", version)
+			fmt.Printf("epubverify %s\n", version)
 			os.Exit(0)
 		}
 	}

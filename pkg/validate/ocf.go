@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/adammathes/epubcheck-go/pkg/epub"
-	"github.com/adammathes/epubcheck-go/pkg/report"
+	"github.com/adammathes/epubverify/pkg/epub"
+	"github.com/adammathes/epubverify/pkg/report"
 )
 
 // checkOCF runs all OCF container checks. Returns true if a fatal error
