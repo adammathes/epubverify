@@ -21,8 +21,8 @@ This installs the `epubverify` binary to `$GOPATH/bin` (or `$HOME/go/bin`).
 ### Building from source
 
 ```bash
-git clone https://github.com/adammathes/epubverify-go.git
-cd epubverify-go
+git clone https://github.com/adammathes/epubverify.git
+cd epubverify
 go build -o epubverify ./cmd/epubverify/
 ```
 
