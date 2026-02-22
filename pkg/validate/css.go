@@ -180,18 +180,36 @@ func checkCSSValidProperties(css string, location string, r *report.Report) {
 	commentRe := regexp.MustCompile(`/\*[\s\S]*?\*/`)
 	css = commentRe.ReplaceAllString(css, "")
 
-	// Extract property names from declarations (property: value;)
-	propRe := regexp.MustCompile(`(?m)^\s*([\w-]+)\s*:`)
-	for _, match := range propRe.FindAllStringSubmatch(css, -1) {
-		prop := strings.TrimSpace(match[1])
-		if strings.HasPrefix(prop, "-") {
-			// Allow vendor prefixes we don't know
-			continue
+	// Extract property declarations only from inside rule blocks.
+	// We track brace depth to skip selectors (outside blocks).
+	inBlock := 0
+	propRe := regexp.MustCompile(`^\s*([\w-]+)\s*:`)
+	for _, line := range strings.Split(css, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Count braces to track whether we're inside a rule block
+		for _, ch := range trimmed {
+			if ch == '{' {
+				inBlock++
+			} else if ch == '}' {
+				if inBlock > 0 {
+					inBlock--
+				}
+			}
 		}
-		if !knownCSSProperties[prop] {
-			r.AddWithLocation(report.Warning, "CSS-002",
-				fmt.Sprintf("CSS property '%s' is not a recognized property name", prop),
-				location)
+		// Only look for properties when inside a block and the line
+		// doesn't contain a brace (selector lines like "a:hover {")
+		if inBlock > 0 && !strings.ContainsAny(trimmed, "{}") && trimmed != "" {
+			if match := propRe.FindStringSubmatch(line); match != nil {
+				prop := strings.TrimSpace(match[1])
+				if strings.HasPrefix(prop, "-") {
+					continue
+				}
+				if !knownCSSProperties[prop] {
+					r.AddWithLocation(report.Warning, "CSS-002",
+						fmt.Sprintf("CSS property '%s' is not a recognized property name", prop),
+						location)
+				}
+			}
 		}
 	}
 }

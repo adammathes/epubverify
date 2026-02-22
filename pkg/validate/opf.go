@@ -690,6 +690,11 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 			validIDs[id.ID] = true
 		}
 	}
+	for _, creator := range pkg.Metadata.Creators {
+		if creator.ID != "" {
+			validIDs[creator.ID] = true
+		}
+	}
 	for _, item := range pkg.Manifest {
 		if item.ID != "" {
 			validIDs[item.ID] = true

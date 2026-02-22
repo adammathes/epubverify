@@ -922,7 +922,7 @@ func checkEpubTypeValid(data []byte, location string, r *report.Report) {
 						continue
 					}
 					if !validEpubTypes[val] {
-						r.AddWithLocation(report.Warning, "HTM-015",
+						r.AddWithLocation(report.Info, "HTM-015",
 							fmt.Sprintf("epub:type value '%s' is not a recognized structural semantics value", val),
 							location)
 					}

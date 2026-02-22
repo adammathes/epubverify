@@ -301,9 +301,11 @@ func checkNavigation(ep *epub.EPUB, r *report.Report) {
 	}
 
 	// NAV-010: landmark entries should use valid epub:type values
+	// The EPUB 3 structural semantics vocabulary is extensible, so unknown
+	// values are informational rather than violations.
 	for _, t := range navInfo.landmarkTypes {
 		if !validEpubTypes[t] && !strings.Contains(t, ":") {
-			r.AddWithLocation(report.Warning, "NAV-010",
+			r.AddWithLocation(report.Info, "NAV-010",
 				fmt.Sprintf("Landmark nav entry uses unknown epub:type value '%s'", t),
 				fullPath)
 		}

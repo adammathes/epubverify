@@ -64,6 +64,7 @@ type Metadata struct {
 
 // DCCreator represents a dc:creator element with optional opf:role.
 type DCCreator struct {
+	ID    string // id attribute (used as refines target in EPUB 3)
 	Value string
 	Role  string // opf:role attribute (EPUB 2)
 }

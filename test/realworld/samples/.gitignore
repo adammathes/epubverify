@@ -1,0 +1,3 @@
+# Downloaded EPUB samples - not committed to git.
+# Run download-samples.sh to populate this directory.
+*.epub
