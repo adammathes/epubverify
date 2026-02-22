@@ -34,11 +34,12 @@ EPUBCHECK_JAR=/path/to/epubcheck.jar make realworld-compare
 
 ## Sample Corpus
 
-The corpus consists of 133 EPUBs from eight sources: Project Gutenberg,
+The corpus consists of ~133 EPUBs from eight sources: Project Gutenberg,
 Feedbooks, IDPF epub3-samples (both releases), DAISY accessibility tests,
 bmaupin/epub-samples, Standard Ebooks, wareid/EPUB3-tests, and
 readium/readium-test-files. 125 are valid per epubverify (including 2
 known false-negative gaps), 6 are known-invalid (both tools agree).
+The exact count depends on which URLs are live at download time.
 
 ### Valid Samples — Project Gutenberg (55)
 
@@ -176,7 +177,7 @@ elements. These exercise the OPF-037 refines check extensively.
 | `se-princess-mars.epub` | A Princess of Mars | Sci-fi |
 | `se-call-wild.epub` | The Call of the Wild | Adventure |
 
-### Valid Samples — wareid/EPUB3-tests (11)
+### Valid Samples — wareid/EPUB3-tests (10–11)
 
 From [wareid/EPUB3-tests](https://github.com/wareid/EPUB3-tests).
 Purpose-built EPUB 3 test files validated with epubcheck. These exercise

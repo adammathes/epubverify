@@ -67,10 +67,10 @@ func TestRealWorldSamples(t *testing.T) {
 
 			// All other samples should be valid
 			if !rpt.IsValid() {
-				t.Errorf("expected valid, got invalid (errors=%d, warnings=%d)",
-					rpt.ErrorCount(), rpt.WarningCount())
+				t.Errorf("expected valid, got invalid (fatal=%d, errors=%d, warnings=%d)",
+					rpt.FatalCount(), rpt.ErrorCount(), rpt.WarningCount())
 				for _, m := range rpt.Messages {
-					if m.Severity == "ERROR" || m.Severity == "WARNING" {
+					if m.Severity == "FATAL" || m.Severity == "ERROR" || m.Severity == "WARNING" {
 						t.Logf("  %s(%s): %s [%s]", m.Severity, m.CheckID, m.Message, m.Location)
 					}
 				}
