@@ -230,7 +230,32 @@ SE_SAMPLES=(
   "se-call-wild.epub|${SE_BASE}/jack-london/the-call-of-the-wild/downloads/jack-london_the-call-of-the-wild.epub?source=download|The Call of the Wild (SE)"
 )
 
-for extra_array in IDPF_SAMPLES IDPF_OLD_SAMPLES DAISY_SAMPLES BM_SAMPLES SE_SAMPLES; do
+# --- wareid/EPUB3-tests ---
+# Purpose-built EPUB 3 test files covering CSS styling, A/V content,
+# fixed layout, rendition properties, WOFF2 fonts, accessibility, etc.
+WAREID_BASE="https://raw.githubusercontent.com/wareid/EPUB3-tests/main"
+WAREID_SAMPLES=(
+  "wareid-fxl.epub|${WAREID_BASE}/Test_EPUB_Template/FXL/fxl.epub|Fixed-layout template (wareid)"
+  "wareid-reflow.epub|${WAREID_BASE}/Test_EPUB_Template/Reflow/reflow.epub|Reflowable template (wareid)"
+  "wareid-av-content.epub|${WAREID_BASE}/Tests/Test_Suite_Files/Complete/TestSuite03_AV_Content_EPUB3.epub|Audio/video content (wareid)"
+  "wareid-woff2.epub|${WAREID_BASE}/Tests/Test_Suite_Files/WOFF2_Test/WOFF2_v1.epub|WOFF2 web fonts (wareid)"
+  "wareid-large-font.epub|${WAREID_BASE}/Tests/Large_Font/Large_Font.epub|Large embedded font (wareid)"
+  "wareid-page-breaks.epub|${WAREID_BASE}/Tests/Page_Breaks_v2/page_breaks_v2.epub|Page break testing (wareid)"
+  "wareid-text-size.epub|${WAREID_BASE}/Tests/Text_Size_Variants/text-size-variants_v1.epub|Text size variants (wareid)"
+  "wareid-url-test.epub|${WAREID_BASE}/Tests/URL_Test/URL_test.epub|URL handling test (wareid)"
+  "wareid-a11y-vocab.epub|${WAREID_BASE}/Tests/a11y%20Metadata/a11y_vocab.epub|Accessibility vocabulary (wareid)"
+  "wareid-rendition-orient-auto.epub|${WAREID_BASE}/Tests/EPUB3_FXL_Samples/testfiles/rendition_orientauto_v1.epub|FXL orientation auto (wareid)"
+  "wareid-rendition-spread-both.epub|${WAREID_BASE}/Tests/EPUB3_FXL_Samples/testfiles/rendition_spreadboth_v1.epub|FXL spread both (wareid)"
+)
+
+# --- readium/readium-test-files ---
+# Conformance test EPUBs from the Readium SDK project.
+READIUM_BASE="https://raw.githubusercontent.com/readium/readium-test-files/master"
+READIUM_SAMPLES=(
+  "readium-tiny-mathml.epub|${READIUM_BASE}/conformance/Tiny-MathML/Tiny-MathML.epub|MathML conformance test (Readium)"
+)
+
+for extra_array in IDPF_SAMPLES IDPF_OLD_SAMPLES DAISY_SAMPLES BM_SAMPLES SE_SAMPLES WAREID_SAMPLES READIUM_SAMPLES; do
   eval 'entries=("${'$extra_array'[@]}")'
   for entry in "${entries[@]}"; do
     IFS='|' read -r filename url description <<< "$entry"

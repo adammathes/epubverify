@@ -19,7 +19,7 @@ implementation.
 # 1. Build epubverify
 make build
 
-# 2. Download sample EPUBs (122 from Gutenberg, Feedbooks, IDPF, DAISY, Standard Ebooks, etc.)
+# 2. Download sample EPUBs (133 from Gutenberg, Feedbooks, IDPF, DAISY, SE, wareid, Readium)
 ./test/realworld/download-samples.sh
 
 # 3. Run the Go integration tests
@@ -31,10 +31,11 @@ EPUBCHECK_JAR=/path/to/epubcheck.jar make realworld-compare
 
 ## Sample Corpus
 
-The corpus consists of 122 EPUBs from six sources: Project Gutenberg,
+The corpus consists of 133 EPUBs from eight sources: Project Gutenberg,
 Feedbooks, IDPF epub3-samples (both releases), DAISY accessibility tests,
-bmaupin/epub-samples, and Standard Ebooks. 114 are valid per epubverify
-(including 2 known false-negative gaps), 6 are known-invalid (both tools agree).
+bmaupin/epub-samples, Standard Ebooks, wareid/EPUB3-tests, and
+readium/readium-test-files. 125 are valid per epubverify (including 2
+known false-negative gaps), 6 are known-invalid (both tools agree).
 
 ### Valid Samples — Project Gutenberg (55)
 
@@ -172,6 +173,35 @@ elements. These exercise the OPF-037 refines check extensively.
 | `se-princess-mars.epub` | A Princess of Mars | Sci-fi |
 | `se-call-wild.epub` | The Call of the Wild | Adventure |
 
+### Valid Samples — wareid/EPUB3-tests (11)
+
+From [wareid/EPUB3-tests](https://github.com/wareid/EPUB3-tests).
+Purpose-built EPUB 3 test files validated with epubcheck. These exercise
+specific rendering and layout features not commonly found in regular books.
+
+| File | Features |
+|------|----------|
+| `wareid-fxl.epub` | Fixed-layout template (6 MB) |
+| `wareid-reflow.epub` | Reflowable template |
+| `wareid-av-content.epub` | Audio/video content (10 MB) |
+| `wareid-woff2.epub` | WOFF2 web font embedding |
+| `wareid-large-font.epub` | Large embedded font (3.5 MB) |
+| `wareid-page-breaks.epub` | Page break CSS properties |
+| `wareid-text-size.epub` | Text size variants |
+| `wareid-url-test.epub` | URL handling edge cases |
+| `wareid-a11y-vocab.epub` | Accessibility vocabulary metadata |
+| `wareid-rendition-orient-auto.epub` | FXL rendition orientation auto |
+| `wareid-rendition-spread-both.epub` | FXL rendition spread both |
+
+### Valid Samples — readium/readium-test-files (1)
+
+From [readium/readium-test-files](https://github.com/readium/readium-test-files).
+Conformance test EPUBs from the Readium SDK project.
+
+| File | Features |
+|------|----------|
+| `readium-tiny-mathml.epub` | MathML conformance test |
+
 ### Known-Invalid Samples (6 — both tools report errors)
 
 | File | Title | Errors |
@@ -279,6 +309,10 @@ To expand the corpus:
 - **[Standard Ebooks](https://standardebooks.org/)** — High-quality
   EPUB 3 with rich metadata. Append `?source=download` to the download URL
   for direct CLI access.
+- **[wareid/EPUB3-tests](https://github.com/wareid/EPUB3-tests)** —
+  Purpose-built EPUB 3 test files for CSS, A/V, FXL, fonts, a11y.
+- **[readium/readium-test-files](https://github.com/readium/readium-test-files)** —
+  Conformance and functional test EPUBs from the Readium SDK.
 - **[Open Textbook Library](https://open.umn.edu/opentextbooks/)** —
   CC-licensed textbooks with complex structure.
 
@@ -414,6 +448,19 @@ gaps in epubverify.
 
 After all fixes: **122/122 samples match epubcheck's validity verdict**
 (114 valid, 6 known-invalid, 2 known false-negatives pass as valid).
+
+### Round 9 (expanded to 133 EPUBs: +11 wareid, +1 readium)
+
+Added 11 purpose-built test EPUBs from wareid/EPUB3-tests (fixed-layout
+templates, audio/video content, WOFF2 fonts, rendition properties,
+accessibility vocabulary, page breaks, URL handling) and 1 MathML
+conformance test from readium/readium-test-files.
+
+12 additional samples from these repos were excluded as false negatives
+(epubcheck INVALID due to RSC-005 schema validation, RSC-001 missing
+files, PKG-026 obfuscation, OPF-043 fallback requirements).
+
+No new bugs found. **133/133 samples match epubcheck's validity verdict.**
 
 ## Future Work
 
