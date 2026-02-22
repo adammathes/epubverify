@@ -60,11 +60,19 @@ SAMPLES=(
   "pg35-time-machine.epub|https://www.gutenberg.org/ebooks/35.epub3.images|The Time Machine (EPUB 3, sci-fi)"
   "pg236-jungle-book.epub|https://www.gutenberg.org/ebooks/236.epub3.images|The Jungle Book (EPUB 3)"
   "pg55-wizard-of-oz.epub|https://www.gutenberg.org/ebooks/55.epub3.images|Wizard of Oz (EPUB 3, illustrated)"
+  "pg6130-iliad.epub|https://www.gutenberg.org/ebooks/6130.epub3.images|The Iliad (EPUB 3, epic poetry)"
+  "pg158-emma.epub|https://www.gutenberg.org/ebooks/158.epub3.images|Emma (EPUB 3)"
+  "pg93-nietzsche-zarathustra.epub|https://www.gutenberg.org/ebooks/1998.epub3.images|Thus Spake Zarathustra (EPUB 3, philosophy)"
   # EPUB 2
   "pg46-christmas-carol-epub2.epub|https://www.gutenberg.org/ebooks/46.epub.noimages|A Christmas Carol (EPUB 2, nested navPoints)"
   "pg174-dorian-gray-epub2.epub|https://www.gutenberg.org/ebooks/174.epub.noimages|Picture of Dorian Gray (EPUB 2)"
   "pg76-twain-huck-finn-epub2.epub|https://www.gutenberg.org/ebooks/76.epub.noimages|Huckleberry Finn (EPUB 2)"
   "pg1232-prince-epub2.epub|https://www.gutenberg.org/ebooks/1232.epub.noimages|The Prince (EPUB 2)"
+  "pg1400-great-expectations-epub2.epub|https://www.gutenberg.org/ebooks/1400.epub.noimages|Great Expectations (EPUB 2)"
+  "pg120-treasure-island-epub2.epub|https://www.gutenberg.org/ebooks/120.epub.noimages|Treasure Island (EPUB 2)"
+  "pg2591-grimm-epub2.epub|https://www.gutenberg.org/ebooks/2591.epub.noimages|Grimm's Fairy Tales (EPUB 2)"
+  "pg11339-aesop-epub2.epub|https://www.gutenberg.org/ebooks/11339.epub.noimages|Aesop's Fables (EPUB 2, short stories)"
+  "pg1184-monte-cristo-epub2.epub|https://www.gutenberg.org/ebooks/1184.epub.noimages|Count of Monte Cristo (EPUB 2, very large)"
 
   # --- Feedbooks EPUB 2 (known-invalid: mimetype CRLF, NCX UID mismatch) ---
   "fb-sherlock-study.epub|https://www.feedbooks.com/book/4453.epub|A Study in Scarlet - Feedbooks (EPUB 2)"
@@ -163,6 +171,14 @@ IDPF_SAMPLES=(
   "idpf-vertically-scrollable-manga.epub|${IDPF_BASE}/vertically-scrollable-manga.epub|Vertical manga (IDPF, known-invalid)"
 )
 
+# --- IDPF Older Release (20170606) ---
+# A couple of samples from the older IDPF release to test backward compatibility
+IDPF_OLD_BASE="https://github.com/IDPF/epub3-samples/releases/download/20170606"
+IDPF_OLD_SAMPLES=(
+  "idpf-old-wasteland.epub|${IDPF_OLD_BASE}/wasteland.epub|Waste Land old release (IDPF 2017)"
+  "idpf-old-trees.epub|${IDPF_OLD_BASE}/trees.epub|Trees old release (IDPF 2017)"
+)
+
 # --- DAISY Accessibility Tests ---
 DAISY_BASE="https://github.com/daisy/epub-accessibility-tests/releases/download/fundamental-2.0"
 DAISY_SAMPLES=(
@@ -179,7 +195,7 @@ BM_SAMPLES=(
   "bm-basic-v3plus2.epub|${BM_BASE}/basic-v3plus2.epub|Basic EPUB 3+2 hybrid"
 )
 
-for extra_array in IDPF_SAMPLES DAISY_SAMPLES BM_SAMPLES; do
+for extra_array in IDPF_SAMPLES IDPF_OLD_SAMPLES DAISY_SAMPLES BM_SAMPLES; do
   eval 'entries=("${'$extra_array'[@]}")'
   for entry in "${entries[@]}"; do
     IFS='|' read -r filename url description <<< "$entry"

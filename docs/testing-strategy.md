@@ -19,7 +19,7 @@ implementation.
 # 1. Build epubverify
 make build
 
-# 2. Download sample EPUBs (86 from Gutenberg, Feedbooks, IDPF, DAISY, etc.)
+# 2. Download sample EPUBs (96 from Gutenberg, Feedbooks, IDPF, DAISY, etc.)
 ./test/realworld/download-samples.sh
 
 # 3. Run the Go integration tests
@@ -31,11 +31,11 @@ EPUBCHECK_JAR=/path/to/epubcheck.jar make realworld-compare
 
 ## Sample Corpus
 
-The corpus consists of 86 EPUBs from five sources: Project Gutenberg,
-Feedbooks, IDPF epub3-samples, DAISY accessibility tests, and
-bmaupin/epub-samples. 78 are valid, 8 are known-invalid (both tools agree).
+The corpus consists of 96 EPUBs from five sources: Project Gutenberg,
+Feedbooks, IDPF epub3-samples (both releases), DAISY accessibility tests,
+and bmaupin/epub-samples. 88 are valid, 8 are known-invalid (both tools agree).
 
-### Valid Samples — Project Gutenberg (35)
+### Valid Samples — Project Gutenberg (46)
 
 | File | Title | Why included |
 |------|-------|--------------|
@@ -69,17 +69,27 @@ bmaupin/epub-samples. 78 are valid, 8 are known-invalid (both tools agree).
 | `pg35-time-machine.epub` | The Time Machine | Sci-fi |
 | `pg236-jungle-book.epub` | The Jungle Book | Illustrated children's |
 | `pg55-wizard-of-oz.epub` | Wizard of Oz | Illustrated children's |
+| `pg6130-iliad.epub` | The Iliad | Epic poetry |
+| `pg158-emma.epub` | Emma | Jane Austen |
+| `pg93-nietzsche-zarathustra.epub` | Thus Spake Zarathustra | Philosophy |
 | `pg46-christmas-carol-epub2.epub` | A Christmas Carol | **EPUB 2**, nested `navPoint` elements |
 | `pg174-dorian-gray-epub2.epub` | Picture of Dorian Gray | **EPUB 2** |
 | `pg76-twain-huck-finn-epub2.epub` | Huckleberry Finn | **EPUB 2** |
 | `pg1232-prince-epub2.epub` | The Prince | **EPUB 2** |
+| `pg1400-great-expectations-epub2.epub` | Great Expectations | **EPUB 2** |
+| `pg120-treasure-island-epub2.epub` | Treasure Island | **EPUB 2** |
+| `pg2591-grimm-epub2.epub` | Grimm's Fairy Tales | **EPUB 2** |
+| `pg11339-aesop-epub2.epub` | Aesop's Fables | **EPUB 2**, short stories |
+| `pg1184-monte-cristo-epub2.epub` | Count of Monte Cristo | **EPUB 2**, very large |
 
-### Valid Samples — IDPF epub3-samples (39)
+### Valid Samples — IDPF epub3-samples (41)
 
 All 43 EPUB files from the [IDPF epub3-samples](https://github.com/IDPF/epub3-samples)
-GitHub releases, minus 2 excluded for requiring HTML5 schema validation
-(accessible_epub_3, cc-shared-culture) and 2 known-invalid (see below).
-These exercise exotic EPUB 3 features not found in standard novels.
+GitHub releases (20230704), minus 2 excluded for requiring HTML5 schema
+validation (accessible_epub_3, cc-shared-culture) and 2 known-invalid
+(see below). Plus 2 samples from the older 20170606 release for backward
+compatibility testing. These exercise exotic EPUB 3 features not found in
+standard novels.
 
 **Fixed-layout (9):** haruko-html-jpeg, haruko-ahl (region-based navigation),
 haruko-jpeg (JPEG-in-spine), cole-voyage-of-life (2 variants), page-blanche
@@ -321,6 +331,16 @@ new false positive categories:
 `jlreq-in-english.epub` (RSC-007 mailto).
 
 After all fixes: **86/86 samples match epubcheck's validity verdict.**
+
+### Round 7 (expanded to 96 EPUBs: +8 Gutenberg, +2 IDPF old release)
+
+Added 3 more EPUB 3 samples (Iliad, Emma, Thus Spake Zarathustra) and
+5 more EPUB 2 samples (Great Expectations, Treasure Island, Grimm's
+Fairy Tales, Aesop's Fables, Count of Monte Cristo) to deepen EPUB 2
+coverage. Also added 2 samples from the older IDPF 20170606 release
+for backward compatibility testing.
+
+No new bugs found. **96/96 samples match epubcheck's validity verdict.**
 
 ## Future Work
 
