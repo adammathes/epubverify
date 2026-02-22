@@ -1,0 +1,3 @@
+# Generated synthetic EPUB samples - not committed to git.
+# Run create-edge-cases.py to populate this directory.
+*.epub

@@ -54,6 +54,54 @@ func TestParseContainer(t *testing.T) {
 	}
 }
 
+func TestResolveHref_PercentEncoded(t *testing.T) {
+	// ResolveHref must URL-decode manifest hrefs because ZIP entry names
+	// use decoded forms while OPF hrefs are IRI-encoded.
+	ep := &EPUB{RootfilePath: "EPUB/package.opf"}
+
+	tests := []struct {
+		href string
+		want string
+	}{
+		{"chapter.xhtml", "EPUB/chapter.xhtml"},
+		{"chapter%20one.xhtml", "EPUB/chapter one.xhtml"},
+		{"my%20chapter%20%28two%29.xhtml", "EPUB/my chapter (two).xhtml"},
+		{"content%20files/extra%20doc.xhtml", "EPUB/content files/extra doc.xhtml"},
+		{"sub/page.xhtml", "EPUB/sub/page.xhtml"},
+		{"file%2Bplus.xhtml", "EPUB/file+plus.xhtml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.href, func(t *testing.T) {
+			got := ep.ResolveHref(tt.href)
+			if got != tt.want {
+				t.Errorf("ResolveHref(%q) = %q, want %q", tt.href, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveHref_NoOPFDir(t *testing.T) {
+	ep := &EPUB{RootfilePath: "content.opf"}
+
+	tests := []struct {
+		href string
+		want string
+	}{
+		{"chapter.xhtml", "chapter.xhtml"},
+		{"chapter%20one.xhtml", "chapter one.xhtml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.href, func(t *testing.T) {
+			got := ep.ResolveHref(tt.href)
+			if got != tt.want {
+				t.Errorf("ResolveHref(%q) = %q, want %q", tt.href, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseOPF(t *testing.T) {
 	sd := specDir(t)
 	ep, err := Open(filepath.Join(sd, "fixtures/epub/valid/minimal-epub3.epub"))

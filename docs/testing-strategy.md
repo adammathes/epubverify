@@ -19,10 +19,13 @@ implementation.
 # 1. Build epubverify
 make build
 
-# 2. Download sample EPUBs (133 from Gutenberg, Feedbooks, IDPF, DAISY, SE, wareid, Readium)
+# 2. Download real-world sample EPUBs (133 from Gutenberg, Feedbooks, IDPF, DAISY, SE, wareid, Readium)
 ./test/realworld/download-samples.sh
 
-# 3. Run the Go integration tests
+# 3. Generate synthetic edge-case EPUBs (29 targeting specific validation paths)
+python3 test/realworld/create-edge-cases.py
+
+# 4. Run the Go integration tests
 make realworld-test
 
 # 4. (Optional) Compare side-by-side with epubcheck (requires Java + epubcheck JAR)
@@ -231,12 +234,12 @@ Sample `.epub` files are git-ignored — they must be downloaded/built locally.
 
 ## Test Layers
 
-### 1. Go Integration Test (`test/realworld/realworld_test.go`)
+### 1. Real-World Integration Test (`test/realworld/realworld_test.go`)
 
 Two test functions:
 
-- **`TestRealWorldSamples`** — validates all samples; valid samples must have
-  0 errors; known-invalid samples must have errors.
+- **`TestRealWorldSamples`** — validates all 133 real-world samples; valid
+  samples must have 0 errors; known-invalid samples must have errors.
 - **`TestKnownInvalidExpectedErrors`** — verifies known-invalid samples
   produce specific expected check IDs (OCF-003, E2-010).
 
@@ -246,6 +249,18 @@ go test ./test/realworld/ -v
 ```
 
 Skips gracefully if no samples are downloaded.
+
+### 2. Synthetic Integration Test (`test/synthetic/synthetic_test.go`)
+
+- **`TestSyntheticSamples`** — validates all 29 synthetic edge-case EPUBs;
+  all must pass with 0 errors and 0 warnings.
+
+Run with:
+```bash
+go test ./test/synthetic/ -v
+```
+
+Skips gracefully if no synthetic EPUBs are generated.
 
 ### 2. Comparison Script (`test/realworld/compare.sh`)
 
@@ -461,6 +476,86 @@ conformance test from readium/readium-test-files.
 files, PKG-026 obfuscation, OPF-043 fallback requirements).
 
 No new bugs found. **133/133 samples match epubcheck's validity verdict.**
+
+### Round 10 (added 29 synthetic EPUBs + 5 bug fixes)
+
+Created 29 purpose-built synthetic EPUBs (8 custom edge-case + 21
+reconstructed from w3c/epubcheck test fixtures) targeting under-tested
+validation paths. These are kept separate in `test/synthetic/samples/`
+since they are generated, not downloaded from real publishers.
+
+**Synthetic edge-case EPUBs (8):**
+- `edge-deep-fallback.epub` — 6-level deep manifest fallback chain
+- `edge-fxl-mixed.epub` — FXL with per-spine-item rendition overrides
+- `edge-multi-nav.epub` — Navigation with toc + landmarks + page-list
+- `edge-deep-paths.epub` — Deeply nested `../../` cross-references
+- `edge-font-obfuscation.epub` — META-INF/encryption.xml with IDPF font obfuscation
+- `edge-smil-overlay.epub` — SMIL media overlays with nested par/seq
+- `edge-complex-css.epub` — @media queries, CSS custom properties, pseudo-elements
+- `edge-percent-encoded.epub` — Percent-encoded filenames (`%20`, `%28`)
+
+**Reconstructed w3c/epubcheck test fixtures (21):**
+- Fallback chains (n-to-1, waterfall patterns)
+- Foreign resources with HTML fallbacks (img, audio, video, embed, object, picture, script data blocks)
+- Font obfuscation with encryption.xml
+- Media overlays (minimal, SVG, active-class, textref, unusual extensions)
+- Multiple renditions (basic, edupub, with mapping document)
+- Percent-encoded filenames
+
+These exposed **5 new false-positive bug categories**, all fixed:
+
+| Check ID | Severity | Description | Fix |
+|----------|----------|-------------|-----|
+| RSC-001 | ERROR | Percent-encoded manifest hrefs not decoded when looking up ZIP entries | `ResolveHref()` now URL-decodes hrefs with `url.PathUnescape()` |
+| RSC-002 | WARNING | Files belonging to other renditions (multiple rootfiles) flagged as undeclared | Parse all rootfile OPFs and container `<links>` to build exclusion set |
+| MED-001/MED-003 | ERROR | Foreign (non-core) image types checked for magic bytes / corruption | Skip image integrity checks for non-core media types |
+| HTM-005 | ERROR | `<script type="text/plain">` data blocks flagged as scripted content | Only flag executable script types (JS/module), not data blocks |
+| RSC-004 | ERROR | Remote `<video>`/`<audio>` sources flagged even when content doc has `remote-resources` property | Check `remote-resources` property before flagging |
+
+After all fixes: **133/133 real-world + 29/29 synthetic = 162/162 match.**
+
+## Synthetic Test Suite
+
+Synthetic EPUBs live in `test/synthetic/samples/` and are tested by
+`test/synthetic/synthetic_test.go`. They are separate from the real-world
+corpus because they are generated (not from real publishers) and target
+specific validation code paths.
+
+### Generating Synthetic EPUBs
+
+```bash
+# Generate the 8 custom edge-case EPUBs
+python3 test/realworld/create-edge-cases.py
+
+# The 21 w3c-epubcheck EPUBs are created by the w3c fixture reconstruction script
+```
+
+### Integration with w3c/epubcheck Test Fixtures
+
+The w3c/epubcheck repository stores its test EPUBs as **expanded directory
+trees** (not `.epub` files) under `src/test/resources/`. To use them:
+
+1. **Identify relevant test directories** using the GitHub API:
+   ```bash
+   gh api repos/w3c/epubcheck/git/trees/main?recursive=1 | \
+     jq '.tree[].path' | grep 'files/'
+   ```
+
+2. **Download and package** individual test directories into valid EPUBs
+   by fetching all files and creating a properly structured ZIP with
+   mimetype stored first and uncompressed.
+
+3. **Validate with epubcheck** first — some test fixtures are intentionally
+   invalid. Only include valid ones in the test corpus.
+
+4. **Place in `test/synthetic/samples/`** with the `w3c-epubcheck-` prefix.
+
+Key areas covered from w3c/epubcheck fixtures:
+- `src/test/resources/epub3/05-package-document/files/` — fallback chains
+- `src/test/resources/epub3/06-content-document/files/` — foreign resources
+- `src/test/resources/epub3/09-media-overlays/files/` — SMIL overlays
+- `src/test/resources/epub3/04-open-container-format/files/` — encryption, obfuscation
+- `src/test/resources/epub3/11-multiple-renditions/files/` — multiple renditions
 
 ## Future Work
 

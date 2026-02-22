@@ -82,8 +82,16 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 			continue
 		}
 
+		// For non-core image types (foreign resources), skip all image checks.
+		// Foreign image resources are valid per EPUB spec when they have fallbacks
+		// (either via manifest fallback attribute or HTML fallback like <picture>/<object>).
+		isNonCoreImage := strings.HasPrefix(item.MediaType, "image/") && !coreImageTypes[item.MediaType]
+
 		// MED-002: images should use core media types
-		if strings.HasPrefix(item.MediaType, "image/") && !coreImageTypes[item.MediaType] {
+		// Only warn for spine items — non-spine foreign images are expected
+		// to be handled via fallback mechanisms (manifest fallback,
+		// <picture>/<object> elements).
+		if isNonCoreImage && spineItemIDs[item.ID] && item.Fallback == "" {
 			r.Add(report.Warning, "MED-002",
 				fmt.Sprintf("Image '%s' uses non-core media type '%s'; prefer JPEG, PNG, GIF, or SVG", item.Href, item.MediaType))
 		}
@@ -96,7 +104,9 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 
 		// MED-001: image media type must match actual content
 		// MED-003: image must not be corrupted
-		if strings.HasPrefix(item.MediaType, "image/") && item.MediaType != "image/svg+xml" {
+		// Only check core image types — foreign image resources may have
+		// arbitrary binary formats that don't match known magic bytes.
+		if strings.HasPrefix(item.MediaType, "image/") && item.MediaType != "image/svg+xml" && !isNonCoreImage {
 			mismatch := checkImageMediaType(ep, item, fullPath, r)
 			// Only check for corruption if media type matches (mismatch is a different problem)
 			if !mismatch {

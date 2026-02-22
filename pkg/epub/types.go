@@ -9,9 +9,10 @@ type EPUB struct {
 	Files   map[string]*zip.File // path -> zip.File
 
 	// Parsed from container.xml
-	RootfilePath  string
-	AllRootfiles  []Rootfile // all rootfile elements from container.xml
-	ContainerData []byte     // raw container.xml bytes
+	RootfilePath   string
+	AllRootfiles   []Rootfile // all rootfile elements from container.xml
+	ContainerLinks []string   // hrefs from <links> in container.xml
+	ContainerData  []byte     // raw container.xml bytes
 
 	// Parsed from OPF
 	Package *Package

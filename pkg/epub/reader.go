@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -55,8 +56,9 @@ func (ep *EPUB) ReadFile(name string) ([]byte, error) {
 // Container XML types
 
 type containerXML struct {
-	XMLName   xml.Name     `xml:"container"`
-	RootFiles rootFilesXML `xml:"rootfiles"`
+	XMLName   xml.Name       `xml:"container"`
+	RootFiles rootFilesXML   `xml:"rootfiles"`
+	Links     containerLinks `xml:"links"`
 }
 
 type rootFilesXML struct {
@@ -65,6 +67,16 @@ type rootFilesXML struct {
 
 type rootFileXML struct {
 	FullPath  string `xml:"full-path,attr"`
+	MediaType string `xml:"media-type,attr"`
+}
+
+type containerLinks struct {
+	Link []containerLink `xml:"link"`
+}
+
+type containerLink struct {
+	Href      string `xml:"href,attr"`
+	Rel       string `xml:"rel,attr"`
 	MediaType string `xml:"media-type,attr"`
 }
 
@@ -87,6 +99,13 @@ func (ep *EPUB) ParseContainer() error {
 			FullPath:  rf.FullPath,
 			MediaType: rf.MediaType,
 		})
+	}
+
+	// Store container-level links (e.g., mapping documents for multiple renditions)
+	for _, link := range c.Links.Link {
+		if link.Href != "" {
+			ep.ContainerLinks = append(ep.ContainerLinks, link.Href)
+		}
 	}
 
 	for _, rf := range c.RootFiles.RootFile {
@@ -493,10 +512,16 @@ func (ep *EPUB) OPFDir() string {
 }
 
 // ResolveHref resolves a relative href from the OPF file to a full path within the EPUB.
+// Manifest hrefs are IRI-encoded (e.g. spaces as %20), but ZIP entry names use
+// decoded forms, so we percent-decode before joining.
 func (ep *EPUB) ResolveHref(href string) string {
+	decoded, err := url.PathUnescape(href)
+	if err != nil {
+		decoded = href // fall back to raw href if decoding fails
+	}
 	dir := ep.OPFDir()
 	if dir == "." {
-		return href
+		return decoded
 	}
-	return dir + "/" + href
+	return dir + "/" + decoded
 }

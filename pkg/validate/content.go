@@ -370,7 +370,18 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 		}
 
 		if se.Name.Local == "script" {
-			hasScript = true
+			// Per HTML spec, <script type="text/plain"> and other non-JS types
+			// are data blocks, not executable scripts. Only count as scripted
+			// if type is absent or a JavaScript-compatible MIME type.
+			scriptType := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" {
+					scriptType = strings.TrimSpace(strings.ToLower(attr.Value))
+				}
+			}
+			if isExecutableScriptType(scriptType) {
+				hasScript = true
+			}
 		}
 		if se.Name.Local == "svg" || se.Name.Space == "http://www.w3.org/2000/svg" {
 			hasSVG = true
@@ -584,12 +595,16 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		}
 
 		// Check <audio src="http://..."> and <video src="http://...">
+		// Per EPUB 3 spec, audio/video remote resources are allowed when
+		// the content document declares the "remote-resources" property.
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-004",
-						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
-						location)
+			if !hasProperty(item.Properties, "remote-resources") {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+						r.AddWithLocation(report.Error, "RSC-004",
+							fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+							location)
+					}
 				}
 			}
 		}
@@ -716,6 +731,24 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 			fmt.Sprintf("Referenced resource '%s' (%s) was not found in the container", src, target),
 			location)
 	}
+}
+
+// isExecutableScriptType returns true if the script type attribute value
+// indicates executable JavaScript. Per HTML spec, a <script> is executable
+// if type is absent/empty, or matches a JavaScript MIME type. Non-JS types
+// like "text/plain" or "application/ld+json" are data blocks.
+func isExecutableScriptType(t string) bool {
+	if t == "" {
+		return true // no type = JavaScript
+	}
+	jsTypes := map[string]bool{
+		"text/javascript":        true,
+		"application/javascript": true,
+		"text/ecmascript":        true,
+		"application/ecmascript": true,
+		"module":                 true,
+	}
+	return jsTypes[t]
 }
 
 // resolvePath resolves a relative path against a base directory.
