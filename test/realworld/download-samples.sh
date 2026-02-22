@@ -50,6 +50,16 @@ SAMPLES=(
   "pg25328-tao-te-ching-zh.epub|https://www.gutenberg.org/ebooks/25328.epub3.images|Tao Te Ching (EPUB 3, Chinese)"
   "pg1982-siddhartha-jp.epub|https://www.gutenberg.org/ebooks/1982.epub3.images|Siddhartha (EPUB 3)"
   "pg5200-kafka-metamorphosis.epub|https://www.gutenberg.org/ebooks/5200.epub3.images|Metamorphosis (EPUB 3, translator as contributor)"
+  "pg28054-brothers-karamazov.epub|https://www.gutenberg.org/ebooks/28054.epub3.images|Brothers Karamazov (EPUB 3, very large)"
+  "pg17405-art-of-war.epub|https://www.gutenberg.org/ebooks/17405.epub3.images|Art of War (EPUB 3)"
+  "pg2554-crime-and-punishment.epub|https://www.gutenberg.org/ebooks/2554.epub3.images|Crime and Punishment (EPUB 3)"
+  "pg1260-jane-eyre.epub|https://www.gutenberg.org/ebooks/1260.epub3.images|Jane Eyre (EPUB 3, illustrated)"
+  "pg768-wuthering-heights.epub|https://www.gutenberg.org/ebooks/768.epub3.images|Wuthering Heights (EPUB 3)"
+  "pg55201-republic-plato.epub|https://www.gutenberg.org/ebooks/55201.epub3.images|The Republic (EPUB 3, philosophy)"
+  "pg16328-beowulf.epub|https://www.gutenberg.org/ebooks/16328.epub3.images|Beowulf (EPUB 3, Old English poetry)"
+  "pg35-time-machine.epub|https://www.gutenberg.org/ebooks/35.epub3.images|The Time Machine (EPUB 3, sci-fi)"
+  "pg236-jungle-book.epub|https://www.gutenberg.org/ebooks/236.epub3.images|The Jungle Book (EPUB 3)"
+  "pg55-wizard-of-oz.epub|https://www.gutenberg.org/ebooks/55.epub3.images|Wizard of Oz (EPUB 3, illustrated)"
   # EPUB 2
   "pg46-christmas-carol-epub2.epub|https://www.gutenberg.org/ebooks/46.epub.noimages|A Christmas Carol (EPUB 2, nested navPoints)"
   "pg174-dorian-gray-epub2.epub|https://www.gutenberg.org/ebooks/174.epub.noimages|Picture of Dorian Gray (EPUB 2)"
@@ -104,21 +114,53 @@ echo "Done. Downloaded: $downloaded, Skipped: $skipped, Failed: $failed"
 # EPUB features: fixed-layout, SVG, MathML, media overlays, SSML, RTL, etc.
 IDPF_BASE="https://github.com/IDPF/epub3-samples/releases/download/20230704"
 IDPF_SAMPLES=(
+  # Fixed-layout samples
   "idpf-haruko-fxl.epub|${IDPF_BASE}/haruko-html-jpeg.epub|Fixed-layout manga (IDPF)"
+  "idpf-haruko-ahl.epub|${IDPF_BASE}/haruko-ahl.epub|Region-based navigation (IDPF)"
+  "idpf-haruko-jpeg.epub|${IDPF_BASE}/haruko-jpeg.epub|JPEG-in-spine FXL (IDPF)"
   "idpf-cole-voyage-fxl.epub|${IDPF_BASE}/cole-voyage-of-life.epub|Fixed-layout art (IDPF)"
+  "idpf-cole-voyage-of-life-tol.epub|${IDPF_BASE}/cole-voyage-of-life-tol.epub|FXL art variant (IDPF)"
   "idpf-page-blanche-fxl.epub|${IDPF_BASE}/page-blanche.epub|Fixed-layout SVG (IDPF)"
+  "idpf-page-blanche-bitmaps-in-spine.epub|${IDPF_BASE}/page-blanche-bitmaps-in-spine.epub|Bitmaps in spine (IDPF)"
+  "idpf-sous-le-vent.epub|${IDPF_BASE}/sous-le-vent.epub|French FXL (IDPF)"
+  "idpf-sous-le-vent_svg-in-spine.epub|${IDPF_BASE}/sous-le-vent_svg-in-spine.epub|SVG-in-spine FXL (IDPF)"
+  # SVG and MathML
   "idpf-svg-in-spine.epub|${IDPF_BASE}/svg-in-spine.epub|SVG content documents (IDPF)"
   "idpf-linear-algebra-mathml.epub|${IDPF_BASE}/linear-algebra.epub|MathML equations (IDPF)"
+  # Media and fonts
   "idpf-moby-dick-mo.epub|${IDPF_BASE}/moby-dick-mo.epub|Media overlays (IDPF)"
+  "idpf-mymedia_lite.epub|${IDPF_BASE}/mymedia_lite.epub|Media elements (IDPF)"
   "idpf-wasteland-woff.epub|${IDPF_BASE}/wasteland-woff.epub|WOFF web fonts (IDPF)"
+  "idpf-wasteland-woff-obf.epub|${IDPF_BASE}/wasteland-woff-obf.epub|Obfuscated WOFF fonts (IDPF)"
   "idpf-wasteland-otf-obf.epub|${IDPF_BASE}/wasteland-otf-obf.epub|Obfuscated OTF fonts (IDPF)"
+  "idpf-wasteland-otf.epub|${IDPF_BASE}/wasteland-otf.epub|OTF fonts (IDPF)"
+  "idpf-wasteland.epub|${IDPF_BASE}/wasteland.epub|The Waste Land plain (IDPF)"
+  # International and RTL
   "idpf-arabic-rtl.epub|${IDPF_BASE}/regime-anticancer-arabic.epub|Arabic RTL text (IDPF)"
+  "idpf-israelsailing.epub|${IDPF_BASE}/israelsailing.epub|Hebrew RTL content (IDPF)"
+  "idpf-mahabharata.epub|${IDPF_BASE}/mahabharata.epub|Devanagari text (IDPF)"
+  "idpf-horizontally-scrollable-emakimono.epub|${IDPF_BASE}/horizontally-scrollable-emakimono.epub|Japanese scrolling (IDPF)"
+  "idpf-jlreq-in-japanese.epub|${IDPF_BASE}/jlreq-in-japanese.epub|Japanese layout requirements (IDPF)"
+  "idpf-kusamakura-japanese-vertical-writing.epub|${IDPF_BASE}/kusamakura-japanese-vertical-writing.epub|Vertical writing (IDPF)"
+  "idpf-kusamakura-preview.epub|${IDPF_BASE}/kusamakura-preview.epub|Kusamakura preview (IDPF)"
+  "idpf-kusamakura-preview-embedded.epub|${IDPF_BASE}/kusamakura-preview-embedded.epub|Kusamakura embedded (IDPF)"
+  # Accessibility and metadata
   "idpf-georgia-pls-ssml.epub|${IDPF_BASE}/georgia-pls-ssml.epub|SSML pronunciation (IDPF)"
   "idpf-childrens-lit.epub|${IDPF_BASE}/childrens-literature.epub|Title refinement metadata (IDPF)"
+  "idpf-childrens-media-query.epub|${IDPF_BASE}/childrens-media-query.epub|Media query (IDPF)"
   "idpf-figure-gallery.epub|${IDPF_BASE}/figure-gallery-bindings.epub|EPUB bindings (IDPF)"
   "idpf-indexing.epub|${IDPF_BASE}/indexing-for-eds-and-auths-3f.epub|Indexing, TTF fonts (IDPF)"
-  "idpf-israelsailing.epub|${IDPF_BASE}/israelsailing.epub|Hebrew RTL content (IDPF)"
+  "idpf-indexing-for-eds-and-auths-3md.epub|${IDPF_BASE}/indexing-for-eds-and-auths-3md.epub|Indexing markdown (IDPF)"
+  "idpf-internallinks.epub|${IDPF_BASE}/internallinks.epub|Internal cross-references (IDPF)"
+  # Misc
+  "idpf-moby-dick.epub|${IDPF_BASE}/moby-dick.epub|Moby Dick plain (IDPF)"
+  "idpf-trees.epub|${IDPF_BASE}/trees.epub|Trees illustrated (IDPF)"
+  "idpf-quiz-bindings.epub|${IDPF_BASE}/quiz-bindings.epub|Quiz bindings (IDPF)"
+  "idpf-GhV-oeb-page.epub|${IDPF_BASE}/GhV-oeb-page.epub|OEB page map (IDPF)"
   "idpf-hefty-water.epub|${IDPF_BASE}/hefty-water.epub|Ultra-minimal EPUB (IDPF)"
+  # Known-invalid IDPF samples
+  "idpf-WCAG.epub|${IDPF_BASE}/WCAG.epub|WCAG accessibility (IDPF, known-invalid)"
+  "idpf-vertically-scrollable-manga.epub|${IDPF_BASE}/vertically-scrollable-manga.epub|Vertical manga (IDPF, known-invalid)"
 )
 
 # --- DAISY Accessibility Tests ---
@@ -126,6 +168,8 @@ DAISY_BASE="https://github.com/daisy/epub-accessibility-tests/releases/download/
 DAISY_SAMPLES=(
   "daisy-basic-functionality.epub|${DAISY_BASE}/Fundamental-Accessibility-Tests-Basic-Functionality-v2.0.0.epub|Accessibility metadata (DAISY)"
   "daisy-non-visual-reading.epub|${DAISY_BASE}/Fundamental-Accessibility-Tests-Non-Visual-Reading-v2.0.0.epub|Non-visual reading tests (DAISY)"
+  "daisy-read-aloud.epub|${DAISY_BASE}/Fundamental-Accessibility-Tests-Read-Aloud-v2.0.0.epub|Read aloud tests (DAISY)"
+  "daisy-visual-adjustments.epub|${DAISY_BASE}/Fundamental-Accessibility-Tests-Visual-Adjustments-v2.0.0.epub|Visual adjustments tests (DAISY)"
 )
 
 # --- Minimal EPUB test files (bmaupin/epub-samples) ---
