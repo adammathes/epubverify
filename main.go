@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/adammathes/epubverify/pkg/doctor"
 	"github.com/adammathes/epubverify/pkg/report"
 	"github.com/adammathes/epubverify/pkg/validate"
 )
@@ -14,7 +15,7 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: epubverify <file.epub> [--json <output.json | ->] [--version]")
+		fmt.Fprintln(os.Stderr, "Usage: epubverify <file.epub> [--json <output.json | ->] [--doctor [-o output.epub]] [--version]")
 		os.Exit(2)
 	}
 
@@ -28,12 +29,26 @@ func main() {
 
 	epubPath := args[0]
 	var jsonOutput string
+	var doctorMode bool
+	var doctorOutput string
 
 	for i := 1; i < len(args); i++ {
 		if args[i] == "--json" && i+1 < len(args) {
 			jsonOutput = args[i+1]
 			i++
 		}
+		if args[i] == "--doctor" {
+			doctorMode = true
+		}
+		if args[i] == "-o" && i+1 < len(args) {
+			doctorOutput = args[i+1]
+			i++
+		}
+	}
+
+	if doctorMode {
+		runDoctor(epubPath, doctorOutput)
+		return
 	}
 
 	r, err := validate.Validate(epubPath)
@@ -71,6 +86,42 @@ func main() {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func runDoctor(inputPath, outputPath string) {
+	result, err := doctor.Repair(inputPath, outputPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Doctor error: %v\n", err)
+		os.Exit(2)
+	}
+
+	beforeErrors := result.BeforeReport.ErrorCount() + result.BeforeReport.FatalCount()
+	beforeWarnings := result.BeforeReport.WarningCount()
+
+	if len(result.Fixes) == 0 {
+		fmt.Fprintf(os.Stderr, "No fixable issues found (%d errors, %d warnings remain).\n", beforeErrors, beforeWarnings)
+		os.Exit(0)
+	}
+
+	fmt.Fprintf(os.Stderr, "Applied %d fixes:\n", len(result.Fixes))
+	for _, fix := range result.Fixes {
+		if fix.File != "" {
+			fmt.Fprintf(os.Stderr, "  [%s] %s (%s)\n", fix.CheckID, fix.Description, fix.File)
+		} else {
+			fmt.Fprintf(os.Stderr, "  [%s] %s\n", fix.CheckID, fix.Description)
+		}
+	}
+
+	afterErrors := result.AfterReport.ErrorCount() + result.AfterReport.FatalCount()
+	afterWarnings := result.AfterReport.WarningCount()
+
+	fmt.Fprintf(os.Stderr, "\nBefore: %d errors, %d warnings\n", beforeErrors, beforeWarnings)
+	fmt.Fprintf(os.Stderr, "After:  %d errors, %d warnings\n", afterErrors, afterWarnings)
+
+	if outputPath == "" {
+		outputPath = inputPath + ".fixed.epub"
+	}
+	fmt.Fprintf(os.Stderr, "Output: %s\n", outputPath)
 }
 
 func writeJSON(r *report.Report, path string) error {

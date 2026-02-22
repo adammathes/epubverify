@@ -49,6 +49,33 @@ The compiled binary will be created as `epubverify` in the current directory.
 ./epubverify path/to/book.epub --json out.json   # to file
 ```
 
+### Doctor mode (experimental)
+
+Doctor mode automatically repairs common EPUB validation errors. It applies safe, mechanical fixes — things like missing mimetype files, wrong media types, bad date formats, obsolete HTML elements, encoding issues, and more (24 fix types total across 4 tiers).
+
+```bash
+# Repair an EPUB (writes to book.epub.fixed.epub)
+./epubverify book.epub --doctor
+
+# Specify output path
+./epubverify book.epub --doctor -o repaired.epub
+```
+
+Doctor mode always writes to a new file — it never modifies the original. After applying fixes, it re-validates the output and reports before/after error counts.
+
+```
+Applied 3 fixes:
+  [OCF-003] Fixed mimetype content
+  [OPF-004] Added dcterms:modified
+  [HTM-010] Replaced non-HTML5 DOCTYPE with <!DOCTYPE html>
+
+Before: 3 errors, 0 warnings
+After:  0 errors, 0 warnings
+Output: book.epub.fixed.epub
+```
+
+See [docs/epub-doctor-mode.md](docs/epub-doctor-mode.md) for the full list of supported fixes, architecture details, and known limitations.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -96,11 +123,12 @@ make clean       Remove built binary
 ## Project Structure
 
 ```
-epubverify-go/
+epubverify/
 ├── main.go               # CLI entry point
 ├── pkg/
 │   ├── epub/          # EPUB file parsing and zip handling
 │   ├── validate/      # Validation logic (OCF, OPF, HTML, CSS, nav, etc.)
+│   ├── doctor/        # Experimental auto-repair (--doctor mode)
 │   └── report/        # Report generation (text and JSON output)
 └── test/
     └── spec_test.go   # Spec compliance tests against epubverify-spec
