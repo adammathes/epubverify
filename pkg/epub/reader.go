@@ -344,23 +344,26 @@ func parseMetadata(data []byte) Metadata {
 			if !inMetadata {
 				continue
 			}
+
+			// Capture id attribute from any DC element (for OPF-037 refines targets)
+			dcID := ""
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "id" {
+					dcID = attr.Value
+					break
+				}
+			}
+			if dcID != "" {
+				md.DCElementIDs = append(md.DCElementIDs, dcID)
+			}
+
 			switch t.Name.Local {
 			case "title":
-				id := ""
-				for _, attr := range t.Attr {
-					if attr.Name.Local == "id" {
-						id = attr.Value
-					}
-				}
+				id := dcID
 				text := readElementText(decoder)
 				md.Titles = append(md.Titles, DCTitle{ID: id, Value: text})
 			case "identifier":
-				id := ""
-				for _, attr := range t.Attr {
-					if attr.Name.Local == "id" {
-						id = attr.Value
-					}
-				}
+				id := dcID
 				val := readElementText(decoder)
 				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val})
 			case "language":
@@ -377,30 +380,22 @@ func parseMetadata(data []byte) Metadata {
 				}
 			case "creator":
 				role := ""
-				id := ""
 				for _, attr := range t.Attr {
 					if attr.Name.Local == "role" {
 						role = attr.Value
 					}
-					if attr.Name.Local == "id" {
-						id = attr.Value
-					}
 				}
 				val := readElementText(decoder)
-				md.Creators = append(md.Creators, DCCreator{ID: id, Value: val, Role: role})
+				md.Creators = append(md.Creators, DCCreator{ID: dcID, Value: val, Role: role})
 			case "contributor":
 				role := ""
-				id := ""
 				for _, attr := range t.Attr {
 					if attr.Name.Local == "role" {
 						role = attr.Value
 					}
-					if attr.Name.Local == "id" {
-						id = attr.Value
-					}
 				}
 				val := readElementText(decoder)
-				md.Contributors = append(md.Contributors, DCCreator{ID: id, Value: val, Role: role})
+				md.Contributors = append(md.Contributors, DCCreator{ID: dcID, Value: val, Role: role})
 			}
 		case xml.EndElement:
 			if t.Name.Local == "metadata" {

@@ -765,6 +765,11 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 		validIDs[metaID] = true
 	}
 
+	// Collect IDs from all dc:* elements (publisher, subject, description, etc.)
+	for _, dcID := range pkg.Metadata.DCElementIDs {
+		validIDs[dcID] = true
+	}
+
 	for _, mr := range pkg.MetaRefines {
 		target := strings.TrimPrefix(mr.Refines, "#")
 		if target == "" {

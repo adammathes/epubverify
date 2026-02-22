@@ -172,6 +172,20 @@ var knownCSSProperties = map[string]bool{
 	"-epub-hyphens": true, "-epub-writing-mode": true,
 	"-webkit-writing-mode": true, "-ms-writing-mode": true,
 	"oeb-column-number": true, "adobe-hyphenate": true,
+	"adobe-text-layout": true,
+	// Modern CSS properties
+	"text-wrap": true, "hanging-punctuation": true,
+	"aspect-ratio": true, "accent-color": true,
+	"contain": true, "container": true, "container-name": true, "container-type": true,
+	"text-decoration-thickness": true, "text-underline-offset": true,
+	"scroll-margin": true, "scroll-padding": true,
+	"inset": true, "inset-block": true, "inset-inline": true,
+	"margin-block": true, "margin-inline": true,
+	"padding-block": true, "padding-inline": true,
+	"border-block": true, "border-inline": true,
+	"inline-size": true, "block-size": true,
+	"max-inline-size": true, "max-block-size": true,
+	"min-inline-size": true, "min-block-size": true,
 }
 
 // CSS-002: CSS stylesheets should use valid CSS property names

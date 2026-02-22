@@ -61,7 +61,8 @@ type Metadata struct {
 	Dates        []string
 	Sources      []string
 	Creators     []DCCreator
-	Contributors []DCCreator // dc:contributor elements (same structure as dc:creator)
+	Contributors []DCCreator  // dc:contributor elements (same structure as dc:creator)
+	DCElementIDs []string     // id attributes from all dc:* elements (publisher, subject, description, etc.)
 }
 
 // DCTitle represents a dc:title element with optional id attribute.

@@ -74,6 +74,17 @@ SAMPLES=(
   "pg11339-aesop-epub2.epub|https://www.gutenberg.org/ebooks/11339.epub.noimages|Aesop's Fables (EPUB 2, short stories)"
   "pg1184-monte-cristo-epub2.epub|https://www.gutenberg.org/ebooks/1184.epub.noimages|Count of Monte Cristo (EPUB 2, very large)"
 
+  # Additional Gutenberg EPUB 3
+  "pg844-rime-ancient-mariner.epub|https://www.gutenberg.org/ebooks/844.epub3.images|Rime of the Ancient Mariner (EPUB 3, poetry)"
+  "pg74-adventures-tom-sawyer.epub|https://www.gutenberg.org/ebooks/74.epub3.images|Adventures of Tom Sawyer (EPUB 3, illustrated)"
+  "pg76-huckleberry-finn.epub|https://www.gutenberg.org/ebooks/76.epub3.images|Adventures of Huckleberry Finn (EPUB 3, illustrated)"
+  "pg1661-adventures-sherlock-holmes.epub|https://www.gutenberg.org/ebooks/1661.epub3.images|Adventures of Sherlock Holmes (EPUB 3)"
+  "pg4300-ulysses.epub|https://www.gutenberg.org/ebooks/4300.epub3.images|Ulysses (EPUB 3, large)"
+  "pg174-dorian-gray.epub|https://www.gutenberg.org/ebooks/174.epub3.images|Picture of Dorian Gray (EPUB 3)"
+  "pg219-heart-of-darkness.epub|https://www.gutenberg.org/ebooks/219.epub3.images|Heart of Darkness (EPUB 3)"
+  "pg43-jekyll-hyde.epub|https://www.gutenberg.org/ebooks/43.epub3.images|Strange Case of Dr Jekyll and Mr Hyde (EPUB 3)"
+  "pg5200-kafka-metamorphosis.epub|https://www.gutenberg.org/ebooks/5200.epub3.images|Metamorphosis (EPUB 3)"
+
   # --- Feedbooks EPUB 2 (known-invalid: mimetype CRLF, NCX UID mismatch) ---
   "fb-sherlock-study.epub|https://www.feedbooks.com/book/4453.epub|A Study in Scarlet - Feedbooks (EPUB 2)"
   "fb-art-of-war.epub|https://www.feedbooks.com/book/168.epub|Art of War - Feedbooks (EPUB 2)"
@@ -195,7 +206,31 @@ BM_SAMPLES=(
   "bm-basic-v3plus2.epub|${BM_BASE}/basic-v3plus2.epub|Basic EPUB 3+2 hybrid"
 )
 
-for extra_array in IDPF_SAMPLES IDPF_OLD_SAMPLES DAISY_SAMPLES BM_SAMPLES; do
+# --- Standard Ebooks ---
+# Professionally typeset, richly marked-up EPUB 3 with guide, accessibility
+# metadata, custom vocab (se:*), and onix.xml records.
+SE_BASE="https://standardebooks.org/ebooks"
+SE_SAMPLES=(
+  "se-pride-prejudice.epub|${SE_BASE}/jane-austen/pride-and-prejudice/downloads/jane-austen_pride-and-prejudice.epub?source=download|Pride and Prejudice (SE)"
+  "se-frankenstein.epub|${SE_BASE}/mary-shelley/frankenstein/downloads/mary-shelley_frankenstein.epub?source=download|Frankenstein (SE)"
+  "se-hound-baskervilles.epub|${SE_BASE}/arthur-conan-doyle/the-hound-of-the-baskervilles/downloads/arthur-conan-doyle_the-hound-of-the-baskervilles.epub?source=download|Hound of the Baskervilles (SE)"
+  "se-dorian-gray.epub|${SE_BASE}/oscar-wilde/the-picture-of-dorian-gray/downloads/oscar-wilde_the-picture-of-dorian-gray.epub?source=download|Picture of Dorian Gray (SE)"
+  "se-moby-dick.epub|${SE_BASE}/herman-melville/moby-dick/downloads/herman-melville_moby-dick.epub?source=download|Moby Dick (SE)"
+  "se-jane-eyre.epub|${SE_BASE}/charlotte-bronte/jane-eyre/downloads/charlotte-bronte_jane-eyre.epub?source=download|Jane Eyre (SE)"
+  "se-great-gatsby.epub|${SE_BASE}/f-scott-fitzgerald/the-great-gatsby/downloads/f-scott-fitzgerald_the-great-gatsby.epub?source=download|The Great Gatsby (SE)"
+  "se-dracula.epub|${SE_BASE}/bram-stoker/dracula/downloads/bram-stoker_dracula.epub?source=download|Dracula (SE)"
+  "se-time-machine.epub|${SE_BASE}/h-g-wells/the-time-machine/downloads/h-g-wells_the-time-machine.epub?source=download|The Time Machine (SE)"
+  "se-tom-sawyer.epub|${SE_BASE}/mark-twain/the-adventures-of-tom-sawyer/downloads/mark-twain_the-adventures-of-tom-sawyer.epub?source=download|Adventures of Tom Sawyer (SE)"
+  "se-tale-two-cities.epub|${SE_BASE}/charles-dickens/a-tale-of-two-cities/downloads/charles-dickens_a-tale-of-two-cities.epub?source=download|Tale of Two Cities (SE)"
+  "se-jekyll-hyde.epub|${SE_BASE}/robert-louis-stevenson/the-strange-case-of-dr-jekyll-and-mr-hyde/downloads/robert-louis-stevenson_the-strange-case-of-dr-jekyll-and-mr-hyde.epub?source=download|Jekyll and Hyde (SE)"
+  "se-mrs-dalloway.epub|${SE_BASE}/virginia-woolf/mrs-dalloway/downloads/virginia-woolf_mrs-dalloway.epub?source=download|Mrs Dalloway (SE)"
+  "se-heart-darkness.epub|${SE_BASE}/joseph-conrad/heart-of-darkness/downloads/joseph-conrad_heart-of-darkness.epub?source=download|Heart of Darkness (SE)"
+  "se-treasure-island.epub|${SE_BASE}/robert-louis-stevenson/treasure-island/downloads/robert-louis-stevenson_treasure-island.epub?source=download|Treasure Island (SE)"
+  "se-princess-mars.epub|${SE_BASE}/edgar-rice-burroughs/a-princess-of-mars/downloads/edgar-rice-burroughs_a-princess-of-mars.epub?source=download|A Princess of Mars (SE)"
+  "se-call-wild.epub|${SE_BASE}/jack-london/the-call-of-the-wild/downloads/jack-london_the-call-of-the-wild.epub?source=download|The Call of the Wild (SE)"
+)
+
+for extra_array in IDPF_SAMPLES IDPF_OLD_SAMPLES DAISY_SAMPLES BM_SAMPLES SE_SAMPLES; do
   eval 'entries=("${'$extra_array'[@]}")'
   for entry in "${entries[@]}"; do
     IFS='|' read -r filename url description <<< "$entry"

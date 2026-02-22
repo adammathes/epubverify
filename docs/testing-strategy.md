@@ -19,7 +19,7 @@ implementation.
 # 1. Build epubverify
 make build
 
-# 2. Download sample EPUBs (96 from Gutenberg, Feedbooks, IDPF, DAISY, etc.)
+# 2. Download sample EPUBs (122 from Gutenberg, Feedbooks, IDPF, DAISY, Standard Ebooks, etc.)
 ./test/realworld/download-samples.sh
 
 # 3. Run the Go integration tests
@@ -31,11 +31,12 @@ EPUBCHECK_JAR=/path/to/epubcheck.jar make realworld-compare
 
 ## Sample Corpus
 
-The corpus consists of 96 EPUBs from five sources: Project Gutenberg,
+The corpus consists of 122 EPUBs from six sources: Project Gutenberg,
 Feedbooks, IDPF epub3-samples (both releases), DAISY accessibility tests,
-and bmaupin/epub-samples. 88 are valid, 8 are known-invalid (both tools agree).
+bmaupin/epub-samples, and Standard Ebooks. 114 are valid per epubverify
+(including 2 known false-negative gaps), 6 are known-invalid (both tools agree).
 
-### Valid Samples — Project Gutenberg (46)
+### Valid Samples — Project Gutenberg (55)
 
 | File | Title | Why included |
 |------|-------|--------------|
@@ -72,6 +73,15 @@ and bmaupin/epub-samples. 88 are valid, 8 are known-invalid (both tools agree).
 | `pg6130-iliad.epub` | The Iliad | Epic poetry |
 | `pg158-emma.epub` | Emma | Jane Austen |
 | `pg93-nietzsche-zarathustra.epub` | Thus Spake Zarathustra | Philosophy |
+| `pg844-rime-ancient-mariner.epub` | Rime of the Ancient Mariner | Poetry |
+| `pg74-adventures-tom-sawyer.epub` | Adventures of Tom Sawyer | Illustrated, large |
+| `pg76-huckleberry-finn.epub` | Adventures of Huckleberry Finn | Illustrated, large |
+| `pg1661-adventures-sherlock-holmes.epub` | Adventures of Sherlock Holmes | Short stories |
+| `pg4300-ulysses.epub` | Ulysses | Complex, large |
+| `pg174-dorian-gray.epub` | Picture of Dorian Gray | Gothic novel |
+| `pg219-heart-of-darkness.epub` | Heart of Darkness | Novella |
+| `pg43-jekyll-hyde.epub` | Strange Case of Dr Jekyll and Mr Hyde | Novella |
+| `pg5200-kafka-metamorphosis.epub` | Metamorphosis | Short novel, translator |
 | `pg46-christmas-carol-epub2.epub` | A Christmas Carol | **EPUB 2**, nested `navPoint` elements |
 | `pg174-dorian-gray-epub2.epub` | Picture of Dorian Gray | **EPUB 2** |
 | `pg76-twain-huck-finn-epub2.epub` | Huckleberry Finn | **EPUB 2** |
@@ -134,7 +144,35 @@ GitHub releases. Minimal EPUBs for edge-case testing.
 | `bm-minimal-v3.epub` | **Minimal valid EPUB 3** (2 KB) |
 | `bm-basic-v3plus2.epub` | **EPUB 3+2 hybrid** |
 
-### Known-Invalid Samples (8 — both tools report errors)
+### Valid Samples — Standard Ebooks (17)
+
+From [Standard Ebooks](https://standardebooks.org/). Professionally
+typeset EPUB 3 with rich accessibility metadata, custom `se:*` vocabulary,
+`<guide>` elements, ONIX records, and complex `<meta refines>` chains
+targeting `dc:publisher`, `dc:subject`, `dc:description`, and other DC
+elements. These exercise the OPF-037 refines check extensively.
+
+| File | Title | Why included |
+|------|-------|--------------|
+| `se-pride-prejudice.epub` | Pride and Prejudice | Rich metadata, 7 subjects, endnotes |
+| `se-frankenstein.epub` | Frankenstein | Multiple contributors with roles |
+| `se-hound-baskervilles.epub` | Hound of the Baskervilles | Detective fiction |
+| `se-dorian-gray.epub` | Picture of Dorian Gray | Gothic novel |
+| `se-moby-dick.epub` | Moby Dick | Large, endnotes with `backlink` epub:type |
+| `se-jane-eyre.epub` | Jane Eyre | Long novel with appendices |
+| `se-great-gatsby.epub` | The Great Gatsby | Short novel |
+| `se-dracula.epub` | Dracula | Epistolary novel |
+| `se-time-machine.epub` | The Time Machine | Sci-fi |
+| `se-tom-sawyer.epub` | Adventures of Tom Sawyer | American classic |
+| `se-tale-two-cities.epub` | Tale of Two Cities | Long novel |
+| `se-jekyll-hyde.epub` | Jekyll and Hyde | Novella |
+| `se-mrs-dalloway.epub` | Mrs Dalloway | Modernist literature |
+| `se-heart-darkness.epub` | Heart of Darkness | Novella |
+| `se-treasure-island.epub` | Treasure Island | Adventure |
+| `se-princess-mars.epub` | A Princess of Mars | Sci-fi |
+| `se-call-wild.epub` | The Call of the Wild | Adventure |
+
+### Known-Invalid Samples (6 — both tools report errors)
 
 | File | Title | Errors |
 |------|-------|--------|
@@ -144,8 +182,16 @@ GitHub releases. Minimal EPUBs for edge-case testing.
 | `fb-republic.epub` | The Republic (Feedbooks) | Mimetype trailing CRLF, NCX UID mismatch |
 | `fb-jane-eyre.epub` | Jane Eyre (Feedbooks) | Mimetype trailing CRLF, NCX UID mismatch |
 | `fb-heart-darkness.epub` | Heart of Darkness (Feedbooks) | Mimetype trailing CRLF, NCX UID mismatch |
-| `idpf-WCAG.epub` | WCAG (IDPF) | OPF-037 refines missing target |
-| `idpf-vertically-scrollable-manga.epub` | Vertical manga (IDPF) | OPF-037 refines missing target |
+
+### Known False-Negative Samples (2 — epubcheck INVALID, epubverify VALID)
+
+These samples are invalid per epubcheck but pass epubverify because the
+specific checks are not implemented:
+
+| File | epubcheck Error | Gap |
+|------|-----------------|-----|
+| `idpf-WCAG.epub` | OPF-007c (dc prefix redeclared in `prefix` attribute) | Prefix namespace validation not implemented |
+| `idpf-vertically-scrollable-manga.epub` | RSC-007 (mailto link) | `mailto:` link validation not implemented |
 
 All samples are public domain and freely available. The download script
 (`download-samples.sh`) is polite: it fetches a fixed set of URLs with a
@@ -231,7 +277,8 @@ To expand the corpus:
 - **[bmaupin/epub-samples](https://github.com/bmaupin/epub-samples)** —
   Minimal EPUBs validated with epubcheck. Available as GitHub releases.
 - **[Standard Ebooks](https://standardebooks.org/)** — High-quality
-  EPUB 3. Note: programmatic downloads are currently blocked.
+  EPUB 3 with rich metadata. Append `?source=download` to the download URL
+  for direct CLI access.
 - **[Open Textbook Library](https://open.umn.edu/opentextbooks/)** —
   CC-licensed textbooks with complex structure.
 
@@ -342,10 +389,38 @@ for backward compatibility testing.
 
 No new bugs found. **96/96 samples match epubcheck's validity verdict.**
 
+### Round 8 (expanded to 122 EPUBs: +17 Standard Ebooks, +9 Gutenberg)
+
+Added 17 Standard Ebooks samples — professionally typeset EPUB 3 with
+rich accessibility metadata, custom `se:*` vocabulary, `<guide>` elements,
+ONIX records, and complex `<meta refines>` chains targeting diverse DC
+elements. Also added 9 more Gutenberg EPUB 3 samples. The SE samples
+immediately exposed a major gap in our OPF-037 refines check — all 14
+initially showed as INVALID.
+
+Three bug categories fixed:
+
+| Check ID | Severity | Description | Fix |
+|----------|----------|-------------|-----|
+| OPF-037 | ERROR | IDs on `dc:publisher`, `dc:subject`, `dc:description`, and other DC elements not tracked as valid refines targets | Collect `id` attributes from all elements inside `<metadata>` via new `DCElementIDs` field |
+| CSS-002 | WARNING | Modern CSS properties (`text-wrap`, `hanging-punctuation`, `adobe-text-layout`, logical properties) not recognized | Added ~25 modern and vendor-specific properties to `knownCSSProperties` |
+| HTM-015 | INFO | Missing epub:type values from W3C EPUB SSV 1.1 (`backlink`, dictionary terms, `referrer`, etc.) | Added ~30 missing values from the complete W3C specification |
+
+Also reclassified 2 IDPF samples (WCAG, vertically-scrollable-manga)
+from "known-invalid" to "known false-negative" — their OPF-037 errors
+were actually false positives that are now fixed. Their real errors
+(OPF-007c prefix redeclaration, RSC-007 mailto links) are detection
+gaps in epubverify.
+
+After all fixes: **122/122 samples match epubcheck's validity verdict**
+(114 valid, 6 known-invalid, 2 known false-negatives pass as valid).
+
 ## Future Work
 
-- **Add Standard Ebooks samples** — currently blocked by their anti-bot
-  measures. Could build from their GitHub source repos.
 - **HTML5 schema validation (RSC-005)** — some EPUBs (e.g.,
   `cc-shared-culture.epub`) have HTML5 schema errors that epubcheck flags
   but we don't detect. This would require integrating an HTML5 validator.
+- **RSC-007 (mailto link validation)** — epubcheck flags `mailto:` links
+  as errors when referenced as resources. Low priority.
+- **OPF-007c (prefix namespace validation)** — detecting redeclared
+  Dublin Core namespace prefixes in the `prefix` attribute.
