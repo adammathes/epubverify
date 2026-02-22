@@ -1,5 +1,5 @@
-SPEC_DIR ?= $(HOME)/epubcheck-spec
-EPUBCHECK_JAR ?= $(HOME)/tools/epubcheck-5.2.0/epubcheck.jar
+SPEC_DIR ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))../epubverify-spec
+EPUBCHECK_JAR ?= $(HOME)/tools/epubcheck-5.3.0/epubcheck.jar
 
 .PHONY: build test spec-test compare realworld-test realworld-compare bench clean help
 

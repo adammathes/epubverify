@@ -48,12 +48,37 @@ type expectedMessage struct {
 func specDir(t *testing.T) string {
 	dir := os.Getenv("EPUBCHECK_SPEC_DIR")
 	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), "epubcheck-spec")
+		// Try sibling directory first (../epubverify-spec relative to repo root)
+		repoRoot := findRepoRoot(t)
+		sibling := filepath.Join(repoRoot, "..", "epubverify-spec")
+		if _, err := os.Stat(sibling); err == nil {
+			return sibling
+		}
+		// Fall back to home directory
+		dir = filepath.Join(os.Getenv("HOME"), "epubverify-spec")
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Skipf("epubcheck-spec directory not found at %s", dir)
+		t.Skipf("epubverify-spec directory not found at %s", dir)
 	}
 	return dir
+}
+
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find repo root (no go.mod)")
+		}
+		dir = parent
+	}
 }
 
 func TestSpec(t *testing.T) {
@@ -111,6 +136,10 @@ func TestSpec(t *testing.T) {
 
 				if rpt.FatalCount() != exp.FatalCount {
 					t.Errorf("fatal_count: got %d, want %d", rpt.FatalCount(), exp.FatalCount)
+				}
+
+				if rpt.WarningCount() != exp.WarningCount {
+					t.Errorf("warning_count: got %d, want %d", rpt.WarningCount(), exp.WarningCount)
 				}
 
 				for _, em := range exp.Messages {
