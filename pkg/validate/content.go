@@ -915,7 +915,7 @@ func checkEpubTypeValid(data []byte, location string, r *report.Report) {
 			continue
 		}
 		for _, attr := range se.Attr {
-			if attr.Name.Local == "type" && (attr.Name.Space == "http://www.idpf.org/2007/ops" || attr.Name.Space == "") {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
 				for _, val := range strings.Fields(attr.Value) {
 					// Skip prefixed values (e.g., "dp:footnote") - those use custom vocabularies
 					if strings.Contains(val, ":") {
