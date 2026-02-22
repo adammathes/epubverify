@@ -320,7 +320,7 @@ func checkCSSBackgroundImageExists(ep *epub.EPUB, css string, location string, r
 		}
 		target := resolvePath(cssDir, parsed.Path)
 		if _, exists := ep.Files[target]; !exists {
-			r.AddWithLocation(report.Error, "CSS-007",
+			r.AddWithLocation(report.Warning, "CSS-007",
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 				location)
 		}

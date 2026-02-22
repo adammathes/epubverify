@@ -32,8 +32,10 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 	// Build map of manifest item ID -> spine itemref properties for rendition overrides
 	spineProps := make(map[string]string)
+	spineItemIDs := make(map[string]bool)
 	for _, ref := range ep.Package.Spine {
 		spineProps[ref.IDRef] = ref.Properties
+		spineItemIDs[ref.IDRef] = true
 	}
 
 	for _, item := range ep.Package.Manifest {
@@ -102,8 +104,8 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-021: position:absolute warning
 		checkNoPositionAbsolute(data, fullPath, r)
 
-		// HTM-013/HTM-014: FXL viewport checks
-		if ep.Package.Version >= "3.0" {
+		// HTM-013/HTM-014: FXL viewport checks (only for spine items)
+		if ep.Package.Version >= "3.0" && spineItemIDs[item.ID] {
 			// Determine if this specific item is fixed-layout, considering
 			// per-spine-item rendition overrides
 			itemIsFXL := isFXL
@@ -504,6 +506,13 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 		return // No fragment to check
 	}
 
+	// Skip media fragment URIs (EPUB Region-Based Navigation, Media Fragments).
+	// These use schemes like #xywh=, #xyn=, #t= and are not HTML element IDs.
+	if strings.HasPrefix(fragment, "xywh=") || strings.HasPrefix(fragment, "xyn=") ||
+		strings.HasPrefix(fragment, "t=") || strings.HasPrefix(fragment, "epubcfi(") {
+		return
+	}
+
 	refPath := u.Path
 	if refPath == "" {
 		// Self-reference fragment
@@ -662,6 +671,13 @@ func checkHyperlink(ep *epub.EPUB, href, itemDir, location string, r *report.Rep
 	refPath := u.Path
 	if refPath == "" {
 		return // fragment-only reference
+	}
+
+	// Skip absolute paths (starting with /) — these are not valid EPUB
+	// container references and typically come from embedded web content
+	// (e.g., Wikipedia articles with /wiki/... links).
+	if strings.HasPrefix(refPath, "/") {
+		return
 	}
 
 	target := resolvePath(itemDir, refPath)

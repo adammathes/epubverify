@@ -12,12 +12,14 @@ import (
 // epubverify agree). These are kept in the corpus to verify we detect real
 // errors, not just to check for false positives.
 var knownInvalid = map[string]bool{
-	"fb-art-of-war.epub":      true, // mimetype trailing CRLF, NCX UID mismatch, bad date
-	"fb-heart-darkness.epub":  true, // mimetype trailing CRLF, NCX UID mismatch
-	"fb-jane-eyre.epub":       true, // mimetype trailing CRLF, NCX UID mismatch
-	"fb-odyssey.epub":         true, // mimetype trailing CRLF, NCX UID mismatch
-	"fb-republic.epub":        true, // mimetype trailing CRLF, NCX UID mismatch
-	"fb-sherlock-study.epub":  true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-art-of-war.epub":                      true, // mimetype trailing CRLF, NCX UID mismatch, bad date
+	"fb-heart-darkness.epub":                  true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-jane-eyre.epub":                       true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-odyssey.epub":                         true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-republic.epub":                        true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-sherlock-study.epub":                  true, // mimetype trailing CRLF, NCX UID mismatch
+	"idpf-WCAG.epub":                          true, // OPF-007c dc prefix redeclared, OPF-037 refines
+	"idpf-vertically-scrollable-manga.epub":   true, // OPF-037 refines missing target
 }
 
 // TestRealWorldSamples validates downloaded EPUB samples and checks for
@@ -82,12 +84,14 @@ func TestKnownInvalidExpectedErrors(t *testing.T) {
 	}
 
 	expectations := map[string][]string{
-		"fb-art-of-war.epub":      {"OCF-003", "E2-010"},
-		"fb-heart-darkness.epub":  {"OCF-003", "E2-010"},
-		"fb-jane-eyre.epub":       {"OCF-003", "E2-010"},
-		"fb-odyssey.epub":         {"OCF-003", "E2-010"},
-		"fb-republic.epub":        {"OCF-003", "E2-010"},
-		"fb-sherlock-study.epub":  {"OCF-003", "E2-010"},
+		"fb-art-of-war.epub":                     {"OCF-003", "E2-010"},
+		"fb-heart-darkness.epub":                 {"OCF-003", "E2-010"},
+		"fb-jane-eyre.epub":                      {"OCF-003", "E2-010"},
+		"fb-odyssey.epub":                        {"OCF-003", "E2-010"},
+		"fb-republic.epub":                       {"OCF-003", "E2-010"},
+		"fb-sherlock-study.epub":                  {"OCF-003", "E2-010"},
+		"idpf-WCAG.epub":                         {"OPF-037"},
+		"idpf-vertically-scrollable-manga.epub":  {"OPF-037"},
 	}
 
 	for name, expectedIDs := range expectations {

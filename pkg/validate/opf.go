@@ -495,6 +495,10 @@ func mediaTypesEquivalent(declared, expected string) bool {
 	fontTypes := map[string]bool{
 		"font/otf":                        true,
 		"font/ttf":                        true,
+		"font/woff":                       true,
+		"font/woff2":                      true,
+		"application/font-woff":           true,
+		"application/font-woff2":          true,
 		"application/vnd.ms-opentype":     true,
 		"application/font-sfnt":           true,
 		"application/x-font-ttf":          true,
@@ -567,6 +571,7 @@ func extensionToMediaType(ext string) string {
 // Valid manifest item properties (EPUB 3)
 var validManifestProperties = map[string]bool{
 	"cover-image":      true,
+	"data-nav":         true, // EPUB Region-Based Navigation
 	"mathml":           true,
 	"nav":              true,
 	"remote-resources": true,
@@ -752,6 +757,12 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 		if item.ID != "" {
 			validIDs[item.ID] = true
 		}
+	}
+
+	// Also collect IDs from meta elements (a meta can refine another meta,
+	// and non-refining metas like belongs-to-collection can have IDs)
+	for _, metaID := range pkg.MetaIDs {
+		validIDs[metaID] = true
 	}
 
 	for _, mr := range pkg.MetaRefines {

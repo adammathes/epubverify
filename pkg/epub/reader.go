@@ -136,6 +136,7 @@ func (ep *EPUB) ParseOPF() error {
 		PageProgressionDirection: structInfo.pageProgressionDirection,
 		HasGuide:                 structInfo.hasGuide,
 		MetaRefines:              structInfo.metaRefines,
+		MetaIDs:                  structInfo.metaIDs,
 		ElementOrder:             structInfo.elementOrder,
 	}
 
@@ -194,6 +195,7 @@ type opfStructInfo struct {
 	spineItems               []SpineItemref
 	metas                    []metaInfo
 	metaRefines              []MetaRefines
+	metaIDs                  []string
 	guideRefs                []GuideReference
 	elementOrder             []string
 }
@@ -285,13 +287,15 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				Type: refType, Title: refTitle, Href: refHref,
 			})
 		case "meta":
-			var prop, refines, val string
+			var prop, refines, val, metaID string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
 					prop = attr.Value
 				case "refines":
 					refines = attr.Value
+				case "id":
+					metaID = attr.Value
 				}
 			}
 			if prop != "" {
@@ -301,8 +305,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					val = strings.TrimSpace(string(cd))
 				}
 				info.metas = append(info.metas, metaInfo{property: prop, value: val})
+				if metaID != "" {
+					info.metaIDs = append(info.metaIDs, metaID)
+				}
 				if refines != "" {
 					info.metaRefines = append(info.metaRefines, MetaRefines{
+						ID:       metaID,
 						Refines:  refines,
 						Property: prop,
 						Value:    val,

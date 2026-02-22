@@ -48,6 +48,7 @@ type Package struct {
 	RenditionSpread      string
 	PageProgressionDirection string // spine page-progression-direction attribute
 	MetaRefines      []MetaRefines  // meta elements with refines attribute
+	MetaIDs          []string       // id attributes from all meta elements in metadata
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
 }
 
@@ -78,6 +79,7 @@ type DCCreator struct {
 
 // MetaRefines represents a meta element with a refines attribute.
 type MetaRefines struct {
+	ID       string // id attribute on the meta element itself
 	Refines  string // the refines attribute value (e.g., "#id")
 	Property string
 	Value    string
