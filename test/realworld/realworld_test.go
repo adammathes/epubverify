@@ -8,9 +8,19 @@ import (
 	"github.com/adammathes/epubverify/pkg/validate"
 )
 
+// knownInvalid lists samples that are genuinely invalid (both epubcheck and
+// epubverify agree). These are kept in the corpus to verify we detect real
+// errors, not just to check for false positives.
+var knownInvalid = map[string]bool{
+	"fb-art-of-war.epub":     true, // mimetype trailing CRLF, NCX UID mismatch, bad date
+	"fb-odyssey.epub":        true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-republic.epub":       true, // mimetype trailing CRLF, NCX UID mismatch
+	"fb-sherlock-study.epub": true, // mimetype trailing CRLF, NCX UID mismatch
+}
+
 // TestRealWorldSamples validates downloaded EPUB samples and checks for
-// false positives. Each sample is expected to be valid (no errors, no
-// warnings), matching the reference epubcheck tool.
+// false positives. Samples not in knownInvalid are expected to be valid
+// (no errors, no warnings), matching the reference epubcheck tool.
 //
 // Samples must be downloaded first:
 //
@@ -39,19 +49,67 @@ func TestRealWorldSamples(t *testing.T) {
 				t.Fatalf("validation failed: %v", err)
 			}
 
+			if knownInvalid[name] {
+				// Known-invalid: verify we detect errors
+				if rpt.IsValid() {
+					t.Errorf("expected invalid (known-invalid sample), but got valid")
+				}
+				return
+			}
+
+			// All other samples should be valid
 			if !rpt.IsValid() {
 				t.Errorf("expected valid, got invalid (errors=%d, warnings=%d)",
 					rpt.ErrorCount(), rpt.WarningCount())
 				for _, m := range rpt.Messages {
-					t.Logf("  %s(%s): %s [%s]", m.Severity, m.CheckID, m.Message, m.Location)
+					if m.Severity == "ERROR" || m.Severity == "WARNING" {
+						t.Logf("  %s(%s): %s [%s]", m.Severity, m.CheckID, m.Message, m.Location)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestKnownInvalidExpectedErrors verifies that known-invalid samples
+// produce specific expected error check IDs.
+func TestKnownInvalidExpectedErrors(t *testing.T) {
+	dir := os.Getenv("REALWORLD_SAMPLES_DIR")
+	if dir == "" {
+		dir = filepath.Join(findRepoRoot(t), "test", "realworld", "samples")
+	}
+
+	expectations := map[string][]string{
+		"fb-art-of-war.epub":     {"OCF-003", "E2-010"},
+		"fb-odyssey.epub":        {"OCF-003", "E2-010"},
+		"fb-republic.epub":       {"OCF-003", "E2-010"},
+		"fb-sherlock-study.epub": {"OCF-003", "E2-010"},
+	}
+
+	for name, expectedIDs := range expectations {
+		epubPath := filepath.Join(dir, name)
+		if _, err := os.Stat(epubPath); os.IsNotExist(err) {
+			t.Skipf("sample %s not found (run download-samples.sh)", name)
+			continue
+		}
+
+		t.Run(name, func(t *testing.T) {
+			rpt, err := validate.Validate(epubPath)
+			if err != nil {
+				t.Fatalf("validation failed: %v", err)
+			}
+
+			foundIDs := make(map[string]bool)
+			for _, m := range rpt.Messages {
+				if m.Severity == "ERROR" {
+					foundIDs[m.CheckID] = true
 				}
 			}
 
-			if rpt.ErrorCount() != 0 {
-				t.Errorf("expected 0 errors, got %d", rpt.ErrorCount())
-			}
-			if rpt.WarningCount() != 0 {
-				t.Errorf("expected 0 warnings, got %d", rpt.WarningCount())
+			for _, id := range expectedIDs {
+				if !foundIDs[id] {
+					t.Errorf("expected error %s not found in report", id)
+				}
 			}
 		})
 	}

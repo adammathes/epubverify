@@ -197,12 +197,12 @@ func checkNCXHasNavMap(data []byte, r *report.Report) {
 	}
 }
 
-// E2-007: navPoint elements must have a content child element
+// E2-007: navPoint elements must have a content child element.
+// Uses a stack to correctly handle nested navPoint elements.
 func checkNCXNavPointContent(data []byte, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	inNavPoint := false
-	hasContent := false
-	depth := 0
+	// Stack tracks whether each navPoint level has seen a <content> child
+	var hasContentStack []bool
 
 	for {
 		tok, err := decoder.Token()
@@ -212,28 +212,18 @@ func checkNCXNavPointContent(data []byte, r *report.Report) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			if t.Name.Local == "navPoint" {
-				if inNavPoint && !hasContent {
-					r.Add(report.Error, "E2-007",
-						"NCX navPoint element is incomplete: missing required child element 'content'")
-				}
-				inNavPoint = true
-				hasContent = false
-				depth++
+				hasContentStack = append(hasContentStack, false)
 			}
-			if inNavPoint && t.Name.Local == "content" {
-				hasContent = true
+			if t.Name.Local == "content" && len(hasContentStack) > 0 {
+				hasContentStack[len(hasContentStack)-1] = true
 			}
 		case xml.EndElement:
-			if t.Name.Local == "navPoint" {
-				if !hasContent {
+			if t.Name.Local == "navPoint" && len(hasContentStack) > 0 {
+				if !hasContentStack[len(hasContentStack)-1] {
 					r.Add(report.Error, "E2-007",
 						"NCX navPoint element is incomplete: missing required child element 'content'")
 				}
-				depth--
-				if depth <= 0 {
-					inNavPoint = false
-				}
-				hasContent = false
+				hasContentStack = hasContentStack[:len(hasContentStack)-1]
 			}
 		}
 	}

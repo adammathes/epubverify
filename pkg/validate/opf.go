@@ -665,7 +665,7 @@ func checkPageProgressionDirection(pkg *epub.Package, r *report.Report) {
 }
 
 // OPF-036: dc:date should follow W3CDTF format
-var w3cdtfRe = regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?)?)?$`)
+var w3cdtfRe = regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?)?)?$`)
 
 func checkDCDateFormat(pkg *epub.Package, r *report.Report) {
 	for _, date := range pkg.Metadata.Dates {
@@ -693,6 +693,11 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 	for _, creator := range pkg.Metadata.Creators {
 		if creator.ID != "" {
 			validIDs[creator.ID] = true
+		}
+	}
+	for _, contrib := range pkg.Metadata.Contributors {
+		if contrib.ID != "" {
+			validIDs[contrib.ID] = true
 		}
 	}
 	for _, item := range pkg.Manifest {

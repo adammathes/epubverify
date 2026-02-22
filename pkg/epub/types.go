@@ -53,13 +53,14 @@ type Package struct {
 
 // Metadata holds the OPF metadata section.
 type Metadata struct {
-	Titles      []string
-	Identifiers []DCIdentifier
-	Languages   []string
-	Modified    string // dcterms:modified value
-	Dates       []string
-	Sources     []string
-	Creators    []DCCreator
+	Titles       []string
+	Identifiers  []DCIdentifier
+	Languages    []string
+	Modified     string // dcterms:modified value
+	Dates        []string
+	Sources      []string
+	Creators     []DCCreator
+	Contributors []DCCreator // dc:contributor elements (same structure as dc:creator)
 }
 
 // DCCreator represents a dc:creator element with optional opf:role.

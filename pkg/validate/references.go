@@ -553,6 +553,10 @@ func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 	}
 
 	for name := range ep.Files {
+		// Skip directory entries in the ZIP archive
+		if strings.HasSuffix(name, "/") {
+			continue
+		}
 		if ignorePaths[name] {
 			continue
 		}

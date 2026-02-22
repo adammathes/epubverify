@@ -374,6 +374,19 @@ func parseMetadata(data []byte) Metadata {
 				}
 				val := readElementText(decoder)
 				md.Creators = append(md.Creators, DCCreator{ID: id, Value: val, Role: role})
+			case "contributor":
+				role := ""
+				id := ""
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "role" {
+						role = attr.Value
+					}
+					if attr.Name.Local == "id" {
+						id = attr.Value
+					}
+				}
+				val := readElementText(decoder)
+				md.Contributors = append(md.Contributors, DCCreator{ID: id, Value: val, Role: role})
 			}
 		case xml.EndElement:
 			if t.Name.Local == "metadata" {
