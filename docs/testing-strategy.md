@@ -28,7 +28,7 @@ python3 test/realworld/create-edge-cases.py
 # 4. Run the Go integration tests
 make realworld-test
 
-# 4. (Optional) Compare side-by-side with epubcheck (requires Java + epubcheck JAR)
+# 5. (Optional) Compare side-by-side with epubcheck (requires Java + epubcheck JAR)
 EPUBCHECK_JAR=/path/to/epubcheck.jar make realworld-compare
 ```
 
@@ -262,7 +262,7 @@ go test ./test/synthetic/ -v
 
 Skips gracefully if no synthetic EPUBs are generated.
 
-### 2. Comparison Script (`test/realworld/compare.sh`)
+### 3. Comparison Script (`test/realworld/compare.sh`)
 
 Runs both epubverify and epubcheck against all samples and produces a
 side-by-side table:
@@ -278,7 +278,7 @@ pg11-alice                               | VALID E:0 W:0 | VALID E:0 W:0 | YES
 Exits with code 0 if all validity verdicts match, code 1 if any differ.
 JSON results are saved to `test/realworld/results/` for manual inspection.
 
-### 3. Makefile Targets
+### 4. Makefile Targets
 
 | Target | Description |
 |--------|-------------|
