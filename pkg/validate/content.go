@@ -182,10 +182,10 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-030: img src must not be empty
 		checkImgSrcNotEmpty(data, fullPath, r)
 
-		// HTM-031: SSML namespace check — SSML attributes (ssml:ph, ssml:alphabet)
-		// are explicitly permitted in EPUB 3 for TTS pronunciation, so this
-		// check is disabled.
-		// checkSSMLNamespace(data, fullPath, r)
+		// HTM-031: custom attribute namespaces must be valid
+		if ep.Package.Version >= "3.0" {
+			checkCustomAttributeNamespaces(data, fullPath, r)
+		}
 
 		// HTM-032: style element CSS syntax
 		checkStyleElementValid(data, fullPath, r)
@@ -1272,23 +1272,41 @@ func checkImgSrcNotEmpty(data []byte, location string, r *report.Report) {
 	}
 }
 
-// HTM-031: SSML namespace must not be used
-func checkSSMLNamespace(data []byte, location string, r *report.Report) {
-	ssmlNS := "http://www.w3.org/2001/10/synthesis"
+// Allowed attribute namespaces in EPUB XHTML content documents.
+var allowedAttrNamespaces = map[string]bool{
+	"":                                     true, // no namespace (plain HTML attributes)
+	"xmlns":                                true, // namespace declarations (Go xml parser representation)
+	"http://www.w3.org/1999/xhtml":         true, // XHTML
+	"http://www.w3.org/XML/1998/namespace":  true, // xml: prefix
+	"http://www.w3.org/2000/xmlns/":         true, // xmlns: declarations
+	"http://www.idpf.org/2007/ops":          true, // epub: prefix
+	"http://www.w3.org/2001/10/synthesis":   true, // ssml: prefix (TTS pronunciation)
+	"http://www.w3.org/2000/svg":            true, // SVG namespace
+	"http://www.w3.org/1998/Math/MathML":    true, // MathML namespace
+	"http://www.w3.org/1999/xlink":          true, // XLink (used in SVG)
+}
+
+// HTM-031: custom attribute namespaces must be valid.
+// Attributes using non-standard namespaces (e.g., a misspelled SSML namespace)
+// are flagged. Valid SSML (ssml:ph, ssml:alphabet) is permitted for TTS.
+func checkCustomAttributeNamespaces(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
-		if se, ok := tok.(xml.StartElement); ok {
-			for _, attr := range se.Attr {
-				if strings.Contains(attr.Value, ssmlNS) || attr.Name.Space == ssmlNS {
-					r.AddWithLocation(report.Error, "HTM-031",
-						"Custom attribute namespace must not include SSML namespace",
-						location)
-					return
-				}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			ns := attr.Name.Space
+			if ns != "" && !allowedAttrNamespaces[ns] {
+				r.AddWithLocation(report.Error, "HTM-031",
+					fmt.Sprintf("Custom attribute namespace '%s' must not include non-standard namespaces", ns),
+					location)
+				return
 			}
 		}
 	}
