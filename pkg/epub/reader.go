@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -55,8 +56,9 @@ func (ep *EPUB) ReadFile(name string) ([]byte, error) {
 // Container XML types
 
 type containerXML struct {
-	XMLName   xml.Name     `xml:"container"`
-	RootFiles rootFilesXML `xml:"rootfiles"`
+	XMLName   xml.Name       `xml:"container"`
+	RootFiles rootFilesXML   `xml:"rootfiles"`
+	Links     containerLinks `xml:"links"`
 }
 
 type rootFilesXML struct {
@@ -65,6 +67,16 @@ type rootFilesXML struct {
 
 type rootFileXML struct {
 	FullPath  string `xml:"full-path,attr"`
+	MediaType string `xml:"media-type,attr"`
+}
+
+type containerLinks struct {
+	Link []containerLink `xml:"link"`
+}
+
+type containerLink struct {
+	Href      string `xml:"href,attr"`
+	Rel       string `xml:"rel,attr"`
 	MediaType string `xml:"media-type,attr"`
 }
 
@@ -87,6 +99,13 @@ func (ep *EPUB) ParseContainer() error {
 			FullPath:  rf.FullPath,
 			MediaType: rf.MediaType,
 		})
+	}
+
+	// Store container-level links (e.g., mapping documents for multiple renditions)
+	for _, link := range c.Links.Link {
+		if link.Href != "" {
+			ep.ContainerLinks = append(ep.ContainerLinks, link.Href)
+		}
 	}
 
 	for _, rf := range c.RootFiles.RootFile {
@@ -136,6 +155,7 @@ func (ep *EPUB) ParseOPF() error {
 		PageProgressionDirection: structInfo.pageProgressionDirection,
 		HasGuide:                 structInfo.hasGuide,
 		MetaRefines:              structInfo.metaRefines,
+		MetaIDs:                  structInfo.metaIDs,
 		ElementOrder:             structInfo.elementOrder,
 	}
 
@@ -194,6 +214,7 @@ type opfStructInfo struct {
 	spineItems               []SpineItemref
 	metas                    []metaInfo
 	metaRefines              []MetaRefines
+	metaIDs                  []string
 	guideRefs                []GuideReference
 	elementOrder             []string
 }
@@ -285,13 +306,15 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				Type: refType, Title: refTitle, Href: refHref,
 			})
 		case "meta":
-			var prop, refines, val string
+			var prop, refines, val, metaID string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
 					prop = attr.Value
 				case "refines":
 					refines = attr.Value
+				case "id":
+					metaID = attr.Value
 				}
 			}
 			if prop != "" {
@@ -301,8 +324,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					val = strings.TrimSpace(string(cd))
 				}
 				info.metas = append(info.metas, metaInfo{property: prop, value: val})
+				if metaID != "" {
+					info.metaIDs = append(info.metaIDs, metaID)
+				}
 				if refines != "" {
 					info.metaRefines = append(info.metaRefines, MetaRefines{
+						ID:       metaID,
 						Refines:  refines,
 						Property: prop,
 						Value:    val,
@@ -336,17 +363,26 @@ func parseMetadata(data []byte) Metadata {
 			if !inMetadata {
 				continue
 			}
+
+			// Capture id attribute from any DC element (for OPF-037 refines targets)
+			dcID := ""
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "id" {
+					dcID = attr.Value
+					break
+				}
+			}
+			if dcID != "" {
+				md.DCElementIDs = append(md.DCElementIDs, dcID)
+			}
+
 			switch t.Name.Local {
 			case "title":
+				id := dcID
 				text := readElementText(decoder)
-				md.Titles = append(md.Titles, text)
+				md.Titles = append(md.Titles, DCTitle{ID: id, Value: text})
 			case "identifier":
-				id := ""
-				for _, attr := range t.Attr {
-					if attr.Name.Local == "id" {
-						id = attr.Value
-					}
-				}
+				id := dcID
 				val := readElementText(decoder)
 				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val})
 			case "language":
@@ -369,7 +405,16 @@ func parseMetadata(data []byte) Metadata {
 					}
 				}
 				val := readElementText(decoder)
-				md.Creators = append(md.Creators, DCCreator{Value: val, Role: role})
+				md.Creators = append(md.Creators, DCCreator{ID: dcID, Value: val, Role: role})
+			case "contributor":
+				role := ""
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "role" {
+						role = attr.Value
+					}
+				}
+				val := readElementText(decoder)
+				md.Contributors = append(md.Contributors, DCCreator{ID: dcID, Value: val, Role: role})
 			}
 		case xml.EndElement:
 			if t.Name.Local == "metadata" {
@@ -467,10 +512,16 @@ func (ep *EPUB) OPFDir() string {
 }
 
 // ResolveHref resolves a relative href from the OPF file to a full path within the EPUB.
+// Manifest hrefs are IRI-encoded (e.g. spaces as %20), but ZIP entry names use
+// decoded forms, so we percent-decode before joining.
 func (ep *EPUB) ResolveHref(href string) string {
+	decoded, err := url.PathUnescape(href)
+	if err != nil {
+		decoded = href // fall back to raw href if decoding fails
+	}
 	dir := ep.OPFDir()
 	if dir == "." {
-		return href
+		return decoded
 	}
-	return dir + "/" + href
+	return dir + "/" + decoded
 }

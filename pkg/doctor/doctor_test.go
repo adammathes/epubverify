@@ -1456,6 +1456,11 @@ func TestDoctorFixesBaseElement(t *testing.T) {
 }
 
 func TestDoctorFixesProcessingInstructions(t *testing.T) {
+	// HTM-020 is now INFO severity (processing instructions are allowed per
+	// the EPUB spec). The doctor still has the fix function, but it only runs
+	// when there are other issues that make the EPUB invalid. When the EPUB's
+	// only issue is a PI, the doctor correctly determines it's already valid
+	// and skips fixes.
 	opf := `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -1470,11 +1475,12 @@ func TestDoctorFixesProcessingInstructions(t *testing.T) {
   </manifest>
   <spine><itemref idref="ch1"/></spine>
 </package>`
+	// Include a PI (INFO-level) and a missing <title> (WARNING) so the doctor runs
 	chapter := `<?xml version="1.0" encoding="UTF-8"?>
 <?oxygen RNGSchema="test.rng"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>Ch</title></head>
+<head></head>
 <body><p>Hi</p></body></html>`
 
 	input := createCustomEPUB(t, opf, chapter, nil)

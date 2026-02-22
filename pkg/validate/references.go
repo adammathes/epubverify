@@ -64,6 +64,11 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 		if strings.HasPrefix(item.Href, "/") {
 			continue
 		}
+		// Skip remote resources (http/https URLs in manifest are valid
+		// when the referencing content doc has remote-resources property)
+		if strings.HasPrefix(item.Href, "http://") || strings.HasPrefix(item.Href, "https://") {
+			continue
+		}
 		fullPath := ep.ResolveHref(item.Href)
 		if _, exists := ep.Files[fullPath]; !exists {
 			checkID := "RSC-001"
@@ -301,9 +306,11 @@ func checkNavigation(ep *epub.EPUB, r *report.Report) {
 	}
 
 	// NAV-010: landmark entries should use valid epub:type values
+	// The EPUB 3 structural semantics vocabulary is extensible, so unknown
+	// values are informational rather than violations.
 	for _, t := range navInfo.landmarkTypes {
 		if !validEpubTypes[t] && !strings.Contains(t, ":") {
-			r.AddWithLocation(report.Warning, "NAV-010",
+			r.AddWithLocation(report.Info, "NAV-010",
 				fmt.Sprintf("Landmark nav entry uses unknown epub:type value '%s'", t),
 				fullPath)
 		}
@@ -550,7 +557,15 @@ func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 		"META-INF/signatures.xml":   true,
 	}
 
+	// For multiple renditions: collect OPF paths and manifest hrefs from
+	// other rootfiles so we don't flag their files as undeclared.
+	otherRenditionPaths := collectOtherRenditionPaths(ep)
+
 	for name := range ep.Files {
+		// Skip directory entries in the ZIP archive
+		if strings.HasSuffix(name, "/") {
+			continue
+		}
 		if ignorePaths[name] {
 			continue
 		}
@@ -561,11 +576,82 @@ func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 		if name == ep.RootfilePath {
 			continue
 		}
+		// Skip files belonging to other renditions
+		if otherRenditionPaths[name] {
+			continue
+		}
 		if !manifestPaths[name] {
 			r.Add(report.Warning, "RSC-002",
 				fmt.Sprintf("File '%s' in container is not declared in the OPF manifest", name))
 		}
 	}
+}
+
+// collectOtherRenditionPaths parses additional rootfile OPFs (for multiple
+// rendition EPUBs) and returns the set of all paths they reference.
+// Also includes container-level links (e.g., mapping documents).
+func collectOtherRenditionPaths(ep *epub.EPUB) map[string]bool {
+	paths := make(map[string]bool)
+
+	// Container-level links (mapping documents, etc.)
+	for _, href := range ep.ContainerLinks {
+		paths[href] = true
+	}
+
+	if len(ep.AllRootfiles) <= 1 {
+		return paths
+	}
+
+	for _, rf := range ep.AllRootfiles {
+		if rf.FullPath == ep.RootfilePath {
+			continue
+		}
+		// The OPF file itself belongs to the other rendition
+		paths[rf.FullPath] = true
+
+		// Try to parse the other OPF to get its manifest entries
+		data, err := ep.ReadFile(rf.FullPath)
+		if err != nil {
+			continue
+		}
+		otherDir := path.Dir(rf.FullPath)
+		for _, href := range extractManifestHrefs(data) {
+			decoded, err := url.PathUnescape(href)
+			if err != nil {
+				decoded = href
+			}
+			if otherDir == "." {
+				paths[decoded] = true
+			} else {
+				paths[otherDir+"/"+decoded] = true
+			}
+		}
+	}
+	return paths
+}
+
+// extractManifestHrefs does a quick XML scan of an OPF to extract manifest item hrefs.
+func extractManifestHrefs(data []byte) []string {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	var hrefs []string
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "item" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" && attr.Value != "" {
+					hrefs = append(hrefs, attr.Value)
+				}
+			}
+		}
+	}
+	return hrefs
 }
 
 func hasProperty(properties, prop string) bool {

@@ -9,9 +9,10 @@ type EPUB struct {
 	Files   map[string]*zip.File // path -> zip.File
 
 	// Parsed from container.xml
-	RootfilePath  string
-	AllRootfiles  []Rootfile // all rootfile elements from container.xml
-	ContainerData []byte     // raw container.xml bytes
+	RootfilePath   string
+	AllRootfiles   []Rootfile // all rootfile elements from container.xml
+	ContainerLinks []string   // hrefs from <links> in container.xml
+	ContainerData  []byte     // raw container.xml bytes
 
 	// Parsed from OPF
 	Package *Package
@@ -48,28 +49,39 @@ type Package struct {
 	RenditionSpread      string
 	PageProgressionDirection string // spine page-progression-direction attribute
 	MetaRefines      []MetaRefines  // meta elements with refines attribute
+	MetaIDs          []string       // id attributes from all meta elements in metadata
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
 }
 
 // Metadata holds the OPF metadata section.
 type Metadata struct {
-	Titles      []string
-	Identifiers []DCIdentifier
-	Languages   []string
-	Modified    string // dcterms:modified value
-	Dates       []string
-	Sources     []string
-	Creators    []DCCreator
+	Titles       []DCTitle
+	Identifiers  []DCIdentifier
+	Languages    []string
+	Modified     string // dcterms:modified value
+	Dates        []string
+	Sources      []string
+	Creators     []DCCreator
+	Contributors []DCCreator  // dc:contributor elements (same structure as dc:creator)
+	DCElementIDs []string     // id attributes from all dc:* elements (publisher, subject, description, etc.)
+}
+
+// DCTitle represents a dc:title element with optional id attribute.
+type DCTitle struct {
+	ID    string // id attribute (used as refines target in EPUB 3)
+	Value string
 }
 
 // DCCreator represents a dc:creator element with optional opf:role.
 type DCCreator struct {
+	ID    string // id attribute (used as refines target in EPUB 3)
 	Value string
 	Role  string // opf:role attribute (EPUB 2)
 }
 
 // MetaRefines represents a meta element with a refines attribute.
 type MetaRefines struct {
+	ID       string // id attribute on the meta element itself
 	Refines  string // the refines attribute value (e.g., "#id")
 	Property string
 	Value    string

@@ -30,6 +30,14 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 	isFXL := ep.Package.RenditionLayout == "pre-paginated"
 
+	// Build map of manifest item ID -> spine itemref properties for rendition overrides
+	spineProps := make(map[string]string)
+	spineItemIDs := make(map[string]bool)
+	for _, ref := range ep.Package.Spine {
+		spineProps[ref.IDRef] = ref.Properties
+		spineItemIDs[ref.IDRef] = true
+	}
+
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" {
 			continue
@@ -96,10 +104,20 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-021: position:absolute warning
 		checkNoPositionAbsolute(data, fullPath, r)
 
-		// HTM-013/HTM-014: FXL viewport checks
-		if isFXL && ep.Package.Version >= "3.0" {
+		// HTM-013/HTM-014: FXL viewport checks (only for spine items)
+		if ep.Package.Version >= "3.0" && spineItemIDs[item.ID] {
+			// Determine if this specific item is fixed-layout, considering
+			// per-spine-item rendition overrides
+			itemIsFXL := isFXL
+			if props, ok := spineProps[item.ID]; ok {
+				if hasProperty(props, "rendition:layout-reflowable") {
+					itemIsFXL = false
+				} else if hasProperty(props, "rendition:layout-pre-paginated") {
+					itemIsFXL = true
+				}
+			}
 			// Skip nav document from FXL viewport checks
-			if !hasProperty(item.Properties, "nav") {
+			if itemIsFXL && !hasProperty(item.Properties, "nav") {
 				checkFXLViewport(data, fullPath, r)
 			}
 		}
@@ -164,10 +182,10 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-030: img src must not be empty
 		checkImgSrcNotEmpty(data, fullPath, r)
 
-		// HTM-031: SSML namespace check
-		if ep.Package.Version >= "3.0" {
-			checkSSMLNamespace(data, fullPath, r)
-		}
+		// HTM-031: SSML namespace check — SSML attributes (ssml:ph, ssml:alphabet)
+		// are explicitly permitted in EPUB 3 for TTS pronunciation, so this
+		// check is disabled.
+		// checkSSMLNamespace(data, fullPath, r)
 
 		// HTM-032: style element CSS syntax
 		checkStyleElementValid(data, fullPath, r)
@@ -352,7 +370,18 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 		}
 
 		if se.Name.Local == "script" {
-			hasScript = true
+			// Per HTML spec, <script type="text/plain"> and other non-JS types
+			// are data blocks, not executable scripts. Only count as scripted
+			// if type is absent or a JavaScript-compatible MIME type.
+			scriptType := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" {
+					scriptType = strings.TrimSpace(strings.ToLower(attr.Value))
+				}
+			}
+			if isExecutableScriptType(scriptType) {
+				hasScript = true
+			}
 		}
 		if se.Name.Local == "svg" || se.Name.Space == "http://www.w3.org/2000/svg" {
 			hasSVG = true
@@ -488,6 +517,13 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 		return // No fragment to check
 	}
 
+	// Skip media fragment URIs (EPUB Region-Based Navigation, Media Fragments).
+	// These use schemes like #xywh=, #xyn=, #t= and are not HTML element IDs.
+	if strings.HasPrefix(fragment, "xywh=") || strings.HasPrefix(fragment, "xyn=") ||
+		strings.HasPrefix(fragment, "t=") || strings.HasPrefix(fragment, "epubcfi(") {
+		return
+	}
+
 	refPath := u.Path
 	if refPath == "" {
 		// Self-reference fragment
@@ -559,12 +595,16 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		}
 
 		// Check <audio src="http://..."> and <video src="http://...">
+		// Per EPUB 3 spec, audio/video remote resources are allowed when
+		// the content document declares the "remote-resources" property.
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-004",
-						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
-						location)
+			if !hasProperty(item.Properties, "remote-resources") {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+						r.AddWithLocation(report.Error, "RSC-004",
+							fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+							location)
+					}
 				}
 			}
 		}
@@ -648,6 +688,13 @@ func checkHyperlink(ep *epub.EPUB, href, itemDir, location string, r *report.Rep
 		return // fragment-only reference
 	}
 
+	// Skip absolute paths (starting with /) — these are not valid EPUB
+	// container references and typically come from embedded web content
+	// (e.g., Wikipedia articles with /wiki/... links).
+	if strings.HasPrefix(refPath, "/") {
+		return
+	}
+
 	target := resolvePath(itemDir, refPath)
 	if _, exists := ep.Files[target]; !exists {
 		r.AddWithLocation(report.Error, "HTM-008",
@@ -684,6 +731,24 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 			fmt.Sprintf("Referenced resource '%s' (%s) was not found in the container", src, target),
 			location)
 	}
+}
+
+// isExecutableScriptType returns true if the script type attribute value
+// indicates executable JavaScript. Per HTML spec, a <script> is executable
+// if type is absent/empty, or matches a JavaScript MIME type. Non-JS types
+// like "text/plain" or "application/ld+json" are data blocks.
+func isExecutableScriptType(t string) bool {
+	if t == "" {
+		return true // no type = JavaScript
+	}
+	jsTypes := map[string]bool{
+		"text/javascript":        true,
+		"application/javascript": true,
+		"text/ecmascript":        true,
+		"application/ecmascript": true,
+		"module":                 true,
+	}
+	return jsTypes[t]
 }
 
 // resolvePath resolves a relative path against a base directory.
@@ -869,18 +934,27 @@ func checkDoctypeHTML5(data []byte, location string, r *report.Report) bool {
 // Valid epub:type values from the EPUB structural semantics vocabulary
 var validEpubTypes = map[string]bool{
 	"abstract": true, "acknowledgments": true, "afterword": true, "answer": true,
-	"answers": true, "appendix": true, "assessment": true, "assessments": true,
-	"backmatter": true, "balloon": true, "biblioentry": true, "bibliography": true,
-	"biblioref": true, "bodymatter": true, "bridgehead": true, "chapter": true,
-	"colophon": true, "concluding-sentence": true, "conclusion": true, "contributors": true,
-	"copyright-page": true, "cover": true, "covertitle": true, "credit": true,
-	"credits": true, "dedication": true, "division": true, "endnote": true,
-	"endnotes": true, "epigraph": true, "epilogue": true, "errata": true,
-	"figure": true, "fill-in-the-blank-problem": true, "footnote": true, "footnotes": true,
-	"foreword": true, "frontmatter": true, "fulltitle": true, "general-problem": true,
-	"glossary": true, "glossdef": true, "glossref": true, "glossterm": true,
-	"halftitle": true, "halftitlepage": true, "help": true, "imprimatur": true,
-	"imprint": true, "index": true, "index-editor-note": true, "index-entry": true,
+	"answers": true, "antonym-group": true, "appendix": true, "aside": true,
+	"assessment": true, "assessments": true,
+	"backlink": true, "backmatter": true, "balloon": true,
+	"biblioentry": true, "bibliography": true, "biblioref": true,
+	"bodymatter": true, "bridgehead": true,
+	"chapter": true, "colophon": true, "concluding-sentence": true,
+	"conclusion": true, "condensed-entry": true, "contributors": true,
+	"copyright-page": true, "cover": true, "covertitle": true,
+	"credit": true, "credits": true,
+	"dedication": true, "def": true, "dictentry": true, "dictionary": true,
+	"division": true,
+	"endnote": true, "endnotes": true, "epigraph": true, "epilogue": true,
+	"errata": true, "etymology": true, "example": true,
+	"figure": true, "fill-in-the-blank-problem": true,
+	"footnote": true, "footnotes": true, "foreword": true,
+	"frontmatter": true, "fulltitle": true,
+	"general-problem": true, "glossary": true, "glossdef": true,
+	"glossref": true, "glossterm": true, "gram-info": true,
+	"halftitle": true, "halftitlepage": true, "help": true,
+	"idiom": true, "imprimatur": true, "imprint": true,
+	"index": true, "index-editor-note": true, "index-entry": true,
 	"index-entry-list": true, "index-group": true, "index-headnotes": true,
 	"index-legend": true, "index-locator": true, "index-locator-list": true,
 	"index-locator-range": true, "index-term": true, "index-term-categories": true,
@@ -893,13 +967,18 @@ var validEpubTypes = map[string]bool{
 	"match-problem": true, "multiple-choice-problem": true, "noteref": true,
 	"notice": true, "ordinal": true, "other-credits": true, "page-list": true,
 	"pagebreak": true, "panel": true, "panel-group": true, "part": true,
+	"part-of-speech": true, "part-of-speech-group": true, "part-of-speech-list": true,
+	"phonetic-transcription": true, "phrase-group": true, "phrase-list": true,
 	"practice": true, "practices": true, "preamble": true, "preface": true,
 	"prologue": true, "pullquote": true, "qna": true, "question": true,
-	"revision-history": true, "se:short-story": true, "sound-area": true,
-	"subchapter": true, "subtitle": true, "table": true, "table-cell": true,
-	"table-row": true, "text-area": true, "tip": true, "title": true,
-	"titlepage": true, "toc": true, "toc-brief": true, "topic-sentence": true,
-	"true-false-problem": true, "volume": true, "warning": true,
+	"referrer": true, "revision-history": true,
+	"sense-group": true, "sense-list": true, "sound-area": true,
+	"subchapter": true, "subtitle": true, "synonym-group": true,
+	"table": true, "table-cell": true, "table-row": true,
+	"text-area": true, "tip": true, "title": true, "titlepage": true,
+	"toc": true, "toc-brief": true, "topic-sentence": true,
+	"tran": true, "tran-info": true, "true-false-problem": true,
+	"volume": true, "warning": true,
 }
 
 // HTM-015: epub:type values must be valid
@@ -922,7 +1001,7 @@ func checkEpubTypeValid(data []byte, location string, r *report.Report) {
 						continue
 					}
 					if !validEpubTypes[val] {
-						r.AddWithLocation(report.Warning, "HTM-015",
+						r.AddWithLocation(report.Info, "HTM-015",
 							fmt.Sprintf("epub:type value '%s' is not a recognized structural semantics value", val),
 							location)
 					}
@@ -945,8 +1024,8 @@ func checkNoProcessingInstructions(data []byte, location string, r *report.Repor
 			if pi.Target == "xml" {
 				continue
 			}
-			r.AddWithLocation(report.Warning, "HTM-020",
-				fmt.Sprintf("Processing instruction '%s' should not be used in EPUB content documents", pi.Target),
+			r.AddWithLocation(report.Info, "HTM-020",
+				fmt.Sprintf("Processing instruction '%s' found in EPUB content document", pi.Target),
 				location)
 		}
 	}
