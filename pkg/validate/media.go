@@ -115,11 +115,11 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 		}
 
 		// MED-004/MED-005: foreign resources must have fallback
-		// Only flag spine items — non-spine foreign resources (page templates,
-		// custom XML data, etc.) don't require fallbacks per the EPUB spec.
+		// Per EPUB 3 spec §5.3.3, all foreign resources in the manifest
+		// must provide a fallback.
 		// Skip image/webp and video/* - epubcheck 5.3.0 does not flag these
 		if ep.Package.Version >= "3.0" && !coreMediaTypes[item.MediaType] && item.MediaType != "image/webp" &&
-			!strings.HasPrefix(item.MediaType, "video/") && item.Fallback == "" && spineItemIDs[item.ID] {
+			!strings.HasPrefix(item.MediaType, "video/") && item.Fallback == "" {
 			r.Add(report.Error, foreignResourceCheckID(item.MediaType),
 				fmt.Sprintf("Fallback must be provided for foreign resources: '%s' has media type '%s'", item.Href, item.MediaType))
 		}
