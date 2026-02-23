@@ -94,3 +94,14 @@ func (r *Report) WarningCount() int {
 func (r *Report) IsValid() bool {
 	return r.FatalCount() == 0 && r.ErrorCount() == 0
 }
+
+// DowngradeToInfo changes the severity of WARNING messages whose CheckID
+// is in the given set to INFO. This is used to suppress warnings for
+// checks that are valid but not flagged by the reference implementation.
+func (r *Report) DowngradeToInfo(checkIDs map[string]bool) {
+	for i := range r.Messages {
+		if r.Messages[i].Severity == Warning && checkIDs[r.Messages[i].CheckID] {
+			r.Messages[i].Severity = Info
+		}
+	}
+}

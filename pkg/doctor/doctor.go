@@ -67,7 +67,7 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 		return nil, fmt.Errorf("opening epub: %w", err)
 	}
 
-	beforeReport, err := validate.Validate(inputPath)
+	beforeReport, err := validate.ValidateWithOptions(inputPath, validate.Options{Strict: true})
 	if err != nil {
 		ep.Close()
 		return nil, fmt.Errorf("validating: %w", err)
@@ -193,8 +193,8 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 
 	ep.Close()
 
-	// Step 5: Re-validate to confirm
-	afterReport, err := validate.Validate(outputPath)
+	// Step 5: Re-validate to confirm (Strict mode to see all warnings)
+	afterReport, err := validate.ValidateWithOptions(outputPath, validate.Options{Strict: true})
 	if err != nil {
 		return nil, fmt.Errorf("validating repaired epub: %w", err)
 	}

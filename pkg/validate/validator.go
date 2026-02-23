@@ -72,5 +72,30 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 		checkAccessibility(ep, r)
 	}
 
+	// Post-processing: when not in Strict mode, downgrade certain warnings
+	// to INFO for checks that epubcheck does not flag. This aligns output
+	// with the epubverify-spec test suite while keeping the checks active
+	// for doctor mode (which uses Strict).
+	if !opts.Strict {
+		r.DowngradeToInfo(divergenceChecks)
+	}
+
 	return r, nil
+}
+
+// divergenceChecks lists check IDs where epubverify flags issues that
+// epubcheck 5.3.0 does not. In non-Strict mode these are downgraded
+// from WARNING to INFO so they don't affect warning_count.
+var divergenceChecks = map[string]bool{
+	"RSC-002": true, // file in container not in manifest
+	"HTM-003": true, // empty href attribute
+	"HTM-009": true, // base element
+	"HTM-021": true, // position:absolute in inline style
+	"NAV-009": true, // hidden attribute on nav
+	"CSS-003": true, // @font-face missing src
+	"CSS-005": true, // @import rules
+	"OPF-039": true, // deprecated guide element in EPUB 3
+	"MED-012": true, // video non-core media type
+	"E2-012":  true, // invalid guide reference type
+	"E2-015":  true, // NCX depth mismatch
 }
