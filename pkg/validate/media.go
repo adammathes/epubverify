@@ -321,6 +321,37 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 	}
 
 	_ = hasBody
+
+	// OPF-014: Check if media overlay has remote resources and content doc needs remote-resources property
+	hasRemoteInOverlay := false
+	for _, tok := range tokens {
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "audio" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					if isRemoteURL(attr.Value) {
+						hasRemoteInOverlay = true
+					}
+				}
+			}
+		}
+	}
+	if hasRemoteInOverlay {
+		// Find the content document that has media-overlay pointing to this overlay
+		for _, mItem := range ep.Package.Manifest {
+			if mItem.MediaOverlay == item.ID {
+				if !hasProperty(mItem.Properties, "remote-resources") {
+					contentPath := ep.ResolveHref(mItem.Href)
+					r.AddWithLocation(report.Error, "OPF-014",
+						"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+						contentPath)
+				}
+			}
+		}
+	}
 }
 
 // MED-007: audio src must exist in container

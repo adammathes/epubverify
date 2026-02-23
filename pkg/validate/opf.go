@@ -618,7 +618,7 @@ func checkDCTermsModifiedExactlyOnce(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-029: manifest item properties must be valid
+// OPF-029/OPF-027: manifest item properties must be valid
 func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 	if pkg.Version < "3.0" {
 		return
@@ -628,7 +628,15 @@ func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		for _, prop := range strings.Fields(item.Properties) {
-			if !validManifestProperties[prop] {
+			if validManifestProperties[prop] {
+				continue
+			}
+			// OPF-027: property exists but is for a different context
+			// (e.g. rendition/spine properties used on manifest items)
+			if validSpineProperties[prop] || strings.HasPrefix(prop, "rendition:") {
+				r.Add(report.Error, "OPF-027",
+					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
+			} else {
 				r.Add(report.Error, "OPF-029",
 					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
 			}
