@@ -19,9 +19,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 		return true
 	}
 
-	// OEBPS 1.2: detect legacy namespace and emit OPF-001 (return early)
+	// OEBPS 1.2: detect legacy namespace
 	if ep.IsLegacyOEBPS12 {
-		r.Add(report.Error, "OPF-001", "Package document uses unsupported OEBPS 1.2 namespace")
+		if ep.Package.Version == "" {
+			// No version attribute → OPF-001 for missing version, stop further processing
+			r.Add(report.Error, "OPF-001", "Package version attribute is missing or empty")
+			return false
+		}
+		// Has version → legacy media type checks happen after DowngradeToInfo in the validator
 		return false
 	}
 
@@ -94,6 +99,9 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-045: fallback chains must not be circular (also covers self-reference)
 	checkFallbackNoCycle(pkg, r)
 
+	// RSC-032: fallback chain must resolve to a core media type
+	checkFallbackChainResolves(pkg, r)
+
 	// OPF-023: spine items must be content documents (or have fallback)
 	checkSpineContentDocs(pkg, r)
 
@@ -156,6 +164,13 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 
 	// OPF-044: media-overlay references
 	checkMediaOverlayRef(pkg, r)
+
+	// RSC-005/OPF-063: page-map attribute on spine is not allowed
+	checkSpinePageMap(ep, pkg, r)
+
+	// OPF-099: OPF must not reference itself in manifest
+	checkManifestSelfReference(ep, pkg, r)
+
 
 	return false
 }
@@ -482,8 +497,19 @@ func checkMediaTypeMatches(ep *epub.EPUB, r *report.Report) {
 		}
 
 		if item.MediaType != expectedType {
-			// Skip image-to-image mismatches - handled by MED-001
+			// Image-to-image mismatches: handled by MED-001 (content ≠ declared)
+			// and PKG-022 (content = declared but extension is wrong)
 			if strings.HasPrefix(item.MediaType, "image/") && strings.HasPrefix(expectedType, "image/") {
+				// PKG-022: extension doesn't match declared type, but content matches declared
+				data, err := ep.ReadFile(fullPath)
+				if err == nil {
+					actualType := detectImageType(data)
+					if actualType == item.MediaType {
+						r.Add(report.Warning, "PKG-022",
+							fmt.Sprintf("The file extension of '%s' doesn't match its media type '%s'", item.Href, item.MediaType))
+					}
+					// If actualType != item.MediaType, MED-001 handles it
+				}
 				continue
 			}
 			// Skip SVG mismatch - handled by MED-004
@@ -836,6 +862,23 @@ func checkEPUB3GuideDeprecated(pkg *epub.Package, r *report.Report) {
 	}
 }
 
+// checkLegacyOEBPS12MediaTypes checks for legacy media types in OEBPS 1.2 publications.
+// OPF-039: text/x-oeb1-document (legacy HTML media type)
+// OPF-038: text/html (deprecated HTML media type in EPUB 2)
+func checkLegacyOEBPS12MediaTypes(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		switch item.MediaType {
+		case "text/x-oeb1-document":
+			r.Add(report.Warning, "OPF-039",
+				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
+		case "text/html":
+			r.Add(report.Warning, "OPF-038",
+				fmt.Sprintf("The media-type '%s' is not a valid EPUB media type for content documents", item.MediaType))
+		}
+	}
+}
+
+
 // OPF-085: UUID format validation
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
@@ -944,6 +987,96 @@ func checkMediaOverlayRef(pkg *epub.Package, r *report.Report) {
 		if target.MediaType != "application/smil+xml" {
 			r.Add(report.Error, "OPF-044",
 				fmt.Sprintf("Media Overlay Document referenced by '%s' has wrong type '%s': expected application/smil+xml", item.Href, target.MediaType))
+		}
+	}
+}
+
+// RSC-005/OPF-063: spine page-map attribute is not allowed (Adobe extension)
+func checkSpinePageMap(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.SpinePageMap == "" {
+		return
+	}
+	r.Add(report.Error, "RSC-005", `attribute "page-map" not allowed here`)
+
+	// OPF-063: page-map attribute must reference a valid manifest item
+	manifestIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+	if !manifestIDs[pkg.SpinePageMap] {
+		r.Add(report.Warning, "OPF-063",
+			fmt.Sprintf("The 'page-map' attribute references an item '%s' that could not be found in the manifest", pkg.SpinePageMap))
+	}
+}
+
+// OPF-099: manifest must not reference the OPF file itself
+func checkManifestSelfReference(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	opfPath := ep.RootfilePath
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		resolved := ep.ResolveHref(item.Href)
+		if resolved == opfPath {
+			r.Add(report.Error, "OPF-099",
+				fmt.Sprintf("The package document '%s' references itself in the manifest", opfPath))
+			return
+		}
+	}
+}
+
+
+// RSC-032: fallback chain must ultimately resolve to a core media type
+func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
+	// Build ID → item map
+	byID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			byID[item.ID] = item
+		}
+	}
+
+	for _, item := range pkg.Manifest {
+		if item.Fallback == "" {
+			continue
+		}
+		mt := item.MediaType
+		if idx := strings.Index(mt, ";"); idx >= 0 {
+			mt = strings.TrimSpace(mt[:idx])
+		}
+		if coreMediaTypes[mt] || isFontMediaType(mt) {
+			continue // Core type, no fallback chain needed
+		}
+
+		// Walk fallback chain to find if any item resolves to core type
+		visited := make(map[string]bool)
+		current := item.Fallback
+		resolved := false
+		for current != "" && !visited[current] {
+			visited[current] = true
+			next, ok := byID[current]
+			if !ok {
+				break // Broken chain - OPF-040 already reported this
+			}
+			nextMt := next.MediaType
+			if idx := strings.Index(nextMt, ";"); idx >= 0 {
+				nextMt = strings.TrimSpace(nextMt[:idx])
+			}
+			if coreMediaTypes[nextMt] {
+				resolved = true
+				break
+			}
+			current = next.Fallback
+		}
+
+		// If the loop stopped because we hit a cycle (current is already visited),
+		// OPF-045 already handles circular chains — don't also emit RSC-032.
+		isCircular := current != "" && visited[current]
+		if !resolved && !isCircular {
+			r.Add(report.Error, "RSC-032",
+				fmt.Sprintf("Fallback chain for manifest item '%s' does not resolve to a core media type", item.ID))
 		}
 	}
 }

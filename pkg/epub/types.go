@@ -41,6 +41,7 @@ type Package struct {
 	Manifest         []ManifestItem
 	Spine            []SpineItemref
 	SpineToc         string // EPUB 2 spine toc attribute
+	SpinePageMap     string // EPUB 2 spine page-map attribute (Adobe extension)
 	RenditionLayout  string // "pre-paginated" or "reflowable"
 	RenditionFlow    string // rendition:flow property
 	Guide            []GuideReference

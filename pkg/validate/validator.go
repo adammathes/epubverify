@@ -112,6 +112,12 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		r.DowngradeToInfo(divergenceChecks)
 	}
 
+	// Post-downgrade: emit OEBPS 1.2 legacy media type warnings AFTER DowngradeToInfo
+	// so they are not downgraded to INFO. These are real EPUBCheck warnings.
+	if ep.IsLegacyOEBPS12 && ep.Package != nil && ep.Package.Version != "" {
+		checkLegacyOEBPS12MediaTypes(ep.Package, r)
+	}
+
 	return r, nil
 }
 

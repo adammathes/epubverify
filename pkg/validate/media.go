@@ -55,6 +55,24 @@ func isFontMediaType(mt string) bool {
 		strings.Contains(mt, "font")
 }
 
+// acceptedFontTypeAliases are non-core font media types that are widely accepted
+// aliases for standard font formats (e.g. application/x-font-ttf for TrueType).
+// These should NOT trigger CSS-007 because they are effectively equivalent to
+// core font types, just using older/alternate naming conventions.
+var acceptedFontTypeAliases = map[string]bool{
+	"font/otf":                    true,
+	"font/ttf":                    true,
+	"font/woff":                   true,
+	"font/woff2":                  true,
+	"application/font-woff":       true,
+	"application/font-woff2":      true,
+	"application/vnd.ms-opentype": true,
+	"application/font-sfnt":       true,
+	"application/x-font-ttf":      true,
+	"application/x-font-opentype": true,
+	"application/x-font-truetype": true,
+}
+
 // Core image media types per EPUB spec
 var coreImageTypes = map[string]bool{
 	"image/gif":     true,

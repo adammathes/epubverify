@@ -51,8 +51,9 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 		// CSS-004: no remote font sources
 		checkCSSRemoteFonts(ep, cssContent, fullPath, item, r)
 
-		// CSS-005: no @import rules
+		// CSS-005: no @import rules; RSC-001/RSC-008: imported files must exist
 		checkCSSNoImport(cssContent, fullPath, r)
+		checkCSSImportTargets(ep, cssContent, fullPath, manifestHrefs, r)
 
 		// CSS-006: font file referenced in CSS must exist
 		checkCSSFontFileExists(ep, cssContent, fullPath, r)
@@ -229,12 +230,19 @@ func checkCSSValidProperties(css string, location string, r *report.Report) {
 }
 
 // CSS-003: @font-face rules must include a src descriptor
+// CSS-019: @font-face rules must not be empty
 func checkCSSFontFaceHasSrc(css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
 	matches := fontFaceRe.FindAllStringSubmatch(css, -1)
 	for _, match := range matches {
 		body := match[1]
-		if !strings.Contains(body, "src") {
+		trimmed := strings.TrimSpace(body)
+		if trimmed == "" {
+			// Empty @font-face block
+			r.AddWithLocation(report.Warning, "CSS-019",
+				"@font-face rule is empty",
+				location)
+		} else if !strings.Contains(body, "src") {
 			r.AddWithLocation(report.Warning, "CSS-003",
 				"@font-face rule is missing required 'src' descriptor",
 				location)
@@ -249,6 +257,48 @@ func checkCSSNoImport(css string, location string, r *report.Report) {
 		r.AddWithLocation(report.Warning, "CSS-005",
 			"@import rules should not be used in EPUB CSS stylesheets",
 			location)
+	}
+}
+
+// checkCSSImportTargets validates @import target files:
+//   - RSC-001: imported file is in manifest but not in container
+//   - RSC-008: imported file is in container but not declared in manifest
+func checkCSSImportTargets(ep *epub.EPUB, css string, location string, manifestHrefs map[string]bool, r *report.Report) {
+	// Match @import "url" or @import url("url")
+	importRe := regexp.MustCompile(`@import\s+(?:url\(['"]?|['"])([^'")\s]+)`)
+	cssDir := path.Dir(location)
+
+	for _, match := range importRe.FindAllStringSubmatch(css, -1) {
+		href := match[1]
+		if isRemoteURL(href) {
+			continue
+		}
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		target := resolvePath(cssDir, parsed.Path)
+		_, inContainer := ep.Files[target]
+		inManifest := manifestHrefs[target]
+
+		if !inContainer {
+			if inManifest {
+				// RSC-001: in manifest but missing from container
+				r.AddWithLocation(report.Error, "RSC-001",
+					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+					location)
+			} else {
+				// Not in container, not in manifest - RSC-007
+				r.AddWithLocation(report.Error, "RSC-007",
+					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+					location)
+			}
+		} else if !inManifest {
+			// RSC-008: in container but not in manifest
+			r.AddWithLocation(report.Error, "RSC-008",
+				fmt.Sprintf("Referenced resource '%s' is in the container but not declared in the OPF manifest", href),
+				location)
+		}
 	}
 }
 
@@ -327,12 +377,33 @@ func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.M
 	}
 }
 
-// CSS-006: font file sources must exist
+// CSS-006: font file sources must exist in the container and be declared in the manifest.
+// When a font is in the manifest but missing from the container, RSC-001 fires instead.
 func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
 	urlRe := regexp.MustCompile(`url\(['"]?([^'")\s]+)['"]?\)`)
 
 	cssDir := path.Dir(location)
+
+	// Build manifest lookup by full path (to avoid CSS-006 duplicating RSC-001)
+	manifestPaths := make(map[string]bool)
+	if ep.Package != nil {
+		for _, item := range ep.Package.Manifest {
+			if item.Href != "\x00MISSING" {
+				manifestPaths[ep.ResolveHref(item.Href)] = true
+			}
+		}
+	}
+
+	// Build manifest lookup by media type for CSS-007
+	manifestByPath := make(map[string]string) // path -> media-type
+	if ep.Package != nil {
+		for _, item := range ep.Package.Manifest {
+			if item.Href != "\x00MISSING" {
+				manifestByPath[ep.ResolveHref(item.Href)] = item.MediaType
+			}
+		}
+	}
 
 	matches := fontFaceRe.FindAllStringSubmatch(css, -1)
 	for _, match := range matches {
@@ -348,9 +419,23 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 			}
 			target := resolvePath(cssDir, parsed.Path)
 			if _, exists := ep.Files[target]; !exists {
+				// Skip if in manifest - RSC-001 will report it
+				if manifestPaths[target] {
+					continue
+				}
 				r.AddWithLocation(report.Error, "CSS-006",
 					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 					location)
+			} else {
+				// CSS-007: emit info when font uses a truly non-standard media type
+				// (not a core type and not an accepted alias like application/x-font-ttf)
+				if mt, ok := manifestByPath[target]; ok {
+					if isFontMediaType(mt) && !coreMediaTypes[mt] && !acceptedFontTypeAliases[mt] {
+						r.AddWithLocation(report.Info, "CSS-007",
+							fmt.Sprintf("Font '%s' uses a non-standard media type '%s'", href, mt),
+							location)
+					}
+				}
 			}
 		}
 	}

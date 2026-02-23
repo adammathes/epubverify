@@ -10,6 +10,7 @@ import (
 
 	"github.com/adammathes/epubverify/pkg/epub"
 	"github.com/adammathes/epubverify/pkg/report"
+	"golang.org/x/text/unicode/norm"
 )
 
 // checkReferences validates cross-references between manifest and zip contents.
@@ -452,16 +453,56 @@ func checkNavLinkResolves(ep *epub.EPUB, href, navFullPath, checkID string, r *r
 
 	refPath := u.Path
 	if refPath == "" {
-		return // fragment-only
+		// Fragment-only: check the fragment against the nav doc itself
+		if u.Fragment != "" {
+			navData, err := ep.ReadFile(navFullPath)
+			if err == nil {
+				ids := collectNavIDs(navData)
+				if !ids[u.Fragment] {
+					r.AddWithLocation(report.Error, "RSC-012",
+						fmt.Sprintf("Fragment identifier is not defined: '#%s'", u.Fragment),
+						navFullPath)
+				}
+			}
+		}
+		return
 	}
 
 	navDir := path.Dir(navFullPath)
 	target := resolvePath(navDir, refPath)
-	if _, exists := ep.Files[target]; !exists {
-		r.AddWithLocation(report.Error, checkID,
+	// Also try NFC-normalized path for diacritic filenames
+	nfcTarget := norm.NFC.String(target)
+	_, exists := ep.Files[target]
+	if !exists && nfcTarget != target {
+		_, exists = ep.Files[nfcTarget]
+	}
+	if !exists {
+		r.AddWithLocation(report.Error, "RSC-007",
 			fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 			navFullPath)
+		return
 	}
+
+	// Check fragment identifier if present
+	if u.Fragment != "" {
+		targetData, err := ep.ReadFile(target)
+		if err != nil && nfcTarget != target {
+			targetData, err = ep.ReadFile(nfcTarget)
+		}
+		if err == nil {
+			ids := collectNavIDs(targetData)
+			if !ids[u.Fragment] {
+				r.AddWithLocation(report.Error, "RSC-012",
+					fmt.Sprintf("Fragment identifier is not defined: '%s#%s'", refPath, u.Fragment),
+					navFullPath)
+			}
+		}
+	}
+}
+
+// collectNavIDs collects all id attributes from an HTML/XHTML document.
+func collectNavIDs(data []byte) map[string]bool {
+	return collectIDs(data)
 }
 
 // RSC-010: manifest hrefs must be valid URLs
