@@ -6,20 +6,28 @@ import (
 	"testing"
 )
 
-func specDir(t *testing.T) string {
-	dir := os.Getenv("EPUBCHECK_SPEC_DIR")
-	if dir == "" {
-		dir = filepath.Join(os.Getenv("HOME"), "epubcheck-spec")
+// testdataDir returns the path to the testdata directory in the repo root.
+func testdataDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
 	}
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		t.Skipf("epubcheck-spec not found at %s", dir)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, "testdata")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not find repo root (no go.mod)")
+		}
+		dir = parent
 	}
-	return dir
 }
 
 func TestOpen(t *testing.T) {
-	sd := specDir(t)
-	ep, err := Open(filepath.Join(sd, "fixtures/epub/valid/minimal-epub3.epub"))
+	td := testdataDir(t)
+	ep, err := Open(filepath.Join(td, "fixtures/epub3/00-minimal/minimal.epub"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +46,8 @@ func TestOpen(t *testing.T) {
 }
 
 func TestParseContainer(t *testing.T) {
-	sd := specDir(t)
-	ep, err := Open(filepath.Join(sd, "fixtures/epub/valid/minimal-epub3.epub"))
+	td := testdataDir(t)
+	ep, err := Open(filepath.Join(td, "fixtures/epub3/00-minimal/minimal.epub"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +57,8 @@ func TestParseContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if ep.RootfilePath != "OEBPS/content.opf" {
-		t.Errorf("rootfile path: got %q, want %q", ep.RootfilePath, "OEBPS/content.opf")
+	if ep.RootfilePath != "EPUB/package.opf" {
+		t.Errorf("rootfile path: got %q, want %q", ep.RootfilePath, "EPUB/package.opf")
 	}
 }
 
@@ -103,8 +111,8 @@ func TestResolveHref_NoOPFDir(t *testing.T) {
 }
 
 func TestParseOPF(t *testing.T) {
-	sd := specDir(t)
-	ep, err := Open(filepath.Join(sd, "fixtures/epub/valid/minimal-epub3.epub"))
+	td := testdataDir(t)
+	ep, err := Open(filepath.Join(td, "fixtures/epub3/00-minimal/minimal.epub"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,13 +136,13 @@ func TestParseOPF(t *testing.T) {
 		want interface{}
 	}{
 		{"version", pkg.Version, "3.0"},
-		{"unique-identifier", pkg.UniqueIdentifier, "uid"},
+		{"unique-identifier", pkg.UniqueIdentifier, "q"},
 		{"title count", len(pkg.Metadata.Titles), 1},
-		{"title", pkg.Metadata.Titles[0].Value, "Test Book"},
+		{"title", pkg.Metadata.Titles[0].Value, "Minimal EPUB 3.0"},
 		{"identifier count", len(pkg.Metadata.Identifiers), 1},
 		{"language count", len(pkg.Metadata.Languages), 1},
 		{"language", pkg.Metadata.Languages[0], "en"},
-		{"modified", pkg.Metadata.Modified, "2025-01-01T00:00:00Z"},
+		{"modified", pkg.Metadata.Modified, "2017-06-14T00:00:01Z"},
 		{"manifest count", len(pkg.Manifest), 2},
 		{"spine count", len(pkg.Spine), 1},
 	}

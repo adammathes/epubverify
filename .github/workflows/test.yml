@@ -22,14 +22,5 @@ jobs:
       with:
         go-version: ${{ matrix.go-version }}
 
-    - name: Clone epubcheck-spec
-      run: git clone https://github.com/adammathes/epubcheck-spec.git "$HOME/epubcheck-spec"
-
-    - name: Build spec fixtures
-      run: |
-        cd "$HOME/epubcheck-spec"
-        chmod +x scripts/*.sh
-        ./scripts/build-fixtures.sh
-
-    - name: Run tests
-      run: go test -v ./pkg/... ./test/...
+    - name: Run unit tests
+      run: go test -v ./pkg/...

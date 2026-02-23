@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1200 400" xmlns="http://www.w3.org/2000/svg" xml:lang="en">
+	<title>SVG Test</title>
+	<desc>Rectangle</desc>
+	<switch>
+		<foreignObject width="50" height="50">
+			<foo xmlns="https://example.org">
+				<p>Hello</p>
+			</foo>
+		</foreignObject>
+		<rect x="10" y="20" width="75" height="30" style="stroke: #333366; fill: #6666cc"/>
+	</switch>
+</svg>

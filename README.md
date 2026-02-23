@@ -6,7 +6,7 @@ A Go-based EPUB validator that checks EPUB files for compliance with standards.
 
 **This is an experimental project created with AI agents by Adam Mathes to make an additional non-Java epub validator.**
 
-**It is not production-ready and is not affiliated with any standards body or vendor.  It does pass the language independent [epubverify test suite](https://github.com/adammathes/epubverify-spec), but that was also vibe-coded. It definitely flags books wrongly right now -- if you get different output trust epubcheck, not this. Use at your own risk!**
+**It is not production-ready and is not affiliated with any standards body or vendor. It definitely flags books wrongly right now -- if you get different output trust epubcheck, not this. Use at your own risk!**
 
 ## Installation
 
@@ -94,19 +94,12 @@ go test ./pkg/...
 make test
 ```
 
-### Spec compliance tests
+### Spec compliance tests (godog/Gherkin)
 
-Spec tests run the validator against the full [epubverify-spec](https://github.com/adammathes/epubverify-spec) fixture suite and compare results against curated expected output.
+Spec compliance tests use [godog](https://github.com/cucumber/godog) to run Gherkin feature files against the validator. Feature files and EPUB fixtures live in `testdata/` within this repo — no external dependencies needed.
 
 ```bash
-# Point at the spec directory
-export EPUBCHECK_SPEC_DIR=/path/to/epubverify-spec
-
-# Build fixtures first (requires epubcheck installed)
-cd $EPUBCHECK_SPEC_DIR && make build
-
-# Run spec tests
-make spec-test
+make godog-test
 ```
 
 ### All make targets
@@ -114,8 +107,8 @@ make spec-test
 ```
 make build       Build the binary
 make test        Run unit tests (pkg/...)
-make spec-test   Run spec compliance tests (requires EPUBCHECK_SPEC_DIR)
-make compare     Run full parity comparison via spec scripts
+make godog-test  Run Gherkin/godog spec compliance tests
+make test-all    Run all tests (unit + godog)
 make bench       Benchmark epubverify vs reference epubcheck
 make clean       Remove built binary
 ```
@@ -130,8 +123,11 @@ epubverify/
 │   ├── validate/      # Validation logic (OCF, OPF, HTML, CSS, nav, etc.)
 │   ├── doctor/        # Experimental auto-repair (--doctor mode)
 │   └── report/        # Report generation (text and JSON output)
-└── test/
-    └── spec_test.go   # Spec compliance tests against epubverify-spec
+├── test/
+│   └── godog/         # Godog step definitions and test runner
+└── testdata/
+    ├── features/      # Gherkin feature files (epub2/, epub3/)
+    └── fixtures/      # EPUB test fixtures
 ```
 
 ## License
