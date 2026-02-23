@@ -1,6 +1,8 @@
 package validate
 
 import (
+	"strings"
+
 	"github.com/adammathes/epubverify/pkg/epub"
 	"github.com/adammathes/epubverify/pkg/report"
 )
@@ -9,7 +11,7 @@ import (
 type Options struct {
 	// Strict enables checks that follow the EPUB spec more closely,
 	// even when the reference epubcheck tool doesn't flag them.
-	// This includes OCF-005 (compressed mimetype) and RSC-002 (file not in manifest).
+	// This includes PKG-005 (compressed mimetype) and RSC-002w (file not in manifest).
 	Strict bool
 
 	// Accessibility enables accessibility metadata and best-practice checks (ACC-*).
@@ -28,7 +30,14 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 
 	ep, err := epub.Open(path)
 	if err != nil {
-		r.Add(report.Fatal, "PKG-000", "Could not open EPUB: "+err.Error())
+		errMsg := err.Error()
+		// PKG-008: Unable to read EPUB file (ZIP error)
+		if strings.Contains(errMsg, "zip") || strings.Contains(errMsg, "EOF") ||
+			strings.Contains(errMsg, "not a valid") || strings.Contains(errMsg, "opening epub") {
+			r.Add(report.Fatal, "PKG-008", "Unable to read EPUB file: "+errMsg)
+		} else {
+			r.Add(report.Fatal, "PKG-008", "Unable to read EPUB file: "+errMsg)
+		}
 		return r, nil
 	}
 	defer ep.Close()
@@ -87,15 +96,15 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 // epubcheck 5.3.0 does not. In non-Strict mode these are downgraded
 // from WARNING to INFO so they don't affect warning_count.
 var divergenceChecks = map[string]bool{
-	"RSC-002": true, // file in container not in manifest
-	"HTM-003": true, // empty href attribute
-	"HTM-009": true, // base element
-	"HTM-021": true, // position:absolute in inline style
-	"NAV-009": true, // hidden attribute on nav
-	"CSS-003": true, // @font-face missing src
-	"CSS-005": true, // @import rules
-	"OPF-039": true, // deprecated guide element in EPUB 3
-	"MED-012": true, // video non-core media type
-	"E2-012":  true, // invalid guide reference type
-	"E2-015":  true, // NCX depth mismatch
+	"RSC-002w": true, // file in container not in manifest (our custom warning)
+	"HTM-003":  true, // empty href attribute
+	"HTM-009":  true, // base element
+	"HTM-021":  true, // position:absolute in inline style
+	"NAV-009":  true, // hidden attribute on nav
+	"CSS-003":  true, // @font-face missing src
+	"CSS-005":  true, // @import rules
+	"OPF-039":  true, // deprecated guide element in EPUB 3
+	"MED-012":  true, // video non-core media type
+	"E2-012":   true, // invalid guide reference type
+	"E2-015":   true, // NCX depth mismatch
 }

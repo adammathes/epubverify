@@ -223,13 +223,13 @@ func TestDoctorFixesMimetypeContent(t *testing.T) {
 
 	foundMimeFix := false
 	for _, fix := range result.Fixes {
-		if fix.CheckID == "OCF-003" {
+		if fix.CheckID == "PKG-007" {
 			foundMimeFix = true
 			break
 		}
 	}
 	if !foundMimeFix {
-		t.Error("Expected OCF-003 fix for mimetype content")
+		t.Error("Expected PKG-007 fix for mimetype content")
 	}
 
 	// Verify the output EPUB has correct mimetype
@@ -598,7 +598,7 @@ func TestDoctorFixesFileNotInManifest(t *testing.T) {
 
 	foundFix := false
 	for _, fix := range result.Fixes {
-		if fix.CheckID == "RSC-002" {
+		if fix.CheckID == "RSC-002w" {
 			foundFix = true
 			if !strings.Contains(fix.Description, "extra-style.css") {
 				t.Errorf("Expected fix to mention 'extra-style.css', got: %s", fix.Description)

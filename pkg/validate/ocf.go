@@ -18,94 +18,104 @@ import (
 func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	fatal := false
 
-	// OCF-001: mimetype file must be present
+	// PKG-006: mimetype file must be present
 	checkMimetypePresent(ep, r)
 
-	// OCF-002: mimetype must be first entry
+	// PKG-007: mimetype must be first entry (or wrong content)
 	checkMimetypeFirst(ep, r)
 
-	// OCF-003: mimetype content must be exactly "application/epub+zip"
+	// PKG-007: mimetype content must be exactly "application/epub+zip"
 	checkMimetypeContent(ep, r)
 
-	// OCF-004: mimetype must not have extra field in local header
+	// PKG-005: mimetype must not have extra field in local header
 	checkMimetypeNoExtraField(ep, r)
 
-	// OCF-005: mimetype must be stored, not compressed
-	// epubcheck 5.3.0 does not flag compressed mimetype entries.
-	// Only check in strict mode to better follow the spec.
+	// mimetype must be stored, not compressed (strict mode only)
 	if opts.Strict {
 		checkMimetypeStored(ep, r)
 	}
 
-	// OCF-006: container.xml must be present
+	// RSC-002: container.xml must be present
 	if !checkContainerPresent(ep, r) {
 		return true
 	}
 
-	// OCF-007: container.xml must be well-formed XML
+	// container.xml must be well-formed XML
 	if !checkContainerWellFormed(ep, r) {
 		return true
 	}
 
-	// OCF-008: container.xml must have a rootfile
+	// container.xml must have a rootfile
 	if !checkContainerHasRootfile(ep, r) {
 		fatal = true
 	}
 
-	// OCF-009: rootfile target must exist
+	// OPF-002: rootfile target must exist
 	if !fatal && !checkRootfileExists(ep, r) {
 		return true
 	}
 
-	// OCF-010: META-INF/encryption.xml must be valid if present
+	// encryption.xml checks
 	checkEncryptionXML(ep, r)
 
-	// OCF-011: all rootfiles must exist
+	// all rootfiles must exist
 	if checkAllRootfilesExist(ep, r) {
 		return true
 	}
 
-	// OCF-012: rootfile media-type must be correct
+	// RSC-003: rootfile media-type must be correct
 	checkRootfileMediaType(ep, r)
 
-	// OCF-013: encryption.xml must be well-formed XML if present
+	// encryption.xml must be well-formed XML if present
 	checkEncryptionXMLWellFormed(ep, r)
 
-	// OCF-014: container.xml version must be 1.0
+	// container.xml version must be 1.0
 	checkContainerVersion(ep, r)
 
-	// OCF-015: filenames must not contain restricted characters
+	// PKG-009: filenames must not contain restricted characters
 	checkFilenameValidChars(ep, r)
 
-	// OCF-016: file paths should not exceed 65535 bytes
+	// PKG-010: warn about spaces in file names
+	checkFilenameSpaces(ep, r)
+
+	// PKG-014: warn about empty directories
+	checkEmptyDirectories(ep, r)
+
+	// PKG-025: publication resources must not be in META-INF
+	checkNoResourcesInMetaInf(ep, r)
+
+	// OPF-060: duplicate filenames after case folding / NFC normalization
+	checkDuplicateFilenames(ep, r)
+
+	// file paths should not exceed 65535 bytes
 	checkFilenameLength(ep, r)
 
 	return fatal
 }
 
-// OCF-001: mimetype file must be present
+// PKG-006: mimetype file must be present (epubcheck: PKG-006)
 func checkMimetypePresent(ep *epub.EPUB, r *report.Report) {
 	_, exists := ep.Files["mimetype"]
 	if !exists {
-		r.Add(report.Error, "OCF-001", "Required mimetype file not found in the OCF container")
+		r.Add(report.Error, "PKG-006", "Required mimetype file not found in the OCF container")
 	}
 }
 
-// OCF-002: mimetype must be the first entry in the zip
+// PKG-007: mimetype must be the first entry in the zip
 func checkMimetypeFirst(ep *epub.EPUB, r *report.Report) {
 	if len(ep.ZipFile.File) == 0 {
 		return
 	}
 	first := ep.ZipFile.File[0]
 	if first.Name != "mimetype" {
-		// Only report if mimetype exists but isn't first (OCF-001 covers missing case)
+		// Only report if mimetype exists but isn't first (PKG-006 covers missing case)
 		if _, exists := ep.Files["mimetype"]; exists {
-			r.Add(report.Error, "OCF-002", "The mimetype file must be the first entry in the zip archive")
+			r.Add(report.Error, "PKG-007", "The mimetype file must be the first entry in the zip archive")
 		}
 	}
 }
 
-// OCF-003: mimetype must contain exactly "application/epub+zip"
+// PKG-007: mimetype must contain exactly "application/epub+zip"
 func checkMimetypeContent(ep *epub.EPUB, r *report.Report) {
 	f, exists := ep.Files["mimetype"]
 	if !exists {
@@ -117,12 +127,12 @@ func checkMimetypeContent(ep *epub.EPUB, r *report.Report) {
 	}
 	content := string(data)
 	if content != "application/epub+zip" {
-		r.Add(report.Error, "OCF-003",
+		r.Add(report.Error, "PKG-007",
 			"The mimetype file must contain exactly 'application/epub+zip' but was '"+strings.TrimSpace(content)+"'")
 	}
 }
 
-// OCF-004: mimetype must not have an extra field in its local header.
+// PKG-005: mimetype must not have an extra field in its local header.
 // Go's archive/zip reads Extra from the central directory, which may differ
 // from the local file header. We read the raw local header to check.
 func checkMimetypeNoExtraField(ep *epub.EPUB, r *report.Report) {
@@ -136,7 +146,7 @@ func checkMimetypeNoExtraField(ep *epub.EPUB, r *report.Report) {
 		return
 	}
 	if hasExtra {
-		r.Add(report.Error, "OCF-004", "The mimetype zip entry must not have an extra field in its local header")
+		r.Add(report.Error, "PKG-005", "The mimetype zip entry must not have an extra field in its local header")
 	}
 }
 
@@ -179,54 +189,54 @@ func mimetypeLocalHeaderHasExtra(path string) (bool, error) {
 	return extraLen > 0, nil
 }
 
-// OCF-005: mimetype must be stored, not compressed (strict mode only)
+// mimetype must be stored, not compressed (strict mode only)
 func checkMimetypeStored(ep *epub.EPUB, r *report.Report) {
 	f, exists := ep.Files["mimetype"]
 	if !exists {
 		return
 	}
 	if f.Method != zip.Store {
-		r.Add(report.Error, "OCF-005", "The mimetype file must be stored (not compressed) in the zip archive")
+		r.Add(report.Error, "PKG-005", "The mimetype file must be stored (not compressed) in the zip archive")
 	}
 }
 
-// OCF-006: META-INF/container.xml must be present
+// RSC-002: META-INF/container.xml must be present
 func checkContainerPresent(ep *epub.EPUB, r *report.Report) bool {
 	_, exists := ep.Files["META-INF/container.xml"]
 	if !exists {
-		r.Add(report.Fatal, "OCF-006", "Required META-INF/container.xml not found in the OCF container")
+		r.Add(report.Fatal, "RSC-002", "Required file META-INF/container.xml was not found in the container")
 		return false
 	}
 	return true
 }
 
-// OCF-007: container.xml must be well-formed XML
+// RSC-005: container.xml must be well-formed XML
 func checkContainerWellFormed(ep *epub.EPUB, r *report.Report) bool {
 	err := ep.ParseContainer()
 	if err != nil {
-		r.Add(report.Fatal, "OCF-007", "META-INF/container.xml is not well-formed: XML document structures must be well-formed")
+		r.Add(report.Fatal, "RSC-005", "META-INF/container.xml is not well-formed: XML document structures must be well-formed")
 		return false
 	}
 	return true
 }
 
-// OCF-008: container.xml must contain a rootfile element
+// container.xml must contain a rootfile element
 func checkContainerHasRootfile(ep *epub.EPUB, r *report.Report) bool {
 	if ep.RootfilePath == "" {
-		r.Add(report.Error, "OCF-008", "container.xml does not contain a rootfile element")
+		r.Add(report.Error, "RSC-005", "container.xml does not contain a rootfile element")
 		return false
 	}
 	return true
 }
 
-// OCF-009: rootfile full-path must point to an existing file
+// OPF-002: rootfile full-path must point to an existing file
 func checkRootfileExists(ep *epub.EPUB, r *report.Report) bool {
 	if ep.RootfilePath == "" {
 		return false
 	}
 	_, exists := ep.Files[ep.RootfilePath]
 	if !exists {
-		r.Add(report.Fatal, "OCF-009", "The rootfile '"+ep.RootfilePath+"' ("+ep.RootfilePath+") was not found in the container")
+		r.Add(report.Fatal, "OPF-002", "The package document '"+ep.RootfilePath+"' was not found in the container")
 		return false
 	}
 	return true
@@ -268,7 +278,7 @@ func checkAllRootfilesExist(ep *epub.EPUB, r *report.Report) bool {
 	return false
 }
 
-// OCF-012: rootfile media-type must be application/oebps-package+xml
+// RSC-003: rootfile media-type must be application/oebps-package+xml
 func checkRootfileMediaType(ep *epub.EPUB, r *report.Report) {
 	hasCorrectMediaType := false
 	for _, rf := range ep.AllRootfiles {
@@ -278,7 +288,7 @@ func checkRootfileMediaType(ep *epub.EPUB, r *report.Report) {
 		}
 	}
 	if len(ep.AllRootfiles) > 0 && !hasCorrectMediaType {
-		r.Add(report.Error, "OCF-012",
+		r.Add(report.Error, "RSC-003",
 			"No rootfile tag with media type 'application/oebps-package+xml' found")
 	}
 }
@@ -336,29 +346,77 @@ func checkContainerVersion(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// OCF-015: filenames must not contain restricted characters
+// PKG-009: filenames must not contain restricted characters
 func checkFilenameValidChars(ep *epub.EPUB, r *report.Report) {
-	// Characters restricted in ZIP/EPUB filenames
-	restricted := []rune{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31}
-
 	for _, f := range ep.ZipFile.File {
 		for _, c := range f.Name {
-			for _, r2 := range restricted {
-				if c == r2 {
-					r.Add(report.Error, "OCF-015",
-						fmt.Sprintf("File '%s' could not be found in the container: filename contains restricted characters", f.Name))
-					break
-				}
+			if c < 0x20 {
+				r.Add(report.Error, "PKG-009",
+					fmt.Sprintf("File name contains characters forbidden in OCF file names: '%s'", f.Name))
+				break
 			}
 		}
 	}
 }
 
-// OCF-016: file paths should not exceed 65535 bytes
+// PKG-010: warn about spaces in file names
+func checkFilenameSpaces(ep *epub.EPUB, r *report.Report) {
+	for _, f := range ep.ZipFile.File {
+		if strings.Contains(f.Name, " ") && f.Name != "mimetype" {
+			r.Add(report.Warning, "PKG-010",
+				fmt.Sprintf("Filename contains spaces, which is discouraged: '%s'", f.Name))
+		}
+	}
+}
+
+// PKG-014: warn about empty directories in the container
+func checkEmptyDirectories(ep *epub.EPUB, r *report.Report) {
+	for _, f := range ep.ZipFile.File {
+		if strings.HasSuffix(f.Name, "/") && f.UncompressedSize64 == 0 {
+			r.Add(report.Warning, "PKG-014",
+				fmt.Sprintf("File '%s' is a directory: empty directories are not allowed in an EPUB container", f.Name))
+		}
+	}
+}
+
+// PKG-025: publication resources must not be stored in META-INF
+func checkNoResourcesInMetaInf(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		if strings.HasPrefix(fullPath, "META-INF/") {
+			r.Add(report.Error, "PKG-025",
+				fmt.Sprintf("Publication resources must not be located in the META-INF directory: '%s'", fullPath))
+		}
+	}
+}
+
+// OPF-060: duplicate filenames after Unicode case folding or NFC normalization
+func checkDuplicateFilenames(ep *epub.EPUB, r *report.Report) {
+	seen := make(map[string]string) // normalized → original
+	for _, f := range ep.ZipFile.File {
+		normalized := strings.ToLower(f.Name)
+		if existing, ok := seen[normalized]; ok {
+			if existing != f.Name {
+				r.Add(report.Error, "OPF-060",
+					fmt.Sprintf("Duplicate entry: file names must be unique after Unicode case folding: '%s' and '%s'", existing, f.Name))
+			}
+		} else {
+			seen[normalized] = f.Name
+		}
+	}
+}
+
+// file paths should not exceed 65535 bytes
 func checkFilenameLength(ep *epub.EPUB, r *report.Report) {
 	for _, f := range ep.ZipFile.File {
 		if len(f.Name) > 65535 {
-			r.Add(report.Warning, "OCF-016",
+			r.Add(report.Warning, "PKG-016",
 				fmt.Sprintf("File path '%s...' exceeds recommended maximum of 65535 bytes", f.Name[:50]))
 		}
 	}

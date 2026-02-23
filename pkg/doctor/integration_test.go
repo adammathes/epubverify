@@ -127,8 +127,7 @@ func TestDoctorIntegrationMultipleProblems(t *testing.T) {
 
 	// Verify fixes were applied
 	expectedFixes := map[string]bool{
-		"OCF-002": false, // mimetype not first
-		"OCF-003": false, // wrong mimetype content
+		"PKG-007": false, // mimetype wrong content
 		"OPF-004": false, // missing dcterms:modified
 		"OPF-024": false, // wrong media-type
 		"HTM-005": false, // missing scripted property
@@ -294,7 +293,7 @@ func TestDoctorIntegrationTier2Problems(t *testing.T) {
 		"OPF-036": false, // bad date format
 		"HTM-003": false, // empty href
 		"HTM-004": false, // obsolete elements
-		"RSC-002": false, // file not in manifest
+		"RSC-002w": false, // file not in manifest
 	}
 	for _, fix := range result.Fixes {
 		if _, ok := expectedFixes[fix.CheckID]; ok {

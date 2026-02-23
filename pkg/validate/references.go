@@ -537,7 +537,8 @@ func checkManifestNoAbsolutePath(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-002: every content file in the container should be listed in the manifest
+// RSC-002w: every content file in the container should be listed in the manifest
+// (Using RSC-002w to distinguish from the fatal RSC-002 for missing container.xml)
 func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 	manifestPaths := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -581,7 +582,7 @@ func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 			continue
 		}
 		if !manifestPaths[name] {
-			r.Add(report.Warning, "RSC-002",
+			r.Add(report.Warning, "RSC-002w",
 				fmt.Sprintf("File '%s' in container is not declared in the OPF manifest", name))
 		}
 	}
