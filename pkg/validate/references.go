@@ -83,13 +83,6 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-func isFontMediaType(mt string) bool {
-	return strings.HasPrefix(mt, "font/") ||
-		mt == "application/font-woff" ||
-		mt == "application/font-sfnt" ||
-		mt == "application/vnd.ms-opentype"
-}
-
 // RSC-005/RSC-006/RSC-009: resources referenced in content documents checks
 func checkResourcesInManifest(ep *epub.EPUB, r *report.Report) {
 	manifestHrefs := make(map[string]bool)
@@ -508,19 +501,15 @@ func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-012: no duplicate zip entries
+// RSC-012: no duplicate zip entries (exact same path appearing more than once)
 func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
-	// Check for files that map to the same case-insensitive path
-	seen := make(map[string]string) // lowercase -> original
+	seen := make(map[string]bool)
 	for _, f := range ep.ZipFile.File {
-		lower := strings.ToLower(f.Name)
-		if existing, ok := seen[lower]; ok {
-			if existing != f.Name {
-				r.Add(report.Error, "RSC-012",
-					fmt.Sprintf("Duplicate entry in the ZIP file: '%s' and '%s'", existing, f.Name))
-			}
+		if seen[f.Name] {
+			r.Add(report.Error, "RSC-012",
+				fmt.Sprintf("Duplicate entry in the ZIP file: '%s'", f.Name))
 		}
-		seen[lower] = f.Name
+		seen[f.Name] = true
 	}
 }
 

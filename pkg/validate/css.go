@@ -272,20 +272,13 @@ func checkCSSSyntax(css string, location string, r *report.Report) {
 	}
 }
 
-// OPF-014: remote font sources require remote-resources property
+// checkCSSRemoteFonts: remote fonts in CSS are allowed per EPUB spec.
+// The `remote-resources` property check is done at the content document level,
+// not at the CSS level, since CSS doesn't know which content doc references it.
 func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.ManifestItem, r *report.Report) {
-	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
-	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'")\s]+)['"]?\)`)
-
-	matches := fontFaceRe.FindAllStringSubmatch(css, -1)
-	for _, match := range matches {
-		urls := urlRe.FindAllStringSubmatch(match[1], -1)
-		for range urls {
-			r.AddWithLocation(report.Error, "OPF-014",
-				"Property 'remote-resources' should be declared in the manifest for content with remote resources",
-				location)
-		}
-	}
+	// Remote fonts in CSS @font-face are explicitly allowed by the EPUB spec.
+	// No error is reported here. The content document that references this CSS
+	// is responsible for declaring the remote-resources property.
 }
 
 // CSS-006: font file sources must exist

@@ -456,7 +456,7 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 	// HTM-014: viewport must have width and height
 	hasWidth := false
 	hasHeight := false
-	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*\d+`)
+	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*[\w.-]+`)
 	matches := viewportRe.FindAllStringSubmatch(viewportContent, -1)
 	for _, m := range matches {
 		switch strings.ToLower(m[1]) {
@@ -569,7 +569,11 @@ func collectIDs(data []byte) map[string]bool {
 	return ids
 }
 
-// RSC-004: no remote resources / RSC-008: no remote stylesheets
+// checkNoRemoteResources validates remote resource usage.
+// Per EPUB spec:
+// - Remote audio/video are ALLOWED (just need remote-resources property)
+// - Remote fonts (in CSS/SVG) are ALLOWED
+// - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
 func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 
@@ -594,7 +598,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// RSC-006: Remote iframe/embed/object resources are not allowed
+		// RSC-006: Remote iframe/embed resources are not allowed
 		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
@@ -604,12 +608,29 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 				}
 			}
 		}
+		// RSC-006: Remote object data is not allowed
 		if se.Name.Local == "object" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "data" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-006",
-						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
-						location)
+					// Check if this remote object references audio/video (allowed)
+					var objType string
+					for _, a2 := range se.Attr {
+						if a2.Name.Local == "type" {
+							objType = a2.Value
+						}
+					}
+					if strings.HasPrefix(objType, "audio/") || strings.HasPrefix(objType, "video/") {
+						// Remote audio/video via object is allowed - just needs property
+						if !hasProperty(item.Properties, "remote-resources") {
+							r.AddWithLocation(report.Error, "OPF-014",
+								"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+								location)
+						}
+					} else {
+						r.AddWithLocation(report.Error, "RSC-006",
+							fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+							location)
+					}
 				}
 			}
 		}
@@ -625,7 +646,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// OPF-014: Remote audio/video resources require remote-resources property
+		// Remote audio/video resources are ALLOWED in EPUB 3 but need remote-resources property
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
 			if !hasProperty(item.Properties, "remote-resources") {
 				for _, attr := range se.Attr {
@@ -734,7 +755,7 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 
 // checkHyperlink validates a hyperlink reference from a content document.
 func checkHyperlink(ep *epub.EPUB, href, itemDir, location string, r *report.Report) {
-	if href == "" {
+	if strings.TrimSpace(href) == "" {
 		return
 	}
 

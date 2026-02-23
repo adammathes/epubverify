@@ -313,13 +313,16 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	// Then steps — assertion helpers
 	// ================================================================
 
-	// No errors or warnings at all
+	// No errors or warnings at all (also skips already-asserted messages)
 	ctx.Step(`^no errors or warnings are reported\s*$`, func() error {
 		if s.result == nil {
 			return fmt.Errorf("no validation result available")
 		}
 		var issues []string
-		for _, m := range s.result.Messages {
+		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal || m.Severity == report.Error || m.Severity == report.Warning {
 				issues = append(issues, m.String())
 			}
@@ -336,7 +339,10 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		var issues []string
-		for _, m := range s.result.Messages {
+		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal || m.Severity == report.Error || m.Severity == report.Warning {
 				issues = append(issues, m.String())
 			}

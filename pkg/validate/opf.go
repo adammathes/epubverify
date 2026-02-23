@@ -237,14 +237,14 @@ func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 	manifestIDs := make(map[string]bool)
 	for _, item := range pkg.Manifest {
 		if item.ID != "" {
-			manifestIDs[item.ID] = true
+			manifestIDs[strings.TrimSpace(item.ID)] = true
 		}
 	}
 	for _, ref := range pkg.Spine {
 		if ref.IDRef == "" {
 			continue
 		}
-		if !manifestIDs[ref.IDRef] {
+		if !manifestIDs[strings.TrimSpace(ref.IDRef)] {
 			r.Add(report.Error, "OPF-009",
 				fmt.Sprintf("Spine itemref '%s' not found in manifest", ref.IDRef))
 		}
@@ -392,8 +392,10 @@ func checkFallbackNoCycle(pkg *epub.Package, r *report.Report) {
 
 // OPF-023: spine items with non-standard media types must have a fallback
 var contentDocTypes = map[string]bool{
-	"application/xhtml+xml": true,
-	"image/svg+xml":         true,
+	"application/xhtml+xml":    true,
+	"image/svg+xml":            true,
+	"application/x-dtbook+xml": true, // EPUB 2 DTBook content documents
+	"text/x-oeb1-document":     true, // OEB 1.x legacy format
 }
 
 func checkSpineContentDocs(pkg *epub.Package, r *report.Report) {
