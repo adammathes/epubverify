@@ -11,6 +11,8 @@ test:                        ## Run unit tests
 godog-test:                  ## Run Gherkin/godog spec compliance tests
 	go test ./test/godog/ -v -count=1
 
+test-all: test godog-test    ## Run all tests (unit + godog)
+
 bench: build                 ## Benchmark vs reference epubcheck
 	@echo "=== epubverify ===" && time ./epubverify testdata/fixtures/epub3/00-minimal/minimal.epub --json /dev/null 2>/dev/null
 	@echo "=== reference java ===" && time java -jar $(EPUBCHECK_JAR) testdata/fixtures/epub3/00-minimal/minimal.epub --json /dev/null 2>/dev/null

@@ -1,9 +1,7 @@
 # Testing Strategy
 
-epubverify uses the [epubverify-spec](https://github.com/adammathes/epubverify-spec)
-test suite for validation compliance testing. See the spec repo's
-[testing-strategy.md](https://github.com/adammathes/epubverify-spec/blob/main/docs/testing-strategy.md)
-for the language-agnostic testing approach.
+epubverify uses a two-tier testing approach: unit tests for internal logic and
+godog/Gherkin BDD tests for spec compliance.
 
 ## Running Tests
 
@@ -11,12 +9,38 @@ for the language-agnostic testing approach.
 # Unit tests
 make test
 
-# Spec compliance tests (requires ../epubverify-spec to be cloned)
-make spec-test
+# Godog spec compliance tests
+make godog-test
 
-# Full comparison via spec scripts
-make compare
+# All tests
+make test-all
 ```
+
+## Test Architecture
+
+### Unit tests (`pkg/*/`)
+
+Standard Go `testing` package tests for internal logic:
+
+- `pkg/epub/reader_test.go` — EPUB parsing, container/OPF parsing, href resolution
+- `pkg/validate/content_test.go` — epub:type validation edge cases
+- `pkg/validate/validator_test.go` — minimal EPUB 2/3 validation smoke tests
+- `pkg/doctor/doctor_test.go` — doctor mode fix functions (all 4 tiers)
+- `pkg/doctor/integration_test.go` — multi-problem integration tests
+
+### Godog BDD tests (`test/godog/`)
+
+Gherkin feature files in `testdata/features/` define spec compliance tests
+using the [godog](https://github.com/cucumber/godog) framework. These are
+ported from the upstream [w3c/epubcheck](https://github.com/w3c/epubcheck)
+test suite.
+
+- **Feature files**: `testdata/features/epub2/` and `testdata/features/epub3/`
+- **Fixtures**: `testdata/fixtures/epub2/` and `testdata/fixtures/epub3/`
+- **Step definitions**: `test/godog/epubcheck_test.go`
+
+Everything is self-contained in the repo — no external dependencies or
+environment variables needed.
 
 ## Bugs Found and Fixed
 
