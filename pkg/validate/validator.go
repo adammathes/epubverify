@@ -17,6 +17,11 @@ type Options struct {
 	// Accessibility enables accessibility metadata and best-practice checks (ACC-*).
 	// These are not flagged by epubcheck without --profile and are off by default.
 	Accessibility bool
+
+	// SingleFileMode enables single-file validation mode (e.g., validating a
+	// standalone .opf wrapped in a minimal EPUB). Suppresses cross-reference
+	// and content checks that don't apply to single-file validation.
+	SingleFileMode bool
 }
 
 // Validate runs all validation checks on an EPUB file and returns a report.
@@ -52,33 +57,35 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 		return r, nil
 	}
 
-	// Phase 3: Cross-reference checks
-	checkReferences(ep, r, opts)
+	if !opts.SingleFileMode {
+		// Phase 3: Cross-reference checks
+		checkReferences(ep, r, opts)
 
-	// Phase 4: Navigation document checks
-	checkNavigation(ep, r)
+		// Phase 4: Navigation document checks
+		checkNavigation(ep, r)
 
-	// Phase 5: Encoding checks (before content to identify bad files)
-	badEncoding := checkEncoding(ep, r)
+		// Phase 5: Encoding checks (before content to identify bad files)
+		badEncoding := checkEncoding(ep, r)
 
-	// Phase 6: Content document checks
-	checkContentWithSkips(ep, r, badEncoding)
+		// Phase 6: Content document checks
+		checkContentWithSkips(ep, r, badEncoding)
 
-	// Phase 7: CSS checks
-	checkCSS(ep, r)
+		// Phase 7: CSS checks
+		checkCSS(ep, r)
 
-	// Phase 8: Fixed-layout checks
-	checkFXL(ep, r)
+		// Phase 8: Fixed-layout checks
+		checkFXL(ep, r)
 
-	// Phase 9: Media checks
-	checkMedia(ep, r)
+		// Phase 9: Media checks
+		checkMedia(ep, r)
 
-	// Phase 10: EPUB 2 specific checks
-	checkEPUB2(ep, r)
+		// Phase 10: EPUB 2 specific checks
+		checkEPUB2(ep, r)
 
-	// Phase 11: Accessibility checks (opt-in, not flagged by epubcheck without --profile)
-	if opts.Accessibility {
-		checkAccessibility(ep, r)
+		// Phase 11: Accessibility checks (opt-in, not flagged by epubcheck without --profile)
+		if opts.Accessibility {
+			checkAccessibility(ep, r)
+		}
 	}
 
 	// Post-processing: when not in Strict mode, downgrade certain warnings
