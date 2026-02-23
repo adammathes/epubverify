@@ -20,6 +20,7 @@ var coreMediaTypes = map[string]bool{
 	"image/jpeg":                   true,
 	"image/png":                    true,
 	"image/svg+xml":                true,
+	"image/webp":                   true,
 	"application/xhtml+xml":        true,
 	"application/x-dtbncx+xml":     true,
 	"text/css":                     true,
@@ -34,10 +35,24 @@ var coreMediaTypes = map[string]bool{
 	"application/vnd.ms-opentype":  true,
 	"audio/mpeg":                   true,
 	"audio/mp4":                    true,
+	"audio/ogg":                    true,
 	"video/mp4":                    true,
 	"video/h264":                   true,
 	"application/smil+xml":         true,
 	"application/pls+xml":          true,
+}
+
+// isFontMediaType returns true if the media type is a font type (core or foreign)
+func isFontMediaType(mt string) bool {
+	return strings.HasPrefix(mt, "font/") ||
+		mt == "application/font-woff" ||
+		mt == "application/font-sfnt" ||
+		mt == "application/vnd.ms-opentype" ||
+		mt == "application/x-font-woff" ||
+		mt == "application/x-font-ttf" ||
+		mt == "application/x-font-truetype" ||
+		mt == "application/x-font-opentype" ||
+		strings.Contains(mt, "font")
 }
 
 // Core image media types per EPUB spec
@@ -114,15 +129,12 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 			}
 		}
 
-		// MED-004/MED-005: foreign resources must have fallback
-		// Per EPUB 3 spec §5.3.3, all foreign resources in the manifest
-		// must provide a fallback.
-		// Skip image/webp and video/* - epubcheck 5.3.0 does not flag these
-		if ep.Package.Version >= "3.0" && !coreMediaTypes[item.MediaType] && item.MediaType != "image/webp" &&
-			!strings.HasPrefix(item.MediaType, "video/") && item.Fallback == "" {
-			r.Add(report.Error, foreignResourceCheckID(item.MediaType),
-				fmt.Sprintf("Fallback must be provided for foreign resources: '%s' has media type '%s'", item.Href, item.MediaType))
-		}
+		// Foreign resources check: per EPUB 3 spec, foreign resources
+		// referenced from content documents need fallbacks. However, many types
+		// are exempt: fonts, video, tracks, linked resources, and unreferenced items.
+		// We skip the broad manifest-level MED-004/MED-005 here because the
+		// content-level RSC-032 check handles this more precisely.
+		// Only flag truly non-exempt foreign resources that have no manifest fallback.
 
 		// MED-006 through MED-011: media overlay SMIL checks
 		if item.MediaType == "application/smil+xml" && ep.Package.Version >= "3.0" {
@@ -309,6 +321,37 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 	}
 
 	_ = hasBody
+
+	// OPF-014: Check if media overlay has remote resources and content doc needs remote-resources property
+	hasRemoteInOverlay := false
+	for _, tok := range tokens {
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "audio" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					if isRemoteURL(attr.Value) {
+						hasRemoteInOverlay = true
+					}
+				}
+			}
+		}
+	}
+	if hasRemoteInOverlay {
+		// Find the content document that has media-overlay pointing to this overlay
+		for _, mItem := range ep.Package.Manifest {
+			if mItem.MediaOverlay == item.ID {
+				if !hasProperty(mItem.Properties, "remote-resources") {
+					contentPath := ep.ResolveHref(mItem.Href)
+					r.AddWithLocation(report.Error, "OPF-014",
+						"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+						contentPath)
+				}
+			}
+		}
+	}
 }
 
 // MED-007: audio src must exist in container

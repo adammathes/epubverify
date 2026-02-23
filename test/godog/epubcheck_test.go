@@ -272,7 +272,7 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 
 		ext := filepath.Ext(path)
 		switch ext {
-		case ".opf", ".xhtml", ".svg":
+		case ".opf", ".xhtml", ".svg", ".smil":
 			return godog.ErrPending
 		default:
 			rpt, err := validate.Validate(path)
@@ -285,20 +285,44 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	})
 
 	ctx.Step(`^checking (?:file|document) '([^']*)'$`, func(name string) error {
-		return godog.ErrPending
+		s.result = nil
+		s.lastMessage = ""
+		s.assertedIndices = nil
+
+		path, err := s.fixtureFullPath(name)
+		if err != nil {
+			return fmt.Errorf("fixture lookup: %w", err)
+		}
+
+		ext := filepath.Ext(path)
+		switch ext {
+		case ".opf", ".xhtml", ".svg", ".smil":
+			return godog.ErrPending
+		default:
+			// Full EPUB (directory or .epub)
+			rpt, valErr := validate.Validate(path)
+			if valErr != nil {
+				return fmt.Errorf("validation failed: %w", valErr)
+			}
+			s.result = rpt
+		}
+		return nil
 	})
 
 	// ================================================================
 	// Then steps — assertion helpers
 	// ================================================================
 
-	// No errors or warnings at all
+	// No errors or warnings at all (also skips already-asserted messages)
 	ctx.Step(`^no errors or warnings are reported\s*$`, func() error {
 		if s.result == nil {
 			return fmt.Errorf("no validation result available")
 		}
 		var issues []string
-		for _, m := range s.result.Messages {
+		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal || m.Severity == report.Error || m.Severity == report.Warning {
 				issues = append(issues, m.String())
 			}
@@ -315,7 +339,10 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		var issues []string
-		for _, m := range s.result.Messages {
+		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal || m.Severity == report.Error || m.Severity == report.Warning {
 				issues = append(issues, m.String())
 			}
@@ -619,6 +646,97 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	ctx.Step(`^no error is returned$`, func() error {
 		return godog.ErrPending
 	})
+}
+
+// validateSingleOPF wraps a standalone .opf file in a minimal EPUB and validates it.
+// This simulates epubcheck's "package document" check mode.
+func validateSingleOPF(opfPath, fixturesDir, basePath string) (*report.Report, error) {
+	opfData, err := os.ReadFile(opfPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading OPF: %w", err)
+	}
+
+	tmp, err := os.CreateTemp("", "epubverify-opf-*.epub")
+	if err != nil {
+		return nil, fmt.Errorf("creating temp EPUB: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	w := zip.NewWriter(tmp)
+
+	// mimetype
+	header := &zip.FileHeader{Name: "mimetype", Method: zip.Store}
+	mw, _ := w.CreateHeader(header)
+	mw.Write([]byte("application/epub+zip"))
+
+	// container.xml
+	cw, _ := w.Create("META-INF/container.xml")
+	cw.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>`))
+
+	// The OPF itself
+	ow, _ := w.Create("OEBPS/content.opf")
+	ow.Write(opfData)
+
+	// Parse the OPF to find referenced files and create stubs for them
+	referencedFiles := extractManifestHrefsFromOPF(opfData)
+	opfDir := filepath.Dir(opfPath)
+	for _, href := range referencedFiles {
+		if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+			continue
+		}
+		// Try to find the real file alongside the OPF
+		localPath := filepath.Join(opfDir, href)
+		if data, readErr := os.ReadFile(localPath); readErr == nil {
+			fw, _ := w.Create("OEBPS/" + href)
+			fw.Write(data)
+		} else {
+			// Create a minimal stub
+			fw, _ := w.Create("OEBPS/" + href)
+			fw.Write([]byte{})
+		}
+	}
+
+	w.Close()
+	tmp.Close()
+
+	rpt, err := validate.ValidateWithOptions(tmpPath, validate.Options{SingleFileMode: true})
+	if err != nil {
+		return nil, err
+	}
+	return rpt, nil
+}
+
+// extractManifestHrefsFromOPF parses an OPF and returns the manifest item hrefs.
+func extractManifestHrefsFromOPF(data []byte) []string {
+	var hrefs []string
+	content := string(data)
+
+	// Simple regex-based extraction to avoid XML namespace issues
+	for _, line := range strings.Split(content, "\n") {
+		if !strings.Contains(line, "<item") {
+			continue
+		}
+		idx := strings.Index(line, `href="`)
+		if idx < 0 {
+			idx = strings.Index(line, `href='`)
+		}
+		if idx < 0 {
+			continue
+		}
+		idx += 6
+		quote := line[idx-1]
+		end := strings.IndexByte(line[idx:], quote)
+		if end > 0 {
+			hrefs = append(hrefs, line[idx:idx+end])
+		}
+	}
+	return hrefs
 }
 
 // formatMessages returns a human-readable string of all messages.

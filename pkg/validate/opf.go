@@ -21,19 +21,17 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 
 	pkg := ep.Package
 
-	// OPF-012: metadata element present
+	// RSC-005: required elements present (schema validation)
 	if !ep.HasMetadata {
-		r.Add(report.Error, "OPF-012", "Package document is missing required element: metadata")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: metadata")
 	}
 
-	// OPF-013: manifest element present
 	if !ep.HasManifest {
-		r.Add(report.Error, "OPF-013", "Package document is missing required element: manifest")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: manifest")
 	}
 
-	// OPF-014: spine element present
 	if !ep.HasSpine {
-		r.Add(report.Error, "OPF-014", "Package document is missing required element: spine")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: spine")
 	}
 
 	// OPF-015: version must be valid (2.0 or 3.0)
@@ -239,14 +237,14 @@ func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 	manifestIDs := make(map[string]bool)
 	for _, item := range pkg.Manifest {
 		if item.ID != "" {
-			manifestIDs[item.ID] = true
+			manifestIDs[strings.TrimSpace(item.ID)] = true
 		}
 	}
 	for _, ref := range pkg.Spine {
 		if ref.IDRef == "" {
 			continue
 		}
-		if !manifestIDs[ref.IDRef] {
+		if !manifestIDs[strings.TrimSpace(ref.IDRef)] {
 			r.Add(report.Error, "OPF-009",
 				fmt.Sprintf("Spine itemref '%s' not found in manifest", ref.IDRef))
 		}
@@ -394,8 +392,10 @@ func checkFallbackNoCycle(pkg *epub.Package, r *report.Report) {
 
 // OPF-023: spine items with non-standard media types must have a fallback
 var contentDocTypes = map[string]bool{
-	"application/xhtml+xml": true,
-	"image/svg+xml":         true,
+	"application/xhtml+xml":    true,
+	"image/svg+xml":            true,
+	"application/x-dtbook+xml": true, // EPUB 2 DTBook content documents
+	"text/x-oeb1-document":     true, // OEB 1.x legacy format
 }
 
 func checkSpineContentDocs(pkg *epub.Package, r *report.Report) {
@@ -478,6 +478,11 @@ func checkMediaTypeMatches(ep *epub.EPUB, r *report.Report) {
 			}
 			// Skip equivalent MIME types for fonts, JavaScript, and audio/video
 			if mediaTypesEquivalent(item.MediaType, expectedType) {
+				continue
+			}
+			// Skip foreign/non-standard media types - these are intentional
+			// and handled by RSC-032 (foreign resource fallback checks)
+			if !coreMediaTypes[item.MediaType] {
 				continue
 			}
 			r.Add(report.Error, "OPF-024",
@@ -613,7 +618,7 @@ func checkDCTermsModifiedExactlyOnce(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-029: manifest item properties must be valid
+// OPF-029/OPF-027: manifest item properties must be valid
 func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 	if pkg.Version < "3.0" {
 		return
@@ -623,7 +628,15 @@ func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		for _, prop := range strings.Fields(item.Properties) {
-			if !validManifestProperties[prop] {
+			if validManifestProperties[prop] {
+				continue
+			}
+			// OPF-027: property exists but is for a different context
+			// (e.g. rendition/spine properties used on manifest items)
+			if validSpineProperties[prop] || strings.HasPrefix(prop, "rendition:") {
+				r.Add(report.Error, "OPF-027",
+					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
+			} else {
 				r.Add(report.Error, "OPF-029",
 					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
 			}

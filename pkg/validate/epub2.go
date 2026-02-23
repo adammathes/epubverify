@@ -306,7 +306,7 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 		}
 	}
 
-	if ncxUID != "" && ncxUID != opfUID {
+	if ncxUID != "" && strings.TrimSpace(ncxUID) != strings.TrimSpace(opfUID) {
 		r.Add(report.Error, "E2-010",
 			fmt.Sprintf("NCX identifier '%s' does not match OPF identifier '%s'", ncxUID, opfUID))
 	}

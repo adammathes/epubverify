@@ -22,7 +22,7 @@ type Fix struct {
 }
 
 // fixMimetype ensures the mimetype file has the correct content.
-// Fixes OCF-003. OCF-002/004/005 are handled by the writer.
+// Fixes PKG-007. PKG-005 are handled by the writer.
 func fixMimetype(files map[string][]byte) []Fix {
 	var fixes []Fix
 	expected := []byte("application/epub+zip")
@@ -31,7 +31,7 @@ func fixMimetype(files map[string][]byte) []Fix {
 	if !exists {
 		files["mimetype"] = expected
 		fixes = append(fixes, Fix{
-			CheckID:     "OCF-001",
+			CheckID:     "PKG-006",
 			Description: "Added missing mimetype file",
 		})
 		return fixes
@@ -40,7 +40,7 @@ func fixMimetype(files map[string][]byte) []Fix {
 	if !bytes.Equal(current, expected) {
 		files["mimetype"] = expected
 		fixes = append(fixes, Fix{
-			CheckID:     "OCF-003",
+			CheckID:     "PKG-007",
 			Description: fmt.Sprintf("Fixed mimetype content from '%s' to 'application/epub+zip'", strings.TrimSpace(string(current))),
 		})
 	}
@@ -213,14 +213,8 @@ func fixManifestProperties(files map[string][]byte, ep *epub.EPUB) []Fix {
 		files[ep.RootfilePath] = []byte(opfStr)
 
 		for _, m := range missing {
-			checkID := "HTM-005"
-			if m == "svg" {
-				checkID = "HTM-006"
-			} else if m == "mathml" {
-				checkID = "HTM-007"
-			}
 			fixes = append(fixes, Fix{
-				CheckID:     checkID,
+				CheckID:     "OPF-014",
 				Description: fmt.Sprintf("Added '%s' property to manifest item '%s'", m, item.ID),
 				File:        ep.RootfilePath,
 			})
@@ -272,7 +266,7 @@ func fixDoctype(files map[string][]byte, ep *epub.EPUB) []Fix {
 	return fixes
 }
 
-// detectZipFixes checks the before-report for OCF issues that are fixed
+// detectZipFixes checks the before-report for PKG issues that are fixed
 // by construction when the writer rewrites the ZIP (mimetype ordering,
 // compression, extra field). These don't modify the in-memory files but
 // the writer's output will fix them.
@@ -280,21 +274,25 @@ func detectZipFixes(r *report.Report) []Fix {
 	var fixes []Fix
 	for _, msg := range r.Messages {
 		switch msg.CheckID {
-		case "OCF-002":
-			fixes = append(fixes, Fix{
-				CheckID:     "OCF-002",
-				Description: "Reordered mimetype as first ZIP entry",
-			})
-		case "OCF-004":
-			fixes = append(fixes, Fix{
-				CheckID:     "OCF-004",
-				Description: "Removed extra field from mimetype ZIP entry",
-			})
-		case "OCF-005":
-			fixes = append(fixes, Fix{
-				CheckID:     "OCF-005",
-				Description: "Changed mimetype from compressed to stored",
-			})
+		case "PKG-007":
+			if strings.Contains(msg.Message, "first entry") {
+				fixes = append(fixes, Fix{
+					CheckID:     "PKG-007",
+					Description: "Reordered mimetype as first ZIP entry",
+				})
+			}
+		case "PKG-005":
+			if strings.Contains(msg.Message, "extra field") {
+				fixes = append(fixes, Fix{
+					CheckID:     "PKG-005",
+					Description: "Removed extra field from mimetype ZIP entry",
+				})
+			} else if strings.Contains(msg.Message, "stored") || strings.Contains(msg.Message, "compressed") {
+				fixes = append(fixes, Fix{
+					CheckID:     "PKG-005",
+					Description: "Changed mimetype from compressed to stored",
+				})
+			}
 		}
 	}
 	return fixes
@@ -712,7 +710,7 @@ func fixFilesNotInManifest(files map[string][]byte, ep *epub.EPUB) []Fix {
 
 		insertions = append(insertions, fmt.Sprintf(`    <item id="%s" href="%s" media-type="%s"/>`, id, href, mediaType))
 		fixes = append(fixes, Fix{
-			CheckID:     "RSC-002",
+			CheckID:     "RSC-002w",
 			Description: fmt.Sprintf("Added '%s' to manifest (id='%s', media-type='%s')", name, id, mediaType),
 			File:        ep.RootfilePath,
 		})

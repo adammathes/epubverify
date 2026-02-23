@@ -38,6 +38,25 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		spineItemIDs[ref.IDRef] = true
 	}
 
+	// Check SVG content documents for remote-resources property
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if item.MediaType != "image/svg+xml" {
+			continue
+		}
+		if ep.Package.Version < "3.0" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		checkSVGPropertyDeclarations(ep, data, fullPath, item, r)
+	}
+
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" {
 			continue
@@ -192,7 +211,166 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 		// HTM-033: no RDF elements in content
 		checkNoRDFElements(data, fullPath, r)
+
+		// RSC-032: foreign resources referenced from content must have fallbacks
+		if ep.Package.Version >= "3.0" && !isNav {
+			checkForeignResourceFallbacks(ep, data, fullPath, r)
+		}
 	}
+}
+
+// RSC-032: foreign resources (non-core media types) referenced from content
+// documents must have proper fallbacks (manifest fallback or HTML fallback).
+func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, r *report.Report) {
+	// Build manifest maps
+	manifestByHref := make(map[string]epub.ManifestItem) // resolved path -> item
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestByHref[ep.ResolveHref(item.Href)] = item
+		}
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	itemDir := path.Dir(location)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+
+		switch se.Name.Local {
+		case "img":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "img", r)
+				}
+			}
+		case "audio":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "audio", r)
+				}
+			}
+		case "video":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "video", r)
+				}
+				if attr.Name.Local == "poster" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "poster", r)
+				}
+			}
+		case "source":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "source", r)
+				}
+			}
+		case "embed":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "embed", r)
+				}
+			}
+		case "object":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "object", r)
+				}
+			}
+		case "input":
+			// <input type="image" src="..."> uses image
+			var inputType, src string
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" {
+					inputType = attr.Value
+				}
+				if attr.Name.Local == "src" {
+					src = attr.Value
+				}
+			}
+			if inputType == "image" && src != "" {
+				checkForeignRef(ep, src, itemDir, location, manifestByHref, "input-image", r)
+			}
+		case "math":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "altimg" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "math-altimg", r)
+				}
+			}
+		}
+	}
+}
+
+func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHref map[string]epub.ManifestItem, context string, r *report.Report) {
+	if href == "" || isRemoteURL(href) || strings.HasPrefix(href, "data:") {
+		// Remote resources and data URIs handled separately
+		if strings.HasPrefix(href, "data:") {
+			// data: URIs with foreign types need reporting
+			if strings.HasPrefix(href, "data:image/") {
+				mt := strings.SplitN(href[5:], ";", 2)[0]
+				mt = strings.SplitN(mt, ",", 2)[0]
+				if !coreMediaTypes[mt] {
+					r.AddWithLocation(report.Error, "RSC-032",
+						fmt.Sprintf("Fallback must be provided for foreign resource: data URI with media type '%s'", mt),
+						location)
+				}
+			}
+		}
+		return
+	}
+
+	u, err := url.Parse(href)
+	if err != nil {
+		return
+	}
+	refPath := u.Path
+	if refPath == "" {
+		return
+	}
+	target := resolvePath(itemDir, refPath)
+	item, ok := manifestByHref[target]
+	if !ok {
+		return // Not in manifest - handled by RSC-007
+	}
+
+	// Check if the media type is foreign (non-core)
+	// Strip parameters (e.g., "audio/ogg ; codecs=opus" -> "audio/ogg")
+	mt := item.MediaType
+	if idx := strings.Index(mt, ";"); idx >= 0 {
+		mt = strings.TrimSpace(mt[:idx])
+	}
+	if coreMediaTypes[mt] {
+		return // Core media type, no fallback needed
+	}
+
+	// Exempt: fonts, video (in video/img), audio (in audio/source) are
+	// allowed to use foreign types without fallbacks per EPUB spec
+	if isFontMediaType(mt) {
+		return // Font types are always exempt
+	}
+	if strings.HasPrefix(mt, "video/") && (context == "video" || context == "source" || context == "img" || context == "object") {
+		return // Video foreign types are exempt in video/source/img/object context
+	}
+	if strings.HasPrefix(mt, "audio/") && context == "source" {
+		// Audio in <source> elements: check if there's another <source> sibling with a core type
+		// For now, allow all audio sources - RSC-032 should fire on <audio src> not <source>
+		return
+	}
+
+	// Check for manifest fallback
+	if item.Fallback != "" {
+		return // Has manifest fallback
+	}
+
+	r.AddWithLocation(report.Error, "RSC-032",
+		fmt.Sprintf("Fallback must be provided for foreign resource '%s' of type '%s'", href, item.MediaType),
+		location)
 }
 
 // HTM-001: check that XHTML is well-formed XML
@@ -352,12 +530,22 @@ func checkXHTMLNamespace(data []byte, location string, r *report.Report) {
 	}
 }
 
-// HTM-005/HTM-006/HTM-007: check for script/SVG/MathML and undeclared properties
+// checkPropertyDeclarations: check for script/SVG/MathML/switch/form/remote-resources
+// and verify declared manifest properties match actual content.
+// OPF-014: property needed but not declared
+// OPF-015: property declared but not needed
 func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	hasScript := false
 	hasSVG := false
 	hasMathML := false
+	hasSwitch := false
+	hasForm := false
+	hasRemoteResources := false
+	hasRemoteInlineCSS := false
+
+	// Build set of linked CSS hrefs to check for remote resources
+	var linkedCSSHrefs []string
 
 	for {
 		tok, err := decoder.Token()
@@ -389,21 +577,184 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 		if se.Name.Local == "math" || se.Name.Space == "http://www.w3.org/1998/Math/MathML" {
 			hasMathML = true
 		}
+		// epub:switch detection
+		if se.Name.Local == "switch" && (se.Name.Space == "http://www.idpf.org/2007/ops" ||
+			strings.HasPrefix(getAttrVal(se, "xmlns:epub"), "http://www.idpf.org/2007/ops")) {
+			hasSwitch = true
+		}
+		// Form elements count as scripted per epubcheck
+		if se.Name.Local == "form" {
+			hasForm = true
+		}
+		// Check for remote resource references in content elements
+		switch se.Name.Local {
+		case "audio", "video", "source", "img", "iframe", "object", "embed":
+			for _, attr := range se.Attr {
+				if (attr.Name.Local == "src" || attr.Name.Local == "poster" || attr.Name.Local == "data") && isRemoteURL(attr.Value) {
+					hasRemoteResources = true
+				}
+			}
+		case "script":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+					hasRemoteResources = true
+				}
+			}
+		}
+		// Collect linked CSS stylesheet hrefs
+		if se.Name.Local == "link" {
+			rel := ""
+			href := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "rel" {
+					rel = attr.Value
+				}
+				if attr.Name.Local == "href" {
+					href = attr.Value
+				}
+			}
+			if strings.Contains(rel, "stylesheet") && href != "" {
+				linkedCSSHrefs = append(linkedCSSHrefs, href)
+			}
+		}
+		// Check inline <style> for remote resources
+		if se.Name.Local == "style" {
+			// Read style content
+			var styleContent string
+			for {
+				t, err := decoder.Token()
+				if err != nil {
+					break
+				}
+				if cd, ok := t.(xml.CharData); ok {
+					styleContent += string(cd)
+				}
+				if _, ok := t.(xml.EndElement); ok {
+					break
+				}
+			}
+			if hasRemoteURLInCSS(styleContent) {
+				hasRemoteInlineCSS = true
+			}
+		}
 	}
 
+	// Check linked CSS files for remote resources
+	itemDir := path.Dir(location)
+	for _, href := range linkedCSSHrefs {
+		if isRemoteURL(href) {
+			continue
+		}
+		cssPath := resolvePath(itemDir, href)
+		cssData, err := ep.ReadFile(cssPath)
+		if err != nil {
+			continue
+		}
+		if hasRemoteURLInCSS(string(cssData)) {
+			hasRemoteResources = true
+			break
+		}
+	}
+	if hasRemoteInlineCSS {
+		hasRemoteResources = true
+	}
+
+	// OPF-014: property needed but not declared
 	if hasScript && !hasProperty(item.Properties, "scripted") {
-		r.AddWithLocation(report.Error, "HTM-005",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'scripted' should be declared in the manifest for scripted content",
 			location)
 	}
+	if hasForm && !hasProperty(item.Properties, "scripted") && !hasScript {
+		r.AddWithLocation(report.Error, "OPF-014",
+			"Property 'scripted' should be declared in the manifest for content with form elements",
+			location)
+	}
 	if hasSVG && !hasProperty(item.Properties, "svg") {
-		r.AddWithLocation(report.Error, "HTM-006",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'svg' should be declared in the manifest for content with inline SVG",
 			location)
 	}
 	if hasMathML && !hasProperty(item.Properties, "mathml") {
-		r.AddWithLocation(report.Error, "HTM-007",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'mathml' should be declared in the manifest for content with MathML",
+			location)
+	}
+	if hasSwitch {
+		// RSC-017: epub:switch is deprecated
+		r.AddWithLocation(report.Warning, "RSC-017",
+			`The "epub:switch" element is deprecated`,
+			location)
+		if !hasProperty(item.Properties, "switch") {
+			r.AddWithLocation(report.Error, "OPF-014",
+				"Property 'switch' should be declared in the manifest for content with epub:switch",
+				location)
+		}
+	}
+	if hasRemoteResources && !hasProperty(item.Properties, "remote-resources") {
+		r.AddWithLocation(report.Error, "OPF-014",
+			"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+			location)
+	}
+
+	// OPF-015: property declared but not needed
+	hasScriptOrForm := hasScript || hasForm
+	if hasProperty(item.Properties, "scripted") && !hasScriptOrForm {
+		r.AddWithLocation(report.Error, "OPF-015",
+			"Property 'scripted' is declared in the manifest but the content does not contain scripted elements",
+			location)
+	}
+	if hasProperty(item.Properties, "svg") && !hasSVG {
+		r.AddWithLocation(report.Error, "OPF-015",
+			"Property 'svg' is declared in the manifest but the content does not contain SVG elements",
+			location)
+	}
+	if hasProperty(item.Properties, "remote-resources") && !hasRemoteResources {
+		// OPF-018 in epubcheck for unnecessary remote-resources is a warning
+		r.AddWithLocation(report.Warning, "OPF-018",
+			"Property 'remote-resources' is declared in the manifest but is not needed",
+			location)
+	}
+}
+
+// hasRemoteURLInCSS checks if CSS content contains any remote URL references
+// (excluding @namespace declarations which use url() for namespace URIs)
+func hasRemoteURLInCSS(css string) bool {
+	// Remove @namespace lines first as they use url() for identifiers, not resources
+	namespaceRe := regexp.MustCompile(`(?m)@namespace\s+[^\n;]+;`)
+	cleaned := namespaceRe.ReplaceAllString(css, "")
+	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'"\)\s]+)['"]?\)`)
+	return urlRe.MatchString(cleaned)
+}
+
+// getAttrVal gets an attribute value by local name from a start element
+func getAttrVal(se xml.StartElement, name string) string {
+	for _, attr := range se.Attr {
+		if attr.Name.Local == name {
+			return attr.Value
+		}
+	}
+	return ""
+}
+
+// checkSVGPropertyDeclarations checks SVG content documents for remote resources
+// and verifies the remote-resources manifest property is declared.
+func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
+	content := string(data)
+	hasRemote := false
+
+	// Check for remote URLs in SVG (href, xlink:href attributes and url() in style)
+	remoteRe := regexp.MustCompile(`(?:href|xlink:href)\s*=\s*["'](https?://[^"']+)["']`)
+	if remoteRe.MatchString(content) {
+		hasRemote = true
+	}
+	if hasRemoteURLInCSS(content) {
+		hasRemote = true
+	}
+
+	if hasRemote && !hasProperty(item.Properties, "remote-resources") {
+		r.AddWithLocation(report.Error, "OPF-014",
+			"Property 'remote-resources' should be declared in the manifest for content with remote resources",
 			location)
 	}
 }
@@ -456,7 +807,7 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 	// HTM-014: viewport must have width and height
 	hasWidth := false
 	hasHeight := false
-	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*\d+`)
+	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*[\w.-]+`)
 	matches := viewportRe.FindAllStringSubmatch(viewportContent, -1)
 	for _, m := range matches {
 		switch strings.ToLower(m[1]) {
@@ -569,7 +920,11 @@ func collectIDs(data []byte) map[string]bool {
 	return ids
 }
 
-// RSC-004: no remote resources / RSC-008: no remote stylesheets
+// checkNoRemoteResources validates remote resource usage.
+// Per EPUB spec:
+// - Remote audio/video are ALLOWED (just need remote-resources property)
+// - Remote fonts (in CSS/SVG) are ALLOWED
+// - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
 func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 
@@ -583,25 +938,43 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			continue
 		}
 
-		// Check <img src="http://...">
+		// RSC-006: Remote image resources are not allowed
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-004",
+					r.AddWithLocation(report.Error, "RSC-006",
 						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
 						location)
 				}
 			}
 		}
 
-		// Check <audio src="http://..."> and <video src="http://...">
-		// Per EPUB 3 spec, audio/video remote resources are allowed when
-		// the content document declares the "remote-resources" property.
-		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
-			if !hasProperty(item.Properties, "remote-resources") {
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-						r.AddWithLocation(report.Error, "RSC-004",
+		// RSC-006: Remote iframe/embed resources are not allowed
+		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
+		// RSC-006: Remote object data is not allowed
+		if se.Name.Local == "object" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" && isRemoteURL(attr.Value) {
+					// Check if this remote object references audio/video (allowed)
+					var objType string
+					for _, a2 := range se.Attr {
+						if a2.Name.Local == "type" {
+							objType = a2.Value
+						}
+					}
+					if strings.HasPrefix(objType, "audio/") || strings.HasPrefix(objType, "video/") {
+						// Remote audio/video via object is allowed
+						// Property check handled by checkPropertyDeclarations
+					} else {
+						r.AddWithLocation(report.Error, "RSC-006",
 							fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
 							location)
 					}
@@ -609,7 +982,21 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// Check <link rel="stylesheet" href="http://...">
+		// RSC-006: Remote script references are not allowed
+		if se.Name.Local == "script" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
+
+		// Remote audio/video resources are ALLOWED in EPUB 3 but need remote-resources property.
+		// The property check is handled by checkPropertyDeclarations; nothing more needed here.
+
+		// RSC-006: Remote stylesheet references are not allowed
 		if se.Name.Local == "link" {
 			var href, rel string
 			for _, attr := range se.Attr {
@@ -621,7 +1008,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 				}
 			}
 			if rel == "stylesheet" && isRemoteURL(href) {
-				r.AddWithLocation(report.Error, "RSC-008",
+				r.AddWithLocation(report.Error, "RSC-006",
 					fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
 					location)
 			}
@@ -666,12 +1053,46 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 				}
 			}
 		}
+
+		// RSC-007: Check <iframe src="...">, <embed src="...">, <object data="...">
+		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+		if se.Name.Local == "object" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: Check <audio src="...">, <video src="...">, <source src="...">, <track src="...">
+		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" || se.Name.Local == "track" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: Check <blockquote cite="...">, <q cite="...">, <ins cite="...">, <del cite="...">
+		if se.Name.Local == "blockquote" || se.Name.Local == "q" || se.Name.Local == "ins" || se.Name.Local == "del" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "cite" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
 	}
 }
 
 // checkHyperlink validates a hyperlink reference from a content document.
 func checkHyperlink(ep *epub.EPUB, href, itemDir, location string, r *report.Report) {
-	if href == "" {
+	if strings.TrimSpace(href) == "" {
 		return
 	}
 
@@ -714,21 +1135,32 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 		return
 	}
 	if u.Scheme != "" {
-		return
+		return // remote URL - handled by remote resource checks
 	}
 
 	refPath := u.Path
 	if refPath == "" {
+		return // fragment-only reference
+	}
+
+	// Skip absolute paths
+	if strings.HasPrefix(refPath, "/") {
 		return
 	}
 
 	target := resolvePath(itemDir, refPath)
 	if manifestPaths[target] {
-		return
+		return // good - exists in container and in manifest
 	}
 	if _, exists := ep.Files[target]; !exists {
+		// RSC-007: not found in container at all
 		r.AddWithLocation(report.Error, "RSC-007",
-			fmt.Sprintf("Referenced resource '%s' (%s) was not found in the container", src, target),
+			fmt.Sprintf("Referenced resource '%s' could not be found in the container", src),
+			location)
+	} else {
+		// RSC-006: exists in container but not declared in manifest
+		r.AddWithLocation(report.Error, "RSC-006",
+			fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", src),
 			location)
 	}
 }

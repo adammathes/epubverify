@@ -83,13 +83,6 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-func isFontMediaType(mt string) bool {
-	return strings.HasPrefix(mt, "font/") ||
-		mt == "application/font-woff" ||
-		mt == "application/font-sfnt" ||
-		mt == "application/vnd.ms-opentype"
-}
-
 // RSC-005/RSC-006/RSC-009: resources referenced in content documents checks
 func checkResourcesInManifest(ep *epub.EPUB, r *report.Report) {
 	manifestHrefs := make(map[string]bool)
@@ -508,19 +501,15 @@ func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-012: no duplicate zip entries
+// RSC-012: no duplicate zip entries (exact same path appearing more than once)
 func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
-	// Check for files that map to the same case-insensitive path
-	seen := make(map[string]string) // lowercase -> original
+	seen := make(map[string]bool)
 	for _, f := range ep.ZipFile.File {
-		lower := strings.ToLower(f.Name)
-		if existing, ok := seen[lower]; ok {
-			if existing != f.Name {
-				r.Add(report.Error, "RSC-012",
-					fmt.Sprintf("Duplicate entry in the ZIP file: '%s' and '%s'", existing, f.Name))
-			}
+		if seen[f.Name] {
+			r.Add(report.Error, "RSC-012",
+				fmt.Sprintf("Duplicate entry in the ZIP file: '%s'", f.Name))
 		}
-		seen[lower] = f.Name
+		seen[f.Name] = true
 	}
 }
 
@@ -537,7 +526,8 @@ func checkManifestNoAbsolutePath(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-002: every content file in the container should be listed in the manifest
+// RSC-002w: every content file in the container should be listed in the manifest
+// (Using RSC-002w to distinguish from the fatal RSC-002 for missing container.xml)
 func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 	manifestPaths := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -581,7 +571,7 @@ func checkFilesInManifest(ep *epub.EPUB, r *report.Report) {
 			continue
 		}
 		if !manifestPaths[name] {
-			r.Add(report.Warning, "RSC-002",
+			r.Add(report.Warning, "RSC-002w",
 				fmt.Sprintf("File '%s' in container is not declared in the OPF manifest", name))
 		}
 	}

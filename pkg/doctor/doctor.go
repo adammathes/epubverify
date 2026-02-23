@@ -9,7 +9,7 @@
 //  5. Re-validate the output to confirm fixes worked
 //
 // Tier 1 fixes (safe, deterministic, content-preserving):
-//   - OCF-001/002/003/004/005: mimetype file issues — all handled by correct ZIP writing
+//   - PKG-006/007/005: mimetype file issues — all handled by correct ZIP writing
 //   - OPF-004: missing dcterms:modified — adds current timestamp
 //   - OPF-024/MED-001: media-type mismatch — corrects based on file magic bytes
 //   - HTM-005/006/007: missing manifest properties — adds scripted/svg/mathml
@@ -105,7 +105,7 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 	// Step 3: Apply fixes
 	var allFixes []Fix
 
-	// ZIP-level: ensure correct mimetype (also fixes OCF-001 if missing)
+	// ZIP-level: ensure correct mimetype (also fixes PKG-006 if missing)
 	allFixes = append(allFixes, fixMimetype(files)...)
 
 	// Detect ZIP-structural issues fixed by construction (the writer always
@@ -184,8 +184,8 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 	}
 
 	// Step 4: Write repaired EPUB
-	// The writer handles OCF-002 (mimetype first), OCF-004 (no extra field),
-	// and OCF-005 (stored not compressed) by construction.
+	// The writer handles PKG-007 (mimetype first), PKG-005 (no extra field),
+	// and PKG-005 (stored not compressed) by construction.
 	if err := writeEPUB(outputPath, files, ep.ZipFile); err != nil {
 		ep.Close()
 		return nil, fmt.Errorf("writing repaired epub: %w", err)
@@ -206,7 +206,7 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 	}, nil
 }
 
-// Note on OCF-002/004/005:
+// Note on PKG-005/PKG-007:
 // These are "fixed by construction" — the writeEPUB function always writes
 // mimetype as the first entry, stored (not compressed), with no extra field.
 // So any EPUB that passes through doctor mode gets these fixed automatically,

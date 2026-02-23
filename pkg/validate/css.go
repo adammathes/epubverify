@@ -272,19 +272,58 @@ func checkCSSSyntax(css string, location string, r *report.Report) {
 	}
 }
 
-// CSS-004: no remote font sources in @font-face
+// checkCSSRemoteFonts: remote fonts in CSS are allowed per EPUB spec,
+// but the referencing content document needs the remote-resources property.
+// We check for remote URLs in the CSS and report OPF-014 if no content document
+// declaring remote-resources references this CSS.
 func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.ManifestItem, r *report.Report) {
-	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
-	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'")\s]+)['"]?\)`)
+	// Remove @namespace lines as they use url() for namespace identifiers, not resources
+	namespaceRe := regexp.MustCompile(`(?m)@namespace\s+[^\n;]+;`)
+	cleaned := namespaceRe.ReplaceAllString(css, "")
+	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'"\)\s]+)['"]?\)`)
+	if !urlRe.MatchString(cleaned) {
+		return
+	}
 
-	matches := fontFaceRe.FindAllStringSubmatch(css, -1)
-	for _, match := range matches {
-		urls := urlRe.FindAllStringSubmatch(match[1], -1)
-		for range urls {
-			r.AddWithLocation(report.Error, "CSS-004",
-				"The property 'remote-resources' should be declared in the OPF manifest",
-				location)
+	// If the CSS item itself has remote-resources property, no error
+	if hasProperty(item.Properties, "remote-resources") {
+		return
+	}
+
+	// The CSS has remote URLs - find which content documents reference this CSS
+	// and check if any of them has the remote-resources property
+	found := false
+	anyHasProperty := false
+	for _, mItem := range ep.Package.Manifest {
+		if mItem.MediaType != "application/xhtml+xml" && mItem.MediaType != "image/svg+xml" {
+			continue
 		}
+		if mItem.Href == "\x00MISSING" {
+			continue
+		}
+		contentPath := ep.ResolveHref(mItem.Href)
+		data, err := ep.ReadFile(contentPath)
+		if err != nil {
+			continue
+		}
+		content := string(data)
+		// Check if the content document references this CSS
+		if strings.Contains(content, item.Href) || strings.Contains(content, path.Base(item.Href)) {
+			found = true
+			if hasProperty(mItem.Properties, "remote-resources") {
+				anyHasProperty = true
+			} else {
+				r.AddWithLocation(report.Error, "OPF-014",
+					"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+					contentPath)
+			}
+		}
+	}
+	// If no content document explicitly references the CSS, report on the CSS item itself
+	if !found && !anyHasProperty {
+		r.AddWithLocation(report.Error, "OPF-014",
+			"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+			location)
 	}
 }
 
