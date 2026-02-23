@@ -583,22 +583,49 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			continue
 		}
 
-		// Check <img src="http://...">
+		// RSC-006: Remote image resources are not allowed
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					if !hasProperty(item.Properties, "remote-resources") {
-						r.AddWithLocation(report.Error, "OPF-014",
-							"Property 'remote-resources' should be declared in the manifest for content with remote resources",
-							location)
-					}
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
 				}
 			}
 		}
 
-		// Check <audio src="http://..."> and <video src="http://...">
-		// Per EPUB 3 spec, audio/video remote resources are allowed when
-		// the content document declares the "remote-resources" property.
+		// RSC-006: Remote iframe/embed/object resources are not allowed
+		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
+		if se.Name.Local == "object" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" && isRemoteURL(attr.Value) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
+
+		// RSC-006: Remote script references are not allowed
+		if se.Name.Local == "script" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
+
+		// OPF-014: Remote audio/video resources require remote-resources property
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
 			if !hasProperty(item.Properties, "remote-resources") {
 				for _, attr := range se.Attr {
@@ -611,7 +638,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// Check <link rel="stylesheet" href="http://...">
+		// RSC-006: Remote stylesheet references are not allowed
 		if se.Name.Local == "link" {
 			var href, rel string
 			for _, attr := range se.Attr {
@@ -623,7 +650,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 				}
 			}
 			if rel == "stylesheet" && isRemoteURL(href) {
-				r.AddWithLocation(report.Error, "RSC-008",
+				r.AddWithLocation(report.Error, "RSC-006",
 					fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
 					location)
 			}

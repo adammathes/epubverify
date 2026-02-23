@@ -21,19 +21,17 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 
 	pkg := ep.Package
 
-	// OPF-012: metadata element present
+	// RSC-005: required elements present (schema validation)
 	if !ep.HasMetadata {
-		r.Add(report.Error, "OPF-012", "Package document is missing required element: metadata")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: metadata")
 	}
 
-	// OPF-013: manifest element present
 	if !ep.HasManifest {
-		r.Add(report.Error, "OPF-013", "Package document is missing required element: manifest")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: manifest")
 	}
 
-	// OPF-014: spine element present
 	if !ep.HasSpine {
-		r.Add(report.Error, "OPF-014", "Package document is missing required element: spine")
+		r.Add(report.Error, "RSC-005", "Package document is missing required element: spine")
 	}
 
 	// OPF-015: version must be valid (2.0 or 3.0)
