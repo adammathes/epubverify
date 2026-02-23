@@ -6,7 +6,7 @@ A Go-based EPUB validator that checks EPUB files for compliance with standards.
 
 **This is an experimental project created with AI agents by Adam Mathes to make an additional non-Java epub validator.**
 
-**It is not production-ready and is not affiliated with any standards body or vendor.  It does pass the language independent [epubverify test suite](https://github.com/adammathes/epubverify-spec), but that was also vibe-coded. It definitely flags books wrongly right now -- if you get different output trust epubcheck, not this. Use at your own risk!**
+**It is not production-ready and is not affiliated with any standards body or vendor. It definitely flags books wrongly right now -- if you get different output trust epubcheck, not this. Use at your own risk!**
 
 ## Installation
 
