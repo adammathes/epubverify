@@ -130,7 +130,7 @@ func TestDoctorIntegrationMultipleProblems(t *testing.T) {
 		"PKG-007": false, // mimetype wrong content
 		"OPF-004": false, // missing dcterms:modified
 		"OPF-024": false, // wrong media-type
-		"HTM-005": false, // missing scripted property
+		"OPF-014": false, // missing scripted/svg/mathml property
 		"HTM-010": false, // wrong DOCTYPE
 	}
 	for _, fix := range result.Fixes {

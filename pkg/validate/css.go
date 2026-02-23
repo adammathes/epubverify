@@ -272,7 +272,7 @@ func checkCSSSyntax(css string, location string, r *report.Report) {
 	}
 }
 
-// CSS-004: no remote font sources in @font-face
+// OPF-014: remote font sources require remote-resources property
 func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.ManifestItem, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
 	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'")\s]+)['"]?\)`)
@@ -281,8 +281,8 @@ func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.M
 	for _, match := range matches {
 		urls := urlRe.FindAllStringSubmatch(match[1], -1)
 		for range urls {
-			r.AddWithLocation(report.Error, "CSS-004",
-				"The property 'remote-resources' should be declared in the OPF manifest",
+			r.AddWithLocation(report.Error, "OPF-014",
+				"Property 'remote-resources' should be declared in the manifest for content with remote resources",
 				location)
 		}
 	}

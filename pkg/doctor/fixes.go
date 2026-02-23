@@ -213,14 +213,8 @@ func fixManifestProperties(files map[string][]byte, ep *epub.EPUB) []Fix {
 		files[ep.RootfilePath] = []byte(opfStr)
 
 		for _, m := range missing {
-			checkID := "HTM-005"
-			if m == "svg" {
-				checkID = "HTM-006"
-			} else if m == "mathml" {
-				checkID = "HTM-007"
-			}
 			fixes = append(fixes, Fix{
-				CheckID:     checkID,
+				CheckID:     "OPF-014",
 				Description: fmt.Sprintf("Added '%s' property to manifest item '%s'", m, item.ID),
 				File:        ep.RootfilePath,
 			})

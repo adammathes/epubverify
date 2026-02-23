@@ -331,19 +331,19 @@ func TestDoctorFixesMissingScriptedProperty(t *testing.T) {
 
 	foundScriptFix := false
 	for _, fix := range result.Fixes {
-		if fix.CheckID == "HTM-005" {
+		if fix.CheckID == "OPF-014" {
 			foundScriptFix = true
 			break
 		}
 	}
 	if !foundScriptFix {
-		t.Error("Expected HTM-005 fix for missing 'scripted' property")
+		t.Error("Expected OPF-014 fix for missing 'scripted' property")
 	}
 
 	// Verify the property was added in the output
 	for _, msg := range result.AfterReport.Messages {
-		if msg.CheckID == "HTM-005" {
-			t.Errorf("HTM-005 still present after fix: %s", msg.Message)
+		if msg.CheckID == "OPF-014" && strings.Contains(msg.Message, "scripted") {
+			t.Errorf("OPF-014 (scripted) still present after fix: %s", msg.Message)
 		}
 	}
 }

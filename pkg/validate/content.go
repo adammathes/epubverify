@@ -392,17 +392,17 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 	}
 
 	if hasScript && !hasProperty(item.Properties, "scripted") {
-		r.AddWithLocation(report.Error, "HTM-005",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'scripted' should be declared in the manifest for scripted content",
 			location)
 	}
 	if hasSVG && !hasProperty(item.Properties, "svg") {
-		r.AddWithLocation(report.Error, "HTM-006",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'svg' should be declared in the manifest for content with inline SVG",
 			location)
 	}
 	if hasMathML && !hasProperty(item.Properties, "mathml") {
-		r.AddWithLocation(report.Error, "HTM-007",
+		r.AddWithLocation(report.Error, "OPF-014",
 			"Property 'mathml' should be declared in the manifest for content with MathML",
 			location)
 	}
@@ -587,9 +587,11 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-					r.AddWithLocation(report.Error, "RSC-004",
-						fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
-						location)
+					if !hasProperty(item.Properties, "remote-resources") {
+						r.AddWithLocation(report.Error, "OPF-014",
+							"Property 'remote-resources' should be declared in the manifest for content with remote resources",
+							location)
+					}
 				}
 			}
 		}
@@ -601,8 +603,8 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			if !hasProperty(item.Properties, "remote-resources") {
 				for _, attr := range se.Attr {
 					if attr.Name.Local == "src" && isRemoteURL(attr.Value) {
-						r.AddWithLocation(report.Error, "RSC-004",
-							fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+						r.AddWithLocation(report.Error, "OPF-014",
+							"Property 'remote-resources' should be declared in the manifest for content with remote resources",
 							location)
 					}
 				}
@@ -666,6 +668,40 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 				}
 			}
 		}
+
+		// RSC-007: Check <iframe src="...">, <embed src="...">, <object data="...">
+		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+		if se.Name.Local == "object" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: Check <audio src="...">, <video src="...">, <source src="...">, <track src="...">
+		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" || se.Name.Local == "track" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: Check <blockquote cite="...">, <q cite="...">, <ins cite="...">, <del cite="...">
+		if se.Name.Local == "blockquote" || se.Name.Local == "q" || se.Name.Local == "ins" || se.Name.Local == "del" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "cite" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
 	}
 }
 
@@ -714,21 +750,32 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 		return
 	}
 	if u.Scheme != "" {
-		return
+		return // remote URL - handled by remote resource checks
 	}
 
 	refPath := u.Path
 	if refPath == "" {
+		return // fragment-only reference
+	}
+
+	// Skip absolute paths
+	if strings.HasPrefix(refPath, "/") {
 		return
 	}
 
 	target := resolvePath(itemDir, refPath)
 	if manifestPaths[target] {
-		return
+		return // good - exists in container and in manifest
 	}
 	if _, exists := ep.Files[target]; !exists {
+		// RSC-007: not found in container at all
 		r.AddWithLocation(report.Error, "RSC-007",
-			fmt.Sprintf("Referenced resource '%s' (%s) was not found in the container", src, target),
+			fmt.Sprintf("Referenced resource '%s' could not be found in the container", src),
+			location)
+	} else {
+		// RSC-006: exists in container but not declared in manifest
+		r.AddWithLocation(report.Error, "RSC-006",
+			fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", src),
 			location)
 	}
 }
