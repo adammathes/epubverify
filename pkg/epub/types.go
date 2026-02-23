@@ -16,6 +16,7 @@ type EPUB struct {
 
 	// Parsed from OPF
 	Package *Package
+	IsLegacyOEBPS12 bool // true if package uses OEBPS 1.2 namespace
 
 	// Raw OPF parse info (set during ParseOPF)
 	OPFParseError error

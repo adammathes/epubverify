@@ -82,6 +82,9 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 		// Phase 10: EPUB 2 specific checks
 		checkEPUB2(ep, r)
 
+		// Phase 10b: Legacy NCX checks (for any publication with an NCX)
+		checkLegacyNCXForAll(ep, r)
+
 		// Phase 11: Accessibility checks (opt-in, not flagged by epubcheck without --profile)
 		if opts.Accessibility {
 			checkAccessibility(ep, r)

@@ -145,6 +145,7 @@ func (ep *EPUB) ParseOPF() error {
 	ep.HasMetadata = structInfo.hasMetadata
 	ep.HasManifest = structInfo.hasManifest
 	ep.HasSpine = structInfo.hasSpine
+	ep.IsLegacyOEBPS12 = structInfo.isLegacyOEBPS12
 
 	p := &Package{
 		UniqueIdentifier:         structInfo.uniqueIdentifier,
@@ -201,6 +202,7 @@ func (ep *EPUB) ParseOPF() error {
 }
 
 type opfStructInfo struct {
+	isLegacyOEBPS12          bool
 	version                  string
 	uniqueIdentifier         string
 	dir                      string
@@ -245,6 +247,10 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 
 		switch se.Name.Local {
 		case "package":
+			// Detect OEBPS 1.2 namespace
+			if se.Name.Space == "http://openebook.org/namespaces/oeb-package/1.0/" {
+				info.isLegacyOEBPS12 = true
+			}
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "version":

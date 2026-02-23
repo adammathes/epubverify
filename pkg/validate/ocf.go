@@ -11,6 +11,7 @@ import (
 
 	"github.com/adammathes/epubverify/pkg/epub"
 	"github.com/adammathes/epubverify/pkg/report"
+	"golang.org/x/text/unicode/norm"
 )
 
 // checkOCF runs all OCF container checks. Returns true if a fatal error
@@ -220,12 +221,82 @@ func checkContainerWellFormed(ep *epub.EPUB, r *report.Report) bool {
 	return true
 }
 
+// checkRootfileFullPathAttributes checks rootfile elements for missing/empty full-path attributes.
+// Returns (hasValidRootfile, emittedAttributeError) to control subsequent checks.
+func checkRootfileFullPathAttributes(ep *epub.EPUB, r *report.Report) (hasValidRootfile bool, emittedAttrError bool) {
+	if ep.ContainerData == nil {
+		return false, false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(ep.ContainerData)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "rootfile" {
+			continue
+		}
+		// Check if full-path attribute is present and non-empty
+		hasFullPath := false
+		fullPathEmpty := false
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "full-path" {
+				hasFullPath = true
+				if attr.Value == "" {
+					fullPathEmpty = true
+				}
+				break
+			}
+		}
+		if !hasFullPath {
+			r.Add(report.Error, "OPF-016",
+				"The rootfile element is missing the required 'full-path' attribute")
+			emittedAttrError = true
+		} else if fullPathEmpty {
+			r.Add(report.Error, "OPF-017",
+				"The rootfile element has an empty 'full-path' attribute")
+			emittedAttrError = true
+		} else {
+			hasValidRootfile = true
+		}
+	}
+	return hasValidRootfile, emittedAttrError
+}
+
+// PKG-013: Only one OPF rootfile is allowed
+func checkSingleOPFRootfile(ep *epub.EPUB, r *report.Report) {
+	count := 0
+	for _, rf := range ep.AllRootfiles {
+		if rf.MediaType == "application/oebps-package+xml" {
+			count++
+		}
+	}
+	if count > 1 {
+		r.Add(report.Error, "PKG-013",
+			"Only one OPF rootfile is allowed in the container")
+	}
+}
+
 // container.xml must contain a rootfile element
 func checkContainerHasRootfile(ep *epub.EPUB, r *report.Report) bool {
 	if ep.RootfilePath == "" {
-		r.Add(report.Error, "RSC-005", "container.xml does not contain a rootfile element")
+		// Check for missing/empty full-path attributes
+		hasValid, emittedAttrError := checkRootfileFullPathAttributes(ep, r)
+		if emittedAttrError {
+			// When full-path is missing/empty, also emit RSC-003 because the
+			// rootfile can't be resolved to a valid OPF file
+			r.Add(report.Error, "RSC-003",
+				"No rootfile tag with media type 'application/oebps-package+xml' found")
+		} else if !hasValid {
+			r.Add(report.Error, "RSC-005", "container.xml does not contain a rootfile element")
+		}
 		return false
 	}
+	// Even with a valid rootfile, check for attribute issues on other rootfiles
+	checkRootfileFullPathAttributes(ep, r)
+	// Check for multiple OPF rootfiles
+	checkSingleOPFRootfile(ep, r)
 	return true
 }
 
@@ -346,16 +417,105 @@ func checkContainerVersion(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
+// pkg009ForbiddenChar describes a forbidden character and its human-readable label
+type pkg009ForbiddenChar struct {
+	codepoint rune
+	label     string
+}
+
+// formatCodePoint formats a rune for PKG-009 error messages: "U+XXXX (desc)"
+func formatCodePoint(c rune) string {
+	switch {
+	case c == '"':			return "U+0022 (\")"
+	case c == '*':			return "U+002A (*)"
+	case c == ':':			return "U+003A (:)"
+	case c == '<':			return "U+003C (<)"
+	case c == '>':			return "U+003E (>)"
+	case c == '?':			return "U+003F (?)"
+	case c == '\\':			return "U+005C (\\\\)"
+	case c == '|':			return "U+007C (\\|)"
+	case c == 0x7F:			return "U+007F (CONTROL)"
+	case c == 0xFFFD:		return "U+FFFD REPLACEMENT CHARACTER (SPECIALS)"
+	case c >= 0xE000 && c <= 0xF8FF: return fmt.Sprintf("U+%04X (PRIVATE USE)", c)
+	case c >= 0xF0000 && c <= 0xFFFFF: return fmt.Sprintf("U+%05X (PRIVATE USE)", c)
+	case c >= 0x100000 && c <= 0x10FFFF: return fmt.Sprintf("U+%06X (PRIVATE USE)", c)
+	case c >= 0xFDD0 && c <= 0xFDEF: return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
+	case c == 0xFFFE || c == 0xFFFF: return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
+	case (c & 0xFFFF) == 0xFFFE || (c & 0xFFFF) == 0xFFFF: return fmt.Sprintf("U+%X (NON CHARACTER)", c)
+	case c == 0xE0001: return "U+E0001 LANGUAGE TAG (DEPRECATED)"
+	case c < 0x20: return fmt.Sprintf("U+%04X (CONTROL)", c)
+	default: return fmt.Sprintf("U+%04X (%c)", c, c)
+	}
+}
+
+// isForbiddenFilenameChar returns true if the character is forbidden in EPUB file names (PKG-009).
+// In EPUB 2, | is not forbidden; in EPUB 3 it is.
+func isForbiddenFilenameChar(c rune, epub2 bool) bool {
+	// Control characters < 0x20
+	if c < 0x20 {
+		return true
+	}
+	// DEL (0x7F) and C1 controls (0x80-0x9F)
+	if c == 0x7F || (c >= 0x80 && c <= 0x9F) {
+		return true
+	}
+	// Forbidden printable ASCII chars
+	switch c {
+	case '"', '*', ':', '<', '>', '?', '\\':
+		return true
+	case '|':
+		return !epub2 // | is forbidden in EPUB 3 only
+	}
+	// Unicode non-characters: U+FDD0-U+FDEF
+	if c >= 0xFDD0 && c <= 0xFDEF {
+		return true
+	}
+	// Unicode non-characters: U+FFFE, U+FFFF and similar in higher planes
+	if (c & 0xFFFF) == 0xFFFE || (c & 0xFFFF) == 0xFFFF {
+		return true
+	}
+	// Unicode replacement character
+	if c == 0xFFFD {
+		return true
+	}
+	// Private use areas: U+E000-U+F8FF, U+F0000-U+FFFFF, U+100000-U+10FFFF
+	if (c >= 0xE000 && c <= 0xF8FF) ||
+		(c >= 0xF0000 && c <= 0xFFFFF) ||
+		(c >= 0x100000 && c <= 0x10FFFF) {
+		return true
+	}
+	// U+E0001 LANGUAGE TAG is deprecated and forbidden
+	// Note: U+E0020-U+E007F (tag characters for emoji tag sequences) are ALLOWED
+	if c == 0xE0001 {
+		return true
+	}
+	return false
+}
+
 // PKG-009: filenames must not contain restricted characters
 func checkFilenameValidChars(ep *epub.EPUB, r *report.Report) {
+	isEPUB2 := ep.Package != nil && ep.Package.Version == "2.0"
 	for _, f := range ep.ZipFile.File {
+		// Collect all unique forbidden chars in this filename
+		seen := make(map[rune]bool)
+		var forbidden []rune
 		for _, c := range f.Name {
-			if c < 0x20 {
-				r.Add(report.Error, "PKG-009",
-					fmt.Sprintf("File name contains characters forbidden in OCF file names: '%s'", f.Name))
-				break
+			if isForbiddenFilenameChar(c, isEPUB2) && !seen[c] {
+				seen[c] = true
+				forbidden = append(forbidden, c)
 			}
 		}
+		if len(forbidden) == 0 {
+			continue
+		}
+		// Format the list of forbidden chars
+		var parts []string
+		for _, c := range forbidden {
+			parts = append(parts, formatCodePoint(c))
+		}
+		msg := strings.Join(parts, ", ")
+		r.Add(report.Error, "PKG-009",
+			fmt.Sprintf("File name contains characters forbidden in OCF file names: %s", msg))
 	}
 }
 
@@ -371,8 +531,26 @@ func checkFilenameSpaces(ep *epub.EPUB, r *report.Report) {
 
 // PKG-014: warn about empty directories in the container
 func checkEmptyDirectories(ep *epub.EPUB, r *report.Report) {
+	// Build a set of all file names (non-directory entries) for quick lookup
+	fileNames := make(map[string]bool)
 	for _, f := range ep.ZipFile.File {
-		if strings.HasSuffix(f.Name, "/") && f.UncompressedSize64 == 0 {
+		if !strings.HasSuffix(f.Name, "/") {
+			fileNames[f.Name] = true
+		}
+	}
+	for _, f := range ep.ZipFile.File {
+		if !strings.HasSuffix(f.Name, "/") || f.UncompressedSize64 != 0 {
+			continue
+		}
+		// Check if any file has this directory as a prefix (i.e., is a child)
+		hasChildren := false
+		for name := range fileNames {
+			if strings.HasPrefix(name, f.Name) {
+				hasChildren = true
+				break
+			}
+		}
+		if !hasChildren {
 			r.Add(report.Warning, "PKG-014",
 				fmt.Sprintf("File '%s' is a directory: empty directories are not allowed in an EPUB container", f.Name))
 		}
@@ -396,18 +574,43 @@ func checkNoResourcesInMetaInf(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
+// fullCaseFold applies a simple full Unicode case folding.
+// strings.ToLower handles most cases but misses ß → ss.
+func fullCaseFold(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "ß", "ss")
+	s = strings.ReplaceAll(s, "ﬀ", "ff")
+	s = strings.ReplaceAll(s, "ﬁ", "fi")
+	s = strings.ReplaceAll(s, "ﬂ", "fl")
+	s = strings.ReplaceAll(s, "ﬃ", "ffi")
+	s = strings.ReplaceAll(s, "ﬄ", "ffl")
+	s = strings.ReplaceAll(s, "ﬅ", "st")
+	s = strings.ReplaceAll(s, "ﬆ", "st")
+	return s
+}
+
 // OPF-060: duplicate filenames after Unicode case folding or NFC normalization
 func checkDuplicateFilenames(ep *epub.EPUB, r *report.Report) {
-	seen := make(map[string]string) // normalized → original
+	// We check duplicates using NFC normalization + full case folding.
+	// NFC normalization catches files like "Á" (NFC) and "Á" (NFD decomposed).
+	// Full case folding catches ß → ss and other Unicode case folding.
+	seen := make(map[string]string) // normalized key → original filename
+	reported := make(map[string]bool) // avoid duplicate reports
+
 	for _, f := range ep.ZipFile.File {
-		normalized := strings.ToLower(f.Name)
-		if existing, ok := seen[normalized]; ok {
-			if existing != f.Name {
+		name := f.Name
+		// Normalize to NFC first, then apply full case folding
+		key := fullCaseFold(norm.NFC.String(name))
+
+		if existing, ok := seen[key]; ok {
+			reportKey := existing + "|" + name
+			if existing != name && !reported[reportKey] {
+				reported[reportKey] = true
 				r.Add(report.Error, "OPF-060",
-					fmt.Sprintf("Duplicate entry: file names must be unique after Unicode case folding: '%s' and '%s'", existing, f.Name))
+					fmt.Sprintf("Duplicate entry: file names must be unique after Unicode case folding: '%s' and '%s'", existing, name))
 			}
 		} else {
-			seen[normalized] = f.Name
+			seen[key] = name
 		}
 	}
 }

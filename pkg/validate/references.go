@@ -28,7 +28,7 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 	// RSC-011: manifest hrefs must not use path traversal
 	checkManifestNoPathTraversal(ep, r)
 
-	// RSC-012: no duplicate zip entries
+	// OPF-060: no duplicate zip entries
 	checkNoDuplicateZipEntries(ep, r)
 
 	// RSC-013: manifest hrefs must not be absolute paths
@@ -74,8 +74,6 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 			checkID := "RSC-001"
 			if item.MediaType == "text/css" {
 				checkID = "RSC-005"
-			} else if isFontMediaType(item.MediaType) {
-				checkID = "RSC-009"
 			}
 			r.Add(report.Error, checkID,
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", item.Href))
@@ -501,12 +499,12 @@ func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-012: no duplicate zip entries (exact same path appearing more than once)
+// OPF-060: no duplicate zip entries (exact same path appearing more than once)
 func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
 	seen := make(map[string]bool)
 	for _, f := range ep.ZipFile.File {
 		if seen[f.Name] {
-			r.Add(report.Error, "RSC-012",
+			r.Add(report.Error, "OPF-060",
 				fmt.Sprintf("Duplicate entry in the ZIP file: '%s'", f.Name))
 		}
 		seen[f.Name] = true
