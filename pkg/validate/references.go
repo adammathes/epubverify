@@ -19,19 +19,22 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 		return
 	}
 
+	// PKG-025: publication resources must not be in META-INF
+	checkNoResourcesInMetaInf(ep, r)
+
 	// RSC-001: every manifest href must exist in the zip
 	checkManifestFilesExist(ep, r)
 
 	// RSC-010: manifest hrefs must be valid URLs
 	checkManifestHrefValidURL(ep, r)
 
-	// RSC-011: manifest hrefs must not use path traversal
+	// RSC-026: manifest hrefs must not use path traversal or absolute paths
 	checkManifestNoPathTraversal(ep, r)
 
 	// OPF-060: no duplicate zip entries
 	checkNoDuplicateZipEntries(ep, r)
 
-	// RSC-013: manifest hrefs must not be absolute paths
+	// RSC-026: manifest hrefs must not be absolute paths
 	checkManifestNoAbsolutePath(ep, r)
 
 	// RSC-002: every file in the container should be in the manifest
@@ -60,8 +63,12 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 		if ep.Package.Version < "3.0" && item.MediaType == "application/x-dtbncx+xml" {
 			continue
 		}
-		// Skip absolute paths - handled by RSC-013
+		// Skip absolute paths - handled by RSC-026
 		if strings.HasPrefix(item.Href, "/") {
+			continue
+		}
+		// Skip path traversal - handled by RSC-026
+		if strings.Contains(item.Href, "..") {
 			continue
 		}
 		// Skip remote resources (http/https URLs in manifest are valid
@@ -486,15 +493,21 @@ func isHexDigit(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
-// RSC-011: manifest hrefs must not use path traversal
+// RSC-026: manifest hrefs must not use path traversal
 func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.Contains(item.Href, "..") {
-			r.Add(report.Error, "RSC-011",
-				fmt.Sprintf("Referenced resource '%s' could not be found in the container: path traversal not allowed", item.Href))
+			// Items that resolve to META-INF are reported as PKG-025, not RSC-026
+			rawPath := ep.ResolveHref(item.Href)
+			cleanPath := path.Clean(rawPath)
+			if strings.HasPrefix(cleanPath, "META-INF/") {
+				continue
+			}
+			r.Add(report.Error, "RSC-026",
+				fmt.Sprintf("Referenced resource '%s' cannot be accessed (path traversal not allowed)", item.Href))
 		}
 	}
 }
@@ -511,15 +524,15 @@ func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// RSC-013: manifest hrefs must not be absolute paths
+// RSC-026: manifest hrefs must not be absolute paths
 func checkManifestNoAbsolutePath(ep *epub.EPUB, r *report.Report) {
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.HasPrefix(item.Href, "/") {
-			r.Add(report.Error, "RSC-013",
-				fmt.Sprintf("Referenced resource '%s' leaks outside the container: absolute paths not allowed", item.Href))
+			r.Add(report.Error, "RSC-026",
+				fmt.Sprintf("Referenced resource '%s' cannot be accessed (absolute paths not allowed)", item.Href))
 		}
 	}
 }

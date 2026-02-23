@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/adammathes/epubverify/pkg/epub"
 	"github.com/adammathes/epubverify/pkg/report"
@@ -18,6 +19,11 @@ import (
 // was found that prevents further processing.
 func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	fatal := false
+
+	// PKG-027: all file names must be valid UTF-8 (check first, fatal if found)
+	if checkFilenameUTF8(ep, r) {
+		return true
+	}
 
 	// PKG-006: mimetype file must be present
 	checkMimetypePresent(ep, r)
@@ -45,6 +51,9 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	if !checkContainerWellFormed(ep, r) {
 		return true
 	}
+
+	// RSC-005: container.xml must have a valid content model (no unknown elements)
+	checkContainerContentModel(ep, r)
 
 	// container.xml must have a rootfile
 	if !checkContainerHasRootfile(ep, r) {
@@ -82,8 +91,7 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// PKG-014: warn about empty directories
 	checkEmptyDirectories(ep, r)
 
-	// PKG-025: publication resources must not be in META-INF
-	checkNoResourcesInMetaInf(ep, r)
+	// PKG-025: checked in references phase after OPF is loaded
 
 	// OPF-060: duplicate filenames after case folding / NFC normalization
 	checkDuplicateFilenames(ep, r)
@@ -92,6 +100,18 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	checkFilenameLength(ep, r)
 
 	return fatal
+}
+
+// PKG-027: all ZIP entry names must be valid UTF-8.
+// Reports PKG-027 once (for the first invalid entry) and returns true (fatal condition).
+func checkFilenameUTF8(ep *epub.EPUB, r *report.Report) bool {
+	for _, f := range ep.ZipFile.File {
+		if !utf8.ValidString(f.Name) {
+			r.Add(report.Fatal, "PKG-027", "File name is not a valid UTF-8 encoded string")
+			return true
+		}
+	}
+	return false
 }
 
 // PKG-006: mimetype file must be present (epubcheck: PKG-006)
@@ -219,6 +239,64 @@ func checkContainerWellFormed(ep *epub.EPUB, r *report.Report) bool {
 		return false
 	}
 	return true
+}
+
+// checkContainerContentModel validates that container.xml only contains allowed elements.
+// The OCF schema allows only: container > rootfiles > rootfile, and container > links > link.
+func checkContainerContentModel(ep *epub.EPUB, r *report.Report) {
+	if ep.ContainerData == nil {
+		return
+	}
+	containerNS := "urn:oasis:names:tc:opendocument:xmlns:container"
+	// Track element stack to know the parent context
+	var stack []string
+	decoder := xml.NewDecoder(strings.NewReader(string(ep.ContainerData)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			local := t.Name.Local
+			ns := t.Name.Space
+			// Only validate elements in the container namespace (or no namespace)
+			if ns != "" && ns != containerNS {
+				stack = append(stack, local)
+				continue
+			}
+			parent := ""
+			if len(stack) > 0 {
+				parent = stack[len(stack)-1]
+			}
+			allowed := isAllowedContainerElement(local, parent)
+			if !allowed {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("container.xml: element \"%s\" not allowed anywhere", local))
+			}
+			stack = append(stack, local)
+		case xml.EndElement:
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// isAllowedContainerElement checks if an element local name is allowed in the OCF container schema.
+func isAllowedContainerElement(local, parent string) bool {
+	switch parent {
+	case "":
+		return local == "container"
+	case "container":
+		return local == "rootfiles" || local == "links"
+	case "rootfiles":
+		return local == "rootfile"
+	case "links":
+		return local == "link"
+	default:
+		return false
+	}
 }
 
 // checkRootfileFullPathAttributes checks rootfile elements for missing/empty full-path attributes.
@@ -563,9 +641,14 @@ func checkNoResourcesInMetaInf(ep *epub.EPUB, r *report.Report) {
 		return
 	}
 	for _, item := range ep.Package.Manifest {
-		if item.Href == "\x00MISSING" {
+		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
+		// Skip remote resources
+		if strings.HasPrefix(item.Href, "http://") || strings.HasPrefix(item.Href, "https://") {
+			continue
+		}
+		// ResolveHref already normalizes ".." segments via path.Clean
 		fullPath := ep.ResolveHref(item.Href)
 		if strings.HasPrefix(fullPath, "META-INF/") {
 			r.Add(report.Error, "PKG-025",

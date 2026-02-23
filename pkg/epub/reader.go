@@ -519,7 +519,8 @@ func (ep *EPUB) OPFDir() string {
 
 // ResolveHref resolves a relative href from the OPF file to a full path within the EPUB.
 // Manifest hrefs are IRI-encoded (e.g. spaces as %20), but ZIP entry names use
-// decoded forms, so we percent-decode before joining.
+// decoded forms, so we percent-decode before joining. Path is cleaned to normalize
+// any ".." segments (e.g. "../META-INF/image.jpeg" from "EPUB/" -> "META-INF/image.jpeg").
 func (ep *EPUB) ResolveHref(href string) string {
 	decoded, err := url.PathUnescape(href)
 	if err != nil {
@@ -527,7 +528,7 @@ func (ep *EPUB) ResolveHref(href string) string {
 	}
 	dir := ep.OPFDir()
 	if dir == "." {
-		return decoded
+		return path.Clean(decoded)
 	}
-	return dir + "/" + decoded
+	return path.Clean(dir + "/" + decoded)
 }
