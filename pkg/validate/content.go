@@ -192,7 +192,152 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 		// HTM-033: no RDF elements in content
 		checkNoRDFElements(data, fullPath, r)
+
+		// RSC-032: foreign resources referenced from content must have fallbacks
+		if ep.Package.Version >= "3.0" && !isNav {
+			checkForeignResourceFallbacks(ep, data, fullPath, r)
+		}
 	}
+}
+
+// RSC-032: foreign resources (non-core media types) referenced from content
+// documents must have proper fallbacks (manifest fallback or HTML fallback).
+func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, r *report.Report) {
+	// Build manifest maps
+	manifestByHref := make(map[string]epub.ManifestItem) // resolved path -> item
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestByHref[ep.ResolveHref(item.Href)] = item
+		}
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	itemDir := path.Dir(location)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+
+		switch se.Name.Local {
+		case "img":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "img", r)
+				}
+			}
+		case "audio":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "audio", r)
+				}
+			}
+		case "video":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "video", r)
+				}
+				if attr.Name.Local == "poster" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "poster", r)
+				}
+			}
+		case "source":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "source", r)
+				}
+			}
+		case "embed":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "embed", r)
+				}
+			}
+		case "object":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "data" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "object", r)
+				}
+			}
+		case "input":
+			// <input type="image" src="..."> uses image
+			var inputType, src string
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" {
+					inputType = attr.Value
+				}
+				if attr.Name.Local == "src" {
+					src = attr.Value
+				}
+			}
+			if inputType == "image" && src != "" {
+				checkForeignRef(ep, src, itemDir, location, manifestByHref, "input-image", r)
+			}
+		case "math":
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "altimg" {
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "math-altimg", r)
+				}
+			}
+		}
+	}
+}
+
+func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHref map[string]epub.ManifestItem, context string, r *report.Report) {
+	if href == "" || isRemoteURL(href) || strings.HasPrefix(href, "data:") {
+		// Remote resources and data URIs handled separately
+		if strings.HasPrefix(href, "data:") {
+			// data: URIs with foreign types need reporting
+			if strings.HasPrefix(href, "data:image/") {
+				mt := strings.SplitN(href[5:], ";", 2)[0]
+				mt = strings.SplitN(mt, ",", 2)[0]
+				if !coreMediaTypes[mt] {
+					r.AddWithLocation(report.Error, "RSC-032",
+						fmt.Sprintf("Fallback must be provided for foreign resource: data URI with media type '%s'", mt),
+						location)
+				}
+			}
+		}
+		return
+	}
+
+	u, err := url.Parse(href)
+	if err != nil {
+		return
+	}
+	refPath := u.Path
+	if refPath == "" {
+		return
+	}
+	target := resolvePath(itemDir, refPath)
+	item, ok := manifestByHref[target]
+	if !ok {
+		return // Not in manifest - handled by RSC-007
+	}
+
+	// Check if the media type is foreign (non-core)
+	// Strip parameters (e.g., "audio/ogg ; codecs=opus" -> "audio/ogg")
+	mt := item.MediaType
+	if idx := strings.Index(mt, ";"); idx >= 0 {
+		mt = strings.TrimSpace(mt[:idx])
+	}
+	if coreMediaTypes[mt] {
+		return // Core media type, no fallback needed
+	}
+
+	// Check for manifest fallback
+	if item.Fallback != "" {
+		return // Has manifest fallback
+	}
+
+	r.AddWithLocation(report.Error, "RSC-032",
+		fmt.Sprintf("Fallback must be provided for foreign resource '%s' of type '%s'", href, item.MediaType),
+		location)
 }
 
 // HTM-001: check that XHTML is well-formed XML

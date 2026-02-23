@@ -480,6 +480,11 @@ func checkMediaTypeMatches(ep *epub.EPUB, r *report.Report) {
 			if mediaTypesEquivalent(item.MediaType, expectedType) {
 				continue
 			}
+			// Skip foreign/non-standard media types - these are intentional
+			// and handled by RSC-032 (foreign resource fallback checks)
+			if !coreMediaTypes[item.MediaType] {
+				continue
+			}
 			r.Add(report.Error, "OPF-024",
 				fmt.Sprintf("The file '%s' does not appear to match the media type '%s'", item.Href, item.MediaType))
 		}
