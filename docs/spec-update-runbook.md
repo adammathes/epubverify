@@ -1,7 +1,7 @@
-# Runbook: Syncing epubverify-go with epubverify-spec
+# Runbook: Syncing epubverify with epubverify-spec
 
 This document describes how to update the Go implementation when the
-[epubverify-spec](../epubverify-spec) test suite changes.
+[epubverify-spec](https://github.com/adammathes/epubverify-spec) test suite changes.
 
 ---
 
@@ -10,16 +10,14 @@ This document describes how to update the Go implementation when the
 ```bash
 # Clone both repos side by side
 git clone https://github.com/adammathes/epubverify-spec
-git clone https://github.com/adammathes/epubverify-go
+git clone https://github.com/adammathes/epubverify
 
 # Build spec fixtures (requires Java + epubcheck installed; run bootstrap.sh first)
 cd epubverify-spec
 ./bootstrap.sh
 make build
 
-# Point the Go impl at the spec dir
-export EPUBCHECK_SPEC_DIR=$PWD/../epubverify-spec
-# Or permanently in your shell profile:
+# The Makefile auto-detects ../epubverify-spec, or set manually:
 # export EPUBCHECK_SPEC_DIR=/path/to/epubverify-spec
 ```
 
@@ -30,7 +28,7 @@ export EPUBCHECK_SPEC_DIR=$PWD/../epubverify-spec
 Before making any changes, see where things stand:
 
 ```bash
-cd epubverify-go
+cd epubverify
 
 # Quick: just pass/fail per spec test
 make spec-test
@@ -58,7 +56,7 @@ make build    # rebuild fixtures if any were added
 ### Step 2 — Find what's failing
 
 ```bash
-cd epubverify-go
+cd epubverify
 make spec-test 2>&1 | grep FAIL
 ```
 
@@ -154,7 +152,7 @@ underlying check hasn't changed.
 
 ```bash
 cd epubverify-spec && git pull
-cd epubverify-go && make spec-test
+cd epubverify && make spec-test
 ```
 
 If tests that previously passed now fail, read the new expected file carefully:
@@ -179,7 +177,7 @@ and re-run spec tests. Some expected files may have changed (see Scenario 2).
 cd epubverify-spec
 git pull
 make build       # rebuild all fixture EPUBs
-cd epubverify-go
+cd epubverify
 make spec-test
 ```
 
