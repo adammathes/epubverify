@@ -117,8 +117,9 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 				fmt.Sprintf("Video '%s' uses non-core media type '%s'; prefer MP4 or WebM", item.Href, item.MediaType))
 		}
 
-		// MED-001: image media type must match actual content
-		// MED-003: image must not be corrupted
+		// OPF-029: image media type must match actual content
+		// MED-004: image must not be corrupted
+		// PKG-021: image file must not be empty
 		// Only check core image types — foreign image resources may have
 		// arbitrary binary formats that don't match known magic bytes.
 		if strings.HasPrefix(item.MediaType, "image/") && item.MediaType != "image/svg+xml" && !isNonCoreImage {
@@ -153,7 +154,7 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// MED-001: verify image file type matches declared media type
+// OPF-029: verify image file type matches declared media type in manifest.
 // Returns true if a mismatch was detected.
 func checkImageMediaType(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r *report.Report) bool {
 	data, err := ep.ReadFile(fullPath)
@@ -167,22 +168,30 @@ func checkImageMediaType(ep *epub.EPUB, item epub.ManifestItem, fullPath string,
 	}
 
 	if detected != item.MediaType {
-		r.Add(report.Error, "MED-001",
-			fmt.Sprintf("The file '%s' does not appear to match the media type '%s'", item.Href, item.MediaType))
+		r.Add(report.Error, "OPF-029",
+			fmt.Sprintf("The file '%s' does not appear to match the declared media type '%s'", item.Href, item.MediaType))
 		return true
 	}
 	return false
 }
 
-// MED-003: verify image is not corrupted
+// MED-004: verify image is not corrupted; PKG-021: image file must not be empty.
 func checkImageNotCorrupted(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r *report.Report) {
 	data, err := ep.ReadFile(fullPath)
 	if err != nil {
 		return
 	}
 
+	if len(data) == 0 {
+		r.Add(report.Error, "PKG-021",
+			fmt.Sprintf("The image file '%s' is empty", item.Href))
+		r.Add(report.Error, "MED-004",
+			fmt.Sprintf("Corrupted image file '%s': the file is empty", item.Href))
+		return
+	}
+
 	if len(data) < 8 {
-		r.Add(report.Error, "MED-003",
+		r.Add(report.Error, "MED-004",
 			fmt.Sprintf("Corrupted image file '%s': file too small", item.Href))
 		return
 	}
@@ -191,17 +200,17 @@ func checkImageNotCorrupted(ep *epub.EPUB, item epub.ManifestItem, fullPath stri
 	switch item.MediaType {
 	case "image/png":
 		if !bytes.HasPrefix(data, pngMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid PNG header", item.Href))
 		}
 	case "image/jpeg":
 		if !bytes.HasPrefix(data, jpegMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid JPEG header", item.Href))
 		}
 	case "image/gif":
 		if !bytes.HasPrefix(data, gifMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid GIF header", item.Href))
 		}
 	}

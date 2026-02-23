@@ -51,6 +51,9 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 
 	// NAV-002: nav document must have epub:type="toc"
 	checkNavHasToc(ep, r)
+
+	// PKG-026: IDPF-obfuscated resources must be core media type fonts
+	checkObfuscatedResources(ep, r)
 }
 
 // RSC-001 / RSC-005 / RSC-009: manifest file existence checks
@@ -662,4 +665,80 @@ func hasProperty(properties, prop string) bool {
 		}
 	}
 	return false
+}
+
+// PKG-026: IDPF-obfuscated resources (Algorithm="http://www.idpf.org/2008/embedding")
+// must be core media type fonts. Reports an error for each non-CMT or non-font resource.
+func checkObfuscatedResources(ep *epub.EPUB, r *report.Report) {
+	_, exists := ep.Files["META-INF/encryption.xml"]
+	if !exists {
+		return
+	}
+	data, err := ep.ReadFile("META-INF/encryption.xml")
+	if err != nil {
+		return
+	}
+
+	// Build manifest lookup by href and full path
+	manifestByPath := make(map[string]epub.ManifestItem)
+	for _, item := range ep.Package.Manifest {
+		manifestByPath[item.Href] = item
+		manifestByPath[ep.ResolveHref(item.Href)] = item
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	var isIDPF bool
+	var inEncData bool
+	var currentURI string
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "EncryptedData":
+				inEncData = true
+				isIDPF = false
+				currentURI = ""
+			case "EncryptionMethod":
+				if inEncData {
+					for _, attr := range t.Attr {
+						if attr.Name.Local == "Algorithm" &&
+							attr.Value == "http://www.idpf.org/2008/embedding" {
+							isIDPF = true
+						}
+					}
+				}
+			case "CipherReference":
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "URI" {
+						currentURI = attr.Value
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "EncryptedData" {
+				if isIDPF && currentURI != "" {
+					item, found := manifestByPath[currentURI]
+					if !found {
+						item, found = manifestByPath[ep.ResolveHref(currentURI)]
+					}
+					if found {
+						mt := item.MediaType
+						if !coreMediaTypes[mt] || !isFontMediaType(mt) {
+							r.Add(report.Error, "PKG-026",
+								fmt.Sprintf("Obfuscated resource '%s' with media type '%s' is not an EPUB Core Media Type font", currentURI, mt))
+						}
+					}
+				}
+				inEncData = false
+				isIDPF = false
+				currentURI = ""
+			}
+		}
+	}
 }

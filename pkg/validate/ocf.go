@@ -65,8 +65,9 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 		return true
 	}
 
-	// encryption.xml checks
-	checkEncryptionXML(ep, r)
+	// encryption.xml and signatures.xml checks
+	checkEncryptionXMLFull(ep, r)
+	checkSignaturesXML(ep, r)
 
 	// all rootfiles must exist
 	if checkAllRootfilesExist(ep, r) {
@@ -75,9 +76,6 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// RSC-003: rootfile media-type must be correct
 	checkRootfileMediaType(ep, r)
-
-	// encryption.xml must be well-formed XML if present
-	checkEncryptionXMLWellFormed(ep, r)
 
 	// container.xml version must be 1.0
 	checkContainerVersion(ep, r)
@@ -391,8 +389,10 @@ func checkRootfileExists(ep *epub.EPUB, r *report.Report) bool {
 	return true
 }
 
-// OCF-010: META-INF/encryption.xml must be complete if present
-func checkEncryptionXML(ep *epub.EPUB, r *report.Report) {
+// checkEncryptionXMLFull validates META-INF/encryption.xml per the EPUB spec:
+//   - RSC-004 INFO: encryption is present (and valid)
+//   - RSC-005 ERROR: content model errors, duplicate IDs, invalid compression metadata
+func checkEncryptionXMLFull(ep *epub.EPUB, r *report.Report) {
 	_, exists := ep.Files["META-INF/encryption.xml"]
 	if !exists {
 		return
@@ -401,13 +401,96 @@ func checkEncryptionXML(ep *epub.EPUB, r *report.Report) {
 	if err != nil {
 		return
 	}
-	// Check if encryption.xml has actual content (EncryptedData elements)
-	content := string(data)
-	if !strings.Contains(content, "EncryptedData") && !strings.Contains(content, "EncryptionMethod") {
-		r.Add(report.Error, "OCF-010",
-			"META-INF/encryption.xml is incomplete: no encryption data found")
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	rootChecked := false
+	idCounts := make(map[string]int)
+	var inEncProp bool
+
+	wellFormed := true
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			wellFormed = false
+			break
+		}
+
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			if ee, ok2 := tok.(xml.EndElement); ok2 {
+				if ee.Name.Local == "EncryptionProperty" {
+					inEncProp = false
+				}
+			}
+			continue
+		}
+
+		local := se.Name.Local
+
+		// RSC-005: root element must be "encryption"
+		if !rootChecked {
+			rootChecked = true
+			if local != "encryption" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("META-INF/encryption.xml: expected element \"encryption\" but found \"%s\"", local))
+				return
+			}
+		}
+
+		// Track IDs for duplicate check (report for each element with a duplicate ID)
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "Id" {
+				id := attr.Value
+				idCounts[id]++
+				if idCounts[id] == 2 {
+					// Report for both occurrences when first duplicate is found
+					r.Add(report.Error, "RSC-005",
+						fmt.Sprintf("META-INF/encryption.xml: Duplicate ID \"%s\"", id))
+					r.Add(report.Error, "RSC-005",
+						fmt.Sprintf("META-INF/encryption.xml: Duplicate ID \"%s\"", id))
+				} else if idCounts[id] > 2 {
+					r.Add(report.Error, "RSC-005",
+						fmt.Sprintf("META-INF/encryption.xml: Duplicate ID \"%s\"", id))
+				}
+			}
+		}
+
+		switch local {
+		case "EncryptionProperty":
+			inEncProp = true
+		case "Compression":
+			if inEncProp {
+				for _, attr := range se.Attr {
+					switch attr.Name.Local {
+					case "Method":
+						if attr.Value != "0" && attr.Value != "8" {
+							r.Add(report.Error, "RSC-005",
+								fmt.Sprintf("META-INF/encryption.xml: value of attribute \"Method\" is invalid: \"%s\"", attr.Value))
+						}
+					case "OriginalLength":
+						if strings.TrimSpace(attr.Value) == "" {
+							r.Add(report.Error, "RSC-005",
+								"META-INF/encryption.xml: value of attribute \"OriginalLength\" is invalid: must not be empty")
+						}
+					}
+				}
+			}
+		}
 	}
+
+	if !wellFormed {
+		return
+	}
+
+	// RSC-004 INFO: encryption is present and appears valid
+	r.Add(report.Info, "RSC-004",
+		"META-INF/encryption.xml is present; encryption support may limit validation")
 }
+
 
 // OCF-011: all rootfile elements must point to existing files
 func checkAllRootfilesExist(ep *epub.EPUB, r *report.Report) bool {
@@ -442,29 +525,32 @@ func checkRootfileMediaType(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// OCF-013: encryption.xml must be well-formed XML if present
-func checkEncryptionXMLWellFormed(ep *epub.EPUB, r *report.Report) {
-	_, exists := ep.Files["META-INF/encryption.xml"]
+// checkSignaturesXML validates META-INF/signatures.xml content model.
+// RSC-005 is reported if the root element is not "signatures".
+func checkSignaturesXML(ep *epub.EPUB, r *report.Report) {
+	_, exists := ep.Files["META-INF/signatures.xml"]
 	if !exists {
 		return
 	}
-	data, err := ep.ReadFile("META-INF/encryption.xml")
+	data, err := ep.ReadFile("META-INF/signatures.xml")
 	if err != nil {
 		return
 	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
-		_, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
+		tok, err := decoder.Token()
 		if err != nil {
-			r.Add(report.Fatal, "OCF-013",
-				fmt.Sprintf("META-INF/encryption.xml is not well-formed: element must be followed by the '>' character (%s)", err.Error()))
-			r.Add(report.Error, "OCF-013",
-				"Encryption XML validation aborted due to malformed XML")
 			return
 		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local != "signatures" {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("META-INF/signatures.xml: expected element \"signatures\" but found \"%s\"", se.Name.Local))
+		}
+		return
 	}
 }
 

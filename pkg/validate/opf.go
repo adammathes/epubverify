@@ -601,17 +601,20 @@ var validManifestProperties = map[string]bool{
 
 // Valid spine itemref properties
 var validSpineProperties = map[string]bool{
-	"page-spread-left":        true,
-	"page-spread-right":       true,
-	"rendition:layout-pre-paginated": true,
-	"rendition:layout-reflowable":    true,
-	"rendition:orientation-auto":     true,
+	"page-spread-left":                true,
+	"page-spread-right":               true,
+	"page-spread-center":              true,
+	"rendition:layout-pre-paginated":  true,
+	"rendition:layout-reflowable":     true,
+	"rendition:orientation-auto":      true,
 	"rendition:orientation-landscape": true,
 	"rendition:orientation-portrait":  true,
-	"rendition:spread-auto":          true,
-	"rendition:spread-landscape":     true,
-	"rendition:spread-both":          true,
-	"rendition:spread-none":          true,
+	"rendition:page-spread-center":    true,
+	"rendition:spread-auto":           true,
+	"rendition:spread-landscape":      true,
+	"rendition:spread-both":           true,
+	"rendition:spread-none":           true,
+	"rendition:spread-portrait":       true,
 }
 
 // OPF-048: package element must have unique-identifier attribute

@@ -759,7 +759,37 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 	}
 }
 
-// HTM-013/HTM-014: Fixed-layout viewport checks
+// viewportDim represents a parsed key=value pair from a viewport meta content.
+type viewportDim struct {
+	key   string
+	value string
+	hasEq bool // true if '=' was present in the source
+}
+
+// viewportUnits matches a trailing CSS unit or % on a dimension value.
+var viewportUnitRe = regexp.MustCompile(`(?i)(px|em|ex|rem|%|vw|vh|pt|pc|cm|mm|in)$`)
+
+// parseViewportDims splits a viewport content string into key[=value] pairs.
+func parseViewportDims(content string) []viewportDim {
+	var dims []viewportDim
+	for _, part := range strings.Split(content, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		idx := strings.IndexByte(part, '=')
+		if idx < 0 {
+			dims = append(dims, viewportDim{key: strings.ToLower(strings.TrimSpace(part))})
+		} else {
+			key := strings.ToLower(strings.TrimSpace(part[:idx]))
+			val := part[idx+1:] // keep original spacing for whitespace-only detection
+			dims = append(dims, viewportDim{key: key, value: val, hasEq: true})
+		}
+	}
+	return dims
+}
+
+// HTM-046/047/056/057/059: Fixed-layout XHTML viewport checks
 func checkFXLViewport(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	hasViewport := false
@@ -798,27 +828,72 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 	}
 
 	if !hasViewport {
-		r.AddWithLocation(report.Error, "HTM-013",
+		r.AddWithLocation(report.Error, "HTM-046",
 			"Fixed-layout content document has no viewport meta element",
 			location)
 		return
 	}
 
-	// HTM-014: viewport must have width and height
+	dims := parseViewportDims(viewportContent)
+
+	// HTM-047: key= with empty or all-whitespace value (syntax invalid)
+	for _, d := range dims {
+		if d.hasEq && strings.TrimSpace(d.value) == "" {
+			r.AddWithLocation(report.Error, "HTM-047",
+				fmt.Sprintf("The viewport meta element has an invalid value for dimension '%s'", d.key),
+				location)
+			return
+		}
+	}
+
+	// HTM-059: duplicate width or height keys
+	seen := make(map[string]int)
+	for _, d := range dims {
+		if d.key == "width" || d.key == "height" {
+			seen[d.key]++
+		}
+	}
+	for _, key := range []string{"width", "height"} {
+		if seen[key] > 1 {
+			r.AddWithLocation(report.Error, "HTM-059",
+				fmt.Sprintf("The viewport meta element declares '%s' more than once", key),
+				location)
+		}
+	}
+	if seen["width"] > 1 || seen["height"] > 1 {
+		return
+	}
+
+	// HTM-057: dimension present but value has units or no value (key without =)
+	for _, d := range dims {
+		if d.key != "width" && d.key != "height" {
+			continue
+		}
+		val := strings.TrimSpace(d.value)
+		if !d.hasEq || val == "" {
+			// key with no = at all (empty value treated as HTM-057)
+			r.AddWithLocation(report.Error, "HTM-057",
+				fmt.Sprintf("The value of viewport dimension '%s' must be a number without units", d.key),
+				location)
+		} else if viewportUnitRe.MatchString(val) {
+			r.AddWithLocation(report.Error, "HTM-057",
+				fmt.Sprintf("The value of viewport dimension '%s' must be a number without units", d.key),
+				location)
+		}
+	}
+
+	// HTM-056: missing width or height
 	hasWidth := false
 	hasHeight := false
-	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*[\w.-]+`)
-	matches := viewportRe.FindAllStringSubmatch(viewportContent, -1)
-	for _, m := range matches {
-		switch strings.ToLower(m[1]) {
-		case "width":
+	for _, d := range dims {
+		if d.key == "width" {
 			hasWidth = true
-		case "height":
+		} else if d.key == "height" {
 			hasHeight = true
 		}
 	}
 	if !hasWidth || !hasHeight {
-		r.AddWithLocation(report.Error, "HTM-014",
+		r.AddWithLocation(report.Error, "HTM-056",
 			"Viewport metadata must specify both width and height dimensions",
 			location)
 	}
@@ -879,7 +954,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 	if refPath == "" {
 		// Self-reference fragment
 		if !localIDs[fragment] {
-			r.AddWithLocation(report.Error, "RSC-003",
+			r.AddWithLocation(report.Error, "RSC-012",
 				fmt.Sprintf("Fragment identifier is not defined: '#%s'", fragment),
 				location)
 		}
@@ -895,7 +970,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 
 	targetIDs := collectIDs(targetData)
 	if !targetIDs[fragment] {
-		r.AddWithLocation(report.Error, "RSC-003",
+		r.AddWithLocation(report.Error, "RSC-012",
 			fmt.Sprintf("Fragment identifier is not defined: '%s#%s'", refPath, fragment),
 			location)
 	}
