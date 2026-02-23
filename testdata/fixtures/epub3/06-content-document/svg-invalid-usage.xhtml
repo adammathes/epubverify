@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+	<!-- no svg descendants of svg:title, value of foreignObject@requiredExtensions -->
+	<head>
+		<meta charset="utf-8" />
+		<title>SVG with invalid content model</title>
+	</head>
+	<body>
+		<section>
+			<p>...</p>
+			<svg xmlns="http://www.w3.org/2000/svg" width="12cm" height="4cm" viewBox="0 0 1200 400" version="1.1">
+				<title>Title</title>
+				<foo>Invalid</foo>
+			</svg>
+			<p>...</p>
+		</section>
+	</body>
+</html>
