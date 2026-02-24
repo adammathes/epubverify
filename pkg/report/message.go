@@ -119,10 +119,14 @@ func (r *Report) DowngradeToInfo(checkIDs map[string]bool) {
 
 // RemapToRSC005 converts specific check IDs to RSC-005 and adjusts messages
 // to match EPUBCheck's schema validation format. Used in single-file mode.
+// If the transform function returns an empty string, the message is left unchanged.
 func (r *Report) RemapToRSC005(mapping map[string]func(string) string) {
 	for i := range r.Messages {
 		if transform, ok := mapping[r.Messages[i].CheckID]; ok {
 			newMsg := transform(r.Messages[i].Message)
+			if newMsg == "" {
+				continue // empty means "don't remap this one"
+			}
 			r.Messages[i].CheckID = "RSC-005"
 			r.Messages[i].Message = newMsg
 		}

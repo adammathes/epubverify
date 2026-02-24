@@ -23,6 +23,7 @@ type EPUB struct {
 	HasMetadata   bool
 	HasManifest   bool
 	HasSpine      bool
+	PackageXMLLang string // xml:lang attribute on <package> element
 }
 
 // Rootfile represents a rootfile element from container.xml.
@@ -55,6 +56,8 @@ type Package struct {
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
 	HasMediaActiveClass bool        // true if media:active-class or media:playback-active-class is defined
 	MetadataLinks    []MetadataLink // <link> elements in the metadata section
+	MetaSchemes      []MetaScheme   // scheme attributes on meta elements
+	AllXMLLangs      []string       // all xml:lang attribute values found in the OPF
 }
 
 // MetadataLink represents a <link> element in the OPF metadata section.
@@ -62,6 +65,7 @@ type MetadataLink struct {
 	Href      string
 	Rel       string
 	MediaType string
+	Hreflang  string
 }
 
 // Metadata holds the OPF metadata section.
@@ -98,10 +102,17 @@ type MetaRefines struct {
 	Value    string
 }
 
-// DCIdentifier is a dc:identifier element with optional id attribute.
+// DCIdentifier is a dc:identifier element with optional id and scheme attributes.
 type DCIdentifier struct {
-	ID    string
-	Value string
+	ID     string
+	Value  string
+	Scheme string // opf:scheme attribute (EPUB 2)
+}
+
+// MetaScheme represents a scheme attribute on a meta element.
+type MetaScheme struct {
+	Scheme   string // the scheme attribute value
+	Property string // the property attribute value
 }
 
 // ManifestItem represents a single item in the OPF manifest.

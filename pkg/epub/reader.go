@@ -148,6 +148,7 @@ func (ep *EPUB) ParseOPF() error {
 	ep.HasManifest = structInfo.hasManifest
 	ep.HasSpine = structInfo.hasSpine
 	ep.IsLegacyOEBPS12 = structInfo.isLegacyOEBPS12
+	ep.PackageXMLLang = structInfo.xmlLang
 
 	p := &Package{
 		UniqueIdentifier:         structInfo.uniqueIdentifier,
@@ -189,6 +190,8 @@ func (ep *EPUB) ParseOPF() error {
 	}
 	p.ModifiedCount = modifiedCount
 	p.MetadataLinks = structInfo.metadataLinks
+	p.MetaSchemes = structInfo.metaSchemes
+	p.AllXMLLangs = structInfo.allXMLLangs
 
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
@@ -213,6 +216,7 @@ type opfStructInfo struct {
 	uniqueIdentifier         string
 	dir                      string
 	prefix                   string
+	xmlLang                  string
 	hasMetadata              bool
 	hasManifest              bool
 	hasSpine                 bool
@@ -227,6 +231,8 @@ type opfStructInfo struct {
 	guideRefs                []GuideReference
 	elementOrder             []string
 	metadataLinks            []MetadataLink
+	allXMLLangs              []string // all xml:lang attribute values found in the OPF
+	metaSchemes              []MetaScheme // scheme attributes on meta elements
 }
 
 type metaInfo struct {
@@ -253,6 +259,13 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			continue
 		}
 
+		// Collect xml:lang attributes from any element
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "lang" && (attr.Name.Space == "http://www.w3.org/XML/1998/namespace" || attr.Name.Space == "xml") {
+				info.allXMLLangs = append(info.allXMLLangs, attr.Value)
+			}
+		}
+
 		switch se.Name.Local {
 		case "package":
 			// Detect OEBPS 1.2 namespace
@@ -269,6 +282,11 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					info.dir = attr.Value
 				case "prefix":
 					info.prefix = attr.Value
+				case "lang":
+					// xml:lang on the package element
+					if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" || attr.Name.Space == "xml" {
+						info.xmlLang = attr.Value
+					}
 				}
 			}
 		case "metadata":
@@ -322,7 +340,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				Type: refType, Title: refTitle, Href: refHref,
 			})
 		case "meta":
-			var prop, refines, val, metaID string
+			var prop, refines, val, metaID, scheme string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
@@ -331,7 +349,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					refines = attr.Value
 				case "id":
 					metaID = attr.Value
+				case "scheme":
+					scheme = attr.Value
 				}
+			}
+			if scheme != "" {
+				info.metaSchemes = append(info.metaSchemes, MetaScheme{Scheme: scheme, Property: prop})
 			}
 			if prop != "" {
 				// Read the text content
@@ -353,7 +376,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				}
 			}
 		case "link":
-			var href, rel, mediaType string
+			var href, rel, mediaType, hreflang string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "href":
@@ -362,6 +385,8 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					rel = attr.Value
 				case "media-type":
 					mediaType = attr.Value
+				case "hreflang":
+					hreflang = attr.Value
 				}
 			}
 			if href != "" {
@@ -369,6 +394,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					Href:      href,
 					Rel:       rel,
 					MediaType: mediaType,
+					Hreflang:  hreflang,
 				})
 			}
 		}
@@ -418,8 +444,14 @@ func parseMetadata(data []byte) Metadata {
 				md.Titles = append(md.Titles, DCTitle{ID: id, Value: text})
 			case "identifier":
 				id := dcID
+				scheme := ""
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "scheme" {
+						scheme = attr.Value
+					}
+				}
 				val := readElementText(decoder)
-				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val})
+				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val, Scheme: scheme})
 			case "language":
 				text := readElementText(decoder)
 				md.Languages = append(md.Languages, text)

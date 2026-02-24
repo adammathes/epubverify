@@ -227,6 +227,24 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-004c: dcterms:modified must occur as non-refining meta
 	checkDCTermsModifiedNonRefining(pkg, r)
 
+	// OPF-086: deprecated rendition properties
+	checkDeprecatedRenditionProperties(pkg, r)
+
+	// OPF-092: language tag validation
+	checkLanguageTags(ep, pkg, r)
+
+	// OPF-055: empty dc:title warning
+	checkDCTitleEmptyWarning(pkg, r)
+
+	// OPF-012: cover-image property uniqueness
+	checkCoverImageUnique(pkg, r)
+
+	// OPF-050: NCX identification
+	checkNCXIdentification(pkg, r)
+
+	// OPF-027: scheme attribute validation on meta elements
+	checkMetaSchemeValid(pkg, r)
+
 	return false
 }
 
@@ -445,8 +463,12 @@ func checkDCLanguageValid(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if !bcp47Re.MatchString(lang) {
-			r.Add(report.Error, "OPF-020",
-				fmt.Sprintf("Language tag '%s' is not well-formed according to BCP 47", lang))
+			// For EPUB 2, use OPF-020; for EPUB 3, OPF-092 handles this
+			if pkg.Version < "3.0" {
+				r.Add(report.Error, "OPF-020",
+					fmt.Sprintf("Language tag '%s' is not well-formed according to BCP 47", lang))
+			}
+			// OPF-092 check in checkLanguageTags handles EPUB 3
 		}
 	}
 }
@@ -840,7 +862,7 @@ func checkCoverImageIsImage(pkg *epub.Package, r *report.Report) {
 	for _, item := range pkg.Manifest {
 		if hasProperty(item.Properties, "cover-image") {
 			if !strings.HasPrefix(item.MediaType, "image/") {
-				r.Add(report.Error, "OPF-025",
+				r.Add(report.Error, "OPF-012",
 					fmt.Sprintf("The cover-image property is not defined for media type '%s'", item.MediaType))
 			}
 		}
@@ -945,7 +967,8 @@ func checkSpineLinearValid(pkg *epub.Package, r *report.Report) {
 		if ref.Linear == "" {
 			continue
 		}
-		if ref.Linear != "yes" && ref.Linear != "no" {
+		trimmed := strings.TrimSpace(ref.Linear)
+		if trimmed != "yes" && trimmed != "no" {
 			r.Add(report.Error, "OPF-038",
 				fmt.Sprintf("The spine itemref linear attribute value '%s' must be equal to 'yes' or 'no'", ref.Linear))
 		}
@@ -992,6 +1015,13 @@ func checkUUIDFormat(pkg *epub.Package, r *report.Report) {
 					fmt.Sprintf("UUID value '%s' is invalid", uuid))
 			}
 		}
+		// EPUB 2: opf:scheme="uuid" with non-UUID value
+		if id.Scheme != "" && strings.EqualFold(id.Scheme, "uuid") {
+			if !uuidRe.MatchString(id.Value) {
+				r.Add(report.Warning, "OPF-085",
+					fmt.Sprintf("Identifier with scheme 'uuid' has invalid UUID value '%s'", id.Value))
+			}
+		}
 	}
 }
 
@@ -1003,7 +1033,8 @@ func checkSpineHasLinear(pkg *epub.Package, r *report.Report) {
 	hasLinear := false
 	allExplicitlyNonlinear := true
 	for _, ref := range pkg.Spine {
-		if ref.Linear != "no" {
+		trimmed := strings.TrimSpace(ref.Linear)
+		if trimmed != "no" {
 			hasLinear = true
 		}
 		if ref.Linear == "" {
@@ -1011,8 +1042,8 @@ func checkSpineHasLinear(pkg *epub.Package, r *report.Report) {
 		}
 	}
 	if !hasLinear && allExplicitlyNonlinear {
-		r.Add(report.Error, "OPF-041",
-			"The spine contains no linear resources")
+		r.Add(report.Error, "OPF-033",
+			"The spine must contain at least one linear itemref element")
 	}
 }
 
@@ -1656,4 +1687,178 @@ func checkMetaPropertyDefined(pkg *epub.Package, r *report.Report) {
 // OPF-004c: dcterms:modified must occur as non-refining meta
 func checkDCTermsModifiedNonRefining(pkg *epub.Package, r *report.Report) {
 	// Covered by existing OPF-004 check
+}
+
+// OPF-086: deprecated rendition properties
+func checkDeprecatedRenditionProperties(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Check global rendition properties from meta elements
+	for _, mr := range pkg.MetaRefines {
+		if mr.Refines != "" {
+			continue // Only global (non-refining) properties
+		}
+		switch mr.Property {
+		case "rendition:viewport":
+			r.Add(report.Warning, "OPF-086",
+				"The rendition:viewport property is deprecated")
+		case "rendition:spread":
+			if mr.Value == "portrait" {
+				r.Add(report.Warning, "OPF-086",
+					"The rendition:spread 'portrait' value is deprecated")
+			}
+		}
+	}
+	// Also check top-level rendition spread
+	if pkg.RenditionSpread == "portrait" {
+		// Only report if not already caught above
+		found := false
+		for _, mr := range pkg.MetaRefines {
+			if mr.Property == "rendition:spread" && mr.Refines == "" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			r.Add(report.Warning, "OPF-086",
+				"The rendition:spread 'portrait' value is deprecated")
+		}
+	}
+	// Check spine itemref properties for deprecated spread-portrait
+	for _, ref := range pkg.Spine {
+		if hasProperty(ref.Properties, "rendition:spread-portrait") {
+			r.Add(report.Warning, "OPF-086",
+				"The rendition:spread-portrait spine override property is deprecated")
+		}
+	}
+}
+
+// OPF-092: language tag validation
+func checkLanguageTags(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Check dc:language values (malformed BCP 47)
+	for _, lang := range pkg.Metadata.Languages {
+		if lang == "" {
+			continue // Empty handled elsewhere
+		}
+		if !bcp47Re.MatchString(strings.TrimSpace(lang)) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("Language tag '%s' is not well-formed", lang))
+		}
+	}
+	// Check all xml:lang attributes found in the OPF (on any element)
+	for _, lang := range pkg.AllXMLLangs {
+		if lang == "" {
+			continue // empty xml:lang is valid (resets inheritance)
+		}
+		if lang != strings.TrimSpace(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("xml:lang attribute value '%s' has leading/trailing whitespace", lang))
+		} else if !bcp47Re.MatchString(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("xml:lang language tag '%s' is not well-formed", lang))
+		}
+	}
+	// Check link hreflang attributes
+	for _, link := range pkg.MetadataLinks {
+		if link.Hreflang == "" {
+			continue
+		}
+		lang := link.Hreflang
+		if lang != strings.TrimSpace(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("hreflang attribute value '%s' has leading/trailing whitespace", lang))
+		} else if !bcp47Re.MatchString(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("hreflang language tag '%s' is not well-formed", lang))
+		}
+	}
+}
+
+// OPF-055: empty dc:title warning
+func checkDCTitleEmptyWarning(pkg *epub.Package, r *report.Report) {
+	for _, title := range pkg.Metadata.Titles {
+		if strings.TrimSpace(title.Value) == "" && title.Value != "" {
+			r.Add(report.Warning, "OPF-055",
+				"dc:title contains only whitespace")
+		}
+	}
+}
+
+// OPF-012: cover-image property uniqueness
+func checkCoverImageUnique(pkg *epub.Package, r *report.Report) {
+	count := 0
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "cover-image") {
+			count++
+		}
+	}
+	if count > 1 {
+		r.Add(report.Error, "OPF-012",
+			fmt.Sprintf("The 'cover-image' property must occur at most once, found %d", count))
+	}
+}
+
+
+// OPF-050: NCX identification
+func checkNCXIdentification(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Find NCX item in the manifest
+	var ncxID string
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/x-dtbncx+xml" {
+			ncxID = item.ID
+			break
+		}
+	}
+
+	// If toc attribute is set, it must reference an NCX document
+	if pkg.SpineToc != "" {
+		for _, item := range pkg.Manifest {
+			if item.ID == pkg.SpineToc && item.MediaType != "application/x-dtbncx+xml" {
+				r.Add(report.Error, "OPF-050",
+					fmt.Sprintf("The spine toc attribute must reference an NCX document, but '%s' has media-type '%s'", pkg.SpineToc, item.MediaType))
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The spine toc attribute value '%s' does not reference an NCX document", pkg.SpineToc))
+				break
+			}
+		}
+	}
+
+	// If NCX is present but toc attribute is missing
+	if ncxID != "" && pkg.SpineToc == "" {
+		r.Add(report.Error, "OPF-050",
+			"When an NCX document is present, the toc attribute must be set on the spine element")
+	}
+}
+
+// checkMetaSchemeValid validates the scheme attribute on meta elements.
+// OPF-027: scheme value must not be unprefixed unknown value
+// RSC-005 (schema): scheme value must be NMTOKEN (no spaces)
+func checkMetaSchemeValid(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, ms := range pkg.MetaSchemes {
+		scheme := ms.Scheme
+		// Check if scheme value contains spaces (NMTOKEN violation - schema error)
+		if strings.Contains(strings.TrimSpace(scheme), " ") {
+			r.Add(report.Error, "OPF-025a",
+				fmt.Sprintf("The 'scheme' attribute value '%s' is not a valid NMTOKEN", scheme))
+			// Also report OPF-025 for the individual invalid tokens
+			r.Add(report.Error, "OPF-025",
+				fmt.Sprintf("The 'scheme' attribute value '%s' contains invalid values", scheme))
+			continue
+		}
+		// Check if scheme is unprefixed (no colon = no namespace prefix)
+		if !strings.Contains(scheme, ":") {
+			r.Add(report.Error, "OPF-027",
+				fmt.Sprintf("The 'scheme' attribute value '%s' is not a known value with no prefix", scheme))
+		}
+	}
 }

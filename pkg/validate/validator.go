@@ -193,6 +193,21 @@ var rsc005Mapping = map[string]func(string) string{
 	"OPF-044": func(msg string) string {
 		return `The media-overlay attribute must refer to an item with media type "application/smil+xml"; must be of the "application/smil+xml" type`
 	},
+	"OPF-012": func(msg string) string {
+		if strings.Contains(msg, "at most once") {
+			return `The 'cover-image' property must not occur more than one time`
+		}
+		return "" // don't remap other OPF-012 messages
+	},
+	"OPF-050": func(msg string) string {
+		if strings.Contains(msg, "toc attribute must be set") {
+			return `When an NCX document is included in the EPUB, the toc attribute must be set on the spine element`
+		}
+		return "" // don't remap other OPF-050 messages
+	},
+	"OPF-025a": func(msg string) string {
+		return `value of attribute "scheme" is invalid; must be an NMTOKEN`
+	},
 }
 
 // divergenceChecks lists check IDs where epubverify flags issues that
