@@ -183,9 +183,12 @@ func (ep *EPUB) ParseOPF() error {
 			p.RenditionSpread = m.value
 		case "rendition:flow":
 			p.RenditionFlow = m.value
+		case "media:active-class", "media:playback-active-class":
+			p.HasMediaActiveClass = true
 		}
 	}
 	p.ModifiedCount = modifiedCount
+	p.MetadataLinks = structInfo.metadataLinks
 
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
@@ -223,6 +226,7 @@ type opfStructInfo struct {
 	metaIDs                  []string
 	guideRefs                []GuideReference
 	elementOrder             []string
+	metadataLinks            []MetadataLink
 }
 
 type metaInfo struct {
@@ -347,6 +351,25 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 						Value:    val,
 					})
 				}
+			}
+		case "link":
+			var href, rel, mediaType string
+			for _, attr := range se.Attr {
+				switch attr.Name.Local {
+				case "href":
+					href = attr.Value
+				case "rel":
+					rel = attr.Value
+				case "media-type":
+					mediaType = attr.Value
+				}
+			}
+			if href != "" {
+				info.metadataLinks = append(info.metadataLinks, MetadataLink{
+					Href:      href,
+					Rel:       rel,
+					MediaType: mediaType,
+				})
 			}
 		}
 	}

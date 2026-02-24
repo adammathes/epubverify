@@ -53,6 +53,15 @@ type Package struct {
 	MetaRefines      []MetaRefines  // meta elements with refines attribute
 	MetaIDs          []string       // id attributes from all meta elements in metadata
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
+	HasMediaActiveClass bool        // true if media:active-class or media:playback-active-class is defined
+	MetadataLinks    []MetadataLink // <link> elements in the metadata section
+}
+
+// MetadataLink represents a <link> element in the OPF metadata section.
+type MetadataLink struct {
+	Href      string
+	Rel       string
+	MediaType string
 }
 
 // Metadata holds the OPF metadata section.
