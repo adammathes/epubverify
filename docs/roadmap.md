@@ -4,25 +4,28 @@ Status as of February 2026.
 
 ## Current State
 
-**Godog BDD tests**: 605 passing, 298 failing (67% pass rate on 903 total scenarios)
+**Godog BDD tests**: 861 passing, 42 failing (95.3% pass rate on 903 total scenarios)
 **Unit tests**: all passing
 **External dependencies removed**: tests no longer require `epubverify-spec`
 
-The 298 failing scenarios are all from newly-enabled single-file validation
-(.opf, .xhtml, .svg, .smil). The 693 original full-EPUB scenarios all pass
-with no regressions.
+Progress: started at 605/903 (67%), now at 861/903 (95.3%) -- 256 additional scenarios
+fixed across multiple sessions through OPF validation, content document checks,
+encoding detection, and error code mapping.
 
-### Failure breakdown (single-file scenarios)
+### Failure breakdown (42 remaining scenarios)
 
-| Category | Approx Count | Description |
-|----------|-------------|-------------|
-| RSC-005 schema validation | ~150 | OPF/XHTML/SVG schema checks — epubcheck uses RelaxNG, we use programmatic checks with different IDs |
-| OPF-086/OPF-092 | ~30 | Rendition metadata property validation (layout, spread, flow, orientation) |
-| RSC-016/RSC-017 | ~40 | XML encoding detection (UTF-16 BOM, UCS-4, ISO-8859-1, unknown encoding) |
-| OPF-027/OPF-028 | ~24 | unique-identifier resolution, dcterms:modified count |
-| HTM-004 | ~12 | Obsolete HTML elements in single-file XHTML |
-| RSC-029/RSC-028/RSC-033 | ~30 | Data URL, file URL, URL encoding issues |
-| Other (OPF-053, RSC-020, etc.) | ~12 | Miscellaneous missing checks |
+| Category | Count | Key Tests |
+|----------|-------|-----------|
+| OPF metadata/refines | 4 | metadata message format, refines relative URL, refines fragment ID, unique-identifier resolution |
+| OPF manifest/spine | 5 | unknown item property (full-pub), nav property OPF-012, OPF-043 spine fallback, OPF-091 dup, RSC-020 URLs |
+| OPF collections/guide | 4 | OPF-070 invalid role URL, manifest collection nesting, guide duplicate RSC-017 (x2) |
+| OPF file names (PKG) | 5 | PKG-009/010/012 in single-file mode, item paths with spaces |
+| Content: EPUB2 | 4 | HTM-004 DOCTYPE/entity in EPUB2, HTML5 elements/DOCTYPE in OPS |
+| Content: XHTML | 10 | epub:switch/trigger validation, microdata, MathML encoding, custom attrs HTM-054, URL host, title content |
+| Content: entities | 2 | Unknown entity references in XHTML |
+| CSS | 1 | RSC-030 file URL count (3 vs 2) |
+| Prefix/vocabulary | 6 | Prefix validation in SVG/SMIL, empty namespace, reserved prefix overriding |
+| Obsolete public ID | 1 | HTM-004 obsolete doctype public identifier |
 
 ## Completed
 
@@ -47,45 +50,75 @@ with no regressions.
   - Creates temporary EPUB wrapper, validates with `SingleFileMode`
   - Skips container-dependent checks (OPF-024, OPF-093, OPF-096, RSC-032)
   - Enables 442 previously-PENDING scenarios
+- [x] RSC-005 schema mapping for single-file validation
+  - Maps OPF-001/031/038/039b/042/088 and HTM-004/009 to RSC-005
+  - Convergence/divergence tracking for error code differences
+- [x] Rendition metadata validation (OPF-085/086/092)
+  - layout, spread, flow, orientation property validation
+  - Deprecated rendition values, invalid rendition contexts
+- [x] OPF metadata validation
+  - Metadata refines validation, MARC relator codes, legacy media types
+  - Link relation/properties validation, date format checks
+  - Nav/element-order checks, cover-image uniqueness
+- [x] Single-file content checks (content.go + opf.go expansion)
+  - XHTML: XML version, encoding, well-formedness, namespace, IDs, obsolete attrs
+  - XHTML: external entities, SSML, URL schemes, ARIA, epub:type/switch/trigger
+  - SVG: foreignObject, viewBox, prefix, epub:type, element validation
+  - SMIL: media overlay content checks, par/seq structure, clock values
+- [x] OPF pre-parse checks
+  - Encoding detection: UTF-16 BOM, UCS-4, ISO-8859-1 (RSC-027/028/016)
+  - Namespace validation, DOCTYPE checks, bindings deprecation
+  - XML duplicate ID tracking, unknown element detection
+- [x] Media overlay metadata validation
+  - media:duration clock value parsing and sum verification (MED-016)
+  - media-overlay attribute cross-referencing
 
-## Next Steps
+## Next Steps (42 remaining failures)
 
-### 1. Fix RSC-005 schema validation gap (~150 scenarios)
+### 1. Quick OPF fixes (~10 scenarios)
 
-The biggest gap: epubcheck uses RelaxNG schemas and reports RSC-005 for schema
-violations. We use programmatic checks with specific IDs (OPF-001, OPF-031, etc.).
-Scenarios expect RSC-005 with specific message patterns.
+Message and error code mismatches that are straightforward:
+- Fix metadata message: `missing required element "metadata"` (not "Package document is missing required element: metadata")
+- Fix OPF-023 -> OPF-043 for spine non-content fallback
+- Add OPF-012 alongside RSC-005 for nav property on wrong media type
+- Fix RSC-030 double-counting (remove manifest item check from opf.go, keep references.go)
+- Remove duplicate OPF-091 check (`checkManifestHrefNoFragment` + `checkManifestHrefFragment`)
+- Fix refines: RSC-005 for absolute URL, RSC-017 for non-fragment resource path
+- Fix media:duration resolution: also match refines by href, not just by `#id`
+- Fix unique-identifier resolution in EPUB2 single-file mode
 
-Options:
-- Map specific check IDs to RSC-005 in single-file mode
-- Implement a lightweight OPF schema validator
-- Accept as known divergence
+### 2. New OPF checks (~10 scenarios)
 
-### 2. Rendition metadata validation (OPF-086/OPF-092, ~30 scenarios)
+- RSC-020: manifest item href URL encoding validation
+- OPF-027: unknown prefixed manifest item properties in full-publication mode
+- OPF-070: collection role URL validation
+- RSC-005: manifest collection nesting check
+- RSC-017: guide duplicate entries detection
+- PKG-009/010/012: file name checks in single-file OPF mode
 
-Single-file OPF scenarios test `rendition:layout`, `rendition:spread`,
-`rendition:flow`, `rendition:orientation` properties as meta elements
-with `refines`. Need to implement:
-- OPF-086: deprecated rendition property values
-- OPF-092: rendition properties used in wrong context (refining resources)
+### 3. Content document checks (~15 scenarios)
 
-### 3. XML encoding detection (RSC-016/RSC-017, ~40 scenarios)
+- HTM-004: DOCTYPE and entity reference checks in EPUB2 XHTML
+- epub:switch/trigger validation: child element order, ID references
+- MathML annotation `encoding` attribute validation
+- Microdata attribute validation (RSC-005)
+- HTM-054: custom attributes using reserved namespace strings
+- URL host parsing (RSC-020 count)
+- SVG title content HTML validation
+- Obsolete doctype public identifier
 
-Single-file validation needs encoding detection for:
-- RSC-016: fatal encoding errors (UCS-4, ISO-8859-1, unknown encoding)
-- RSC-017: encoding warnings (UTF-16 with/without BOM)
+### 4. Prefix/vocabulary checks (~6 scenarios)
 
-### 4. URL validation (RSC-029/RSC-028/RSC-020, ~30 scenarios)
-
-- RSC-029: data URL in manifest/content
-- RSC-028: non-conforming URL
-- RSC-020: EPUB CFI URL validation
+- Prefix attribute validation on SVG content documents and embedded SVG
+- Empty namespace in prefix declarations
+- Reserved prefix overriding in XHTML content documents
+- Undeclared prefix in Media Overlays epub:type
 
 ### 5. Viewport meta tag parsing step definitions
 
 The `F-viewport-meta-tag/viewport-syntax.feature` scenarios remain PENDING:
-- `parsing viewport <vp>` — expose viewport parser as standalone function
-- `the parsed viewport equals <vp>` — assert parsed result
+- `parsing viewport <vp>` -- expose viewport parser as standalone function
+- `the parsed viewport equals <vp>` -- assert parsed result
 - `error <error> is returned` / `no error is returned`
 
 ### 6. Doctor mode BDD tests
