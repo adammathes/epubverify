@@ -205,13 +205,8 @@ func (ep *EPUB) ParseOPF() error {
 	}
 
 	// Build primary metas (non-refining meta elements)
-	// MetaRefines only contains metas WITH refines; derive primary from metas that aren't refining
-	refiningProps := make(map[string]bool) // track properties that appear as refining
-	for _, mr := range structInfo.metaRefines {
-		refiningProps[mr.Property+"|"+mr.Value] = true
-	}
 	for _, m := range structInfo.metas {
-		if !refiningProps[m.property+"|"+m.value] {
+		if m.refines == "" {
 			p.PrimaryMetas = append(p.PrimaryMetas, MetaPrimary{Property: m.property, Value: m.value})
 		}
 	}
@@ -265,6 +260,7 @@ type opfStructInfo struct {
 type metaInfo struct {
 	property string
 	value    string
+	refines  string
 }
 
 // scanOPFStructure does a raw XML scan of the OPF to detect structural elements.
@@ -401,7 +397,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				if val == "" {
 					info.metaEmptyValues++
 				}
-				info.metas = append(info.metas, metaInfo{property: prop, value: val})
+				info.metas = append(info.metas, metaInfo{property: prop, value: val, refines: refines})
 				if metaID != "" {
 					info.metaIDs = append(info.metaIDs, metaID)
 					info.metaIDToProperty[metaID] = prop

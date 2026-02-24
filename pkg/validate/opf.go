@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -249,6 +250,11 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// Metadata refines property validation (D.3 vocabulary checks)
 	checkMetaRefinesPropertyRules(pkg, r)
+
+	// Media overlay packaging checks
+	checkMediaOverlayOnNonContentDoc(pkg, r)
+	checkMediaOverlayDurationMeta(pkg, r)
+	checkMediaOverlayType(pkg, r)
 
 	// OPF-032b: meta element with empty text content
 	checkMetaEmptyValue(pkg, r)
@@ -1433,15 +1439,10 @@ func checkMediaOverlayRef(pkg *epub.Package, r *report.Report) {
 		if item.MediaOverlay == "" {
 			continue
 		}
-		target, ok := manifestByID[item.MediaOverlay]
+		_, ok := manifestByID[item.MediaOverlay]
 		if !ok {
 			r.Add(report.Error, "OPF-044",
 				fmt.Sprintf("Media Overlay Document referenced by '%s' could not be found: '%s'", item.Href, item.MediaOverlay))
-			continue
-		}
-		if target.MediaType != "application/smil+xml" {
-			r.Add(report.Error, "OPF-044",
-				fmt.Sprintf("Media Overlay Document referenced by '%s' has wrong type '%s': expected application/smil+xml", item.Href, target.MediaType))
 		}
 	}
 }
@@ -2568,13 +2569,18 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 			// Must not have refines
 			if mr.Refines != "" {
 				r.Add(report.Error, "RSC-005",
-					fmt.Sprintf("Property \"%s\" must not refine another property", mr.Property))
+					fmt.Sprintf("\"refines\" must not be used with the %s property", mr.Property))
+			}
+			// Must define a single class name (no spaces)
+			if strings.Contains(strings.TrimSpace(mr.Value), " ") {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The %s property must define a single class name, but found \"%s\"", mr.Property, mr.Value))
 			}
 		case "media:duration":
 			// Value must be a valid SMIL clock value
 			if !isValidClockValue(mr.Value) {
 				r.Add(report.Error, "RSC-005",
-					fmt.Sprintf("The \"media:duration\" value \"%s\" is not a valid SMIL clock value", mr.Value))
+					fmt.Sprintf("The \"media:duration\" value \"%s\" must be a valid SMIL3 clock value", mr.Value))
 			}
 		}
 
@@ -2594,6 +2600,18 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 		case "meta-auth":
 			r.Add(report.Warning, "RSC-017",
 				"the meta-auth property is deprecated")
+		case "media:active-class", "media:playback-active-class":
+			// Must define a single class name (no spaces)
+			if strings.Contains(strings.TrimSpace(m.Value), " ") {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The %s property must define a single class name, but found \"%s\"", m.Property, m.Value))
+			}
+		case "media:duration":
+			// Value must be a valid SMIL clock value
+			if !isValidClockValue(m.Value) {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"media:duration\" value \"%s\" must be a valid SMIL3 clock value", m.Value))
+			}
 		}
 	}
 
@@ -2651,6 +2669,26 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 				"An authority property must be associated with the term property")
 		}
 	}
+
+	// Check that media:active-class and media:playback-active-class appear at most once
+	activeClassCount := 0
+	playbackActiveClassCount := 0
+	for _, m := range pkg.PrimaryMetas {
+		switch m.Property {
+		case "media:active-class":
+			activeClassCount++
+		case "media:playback-active-class":
+			playbackActiveClassCount++
+		}
+	}
+	if activeClassCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			"The 'active-class' property must not occur more than one time")
+	}
+	if playbackActiveClassCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			"The 'playback-active-class' property must not occur more than one time")
+	}
 }
 
 // isValidClockValue checks if a string is a valid SMIL clock value.
@@ -2664,4 +2702,206 @@ func isValidClockValue(val string) bool {
 	clockRe := regexp.MustCompile(`^(\d+:)?[0-5]?\d:[0-5]?\d(\.\d+)?$`)
 	timecountRe := regexp.MustCompile(`^\d+(\.\d+)?(h|min|s|ms)$`)
 	return clockRe.MatchString(val) || timecountRe.MatchString(val)
+}
+
+// checkMediaOverlayOnNonContentDoc checks that media-overlay attribute is only on content documents.
+func checkMediaOverlayOnNonContentDoc(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	contentDocTypes := map[string]bool{
+		"application/xhtml+xml": true,
+		"image/svg+xml":         true,
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay != "" && !contentDocTypes[item.MediaType] {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("media-overlay attribute is only allowed on EPUB Content Documents, but item \"%s\" has type \"%s\"", item.ID, item.MediaType))
+		}
+	}
+}
+
+// checkMediaOverlayType checks that items referenced by media-overlay are SMIL.
+func checkMediaOverlayType(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	manifestByID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestByID[item.ID] = item
+		}
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay == "" {
+			continue
+		}
+		target, ok := manifestByID[item.MediaOverlay]
+		if !ok {
+			continue // handled elsewhere
+		}
+		if target.MediaType != "application/smil+xml" {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("The item referenced by media-overlay must be of the \"application/smil+xml\" type, but \"%s\" is \"%s\"",
+					target.ID, target.MediaType))
+		}
+	}
+}
+
+// clockToMs parses a SMIL clock value to milliseconds. Returns -1 on error.
+func clockToMs(val string) float64 {
+	val = strings.TrimSpace(val)
+	if val == "" || !isValidClockValue(val) {
+		return -1
+	}
+
+	// Timecount values
+	if strings.HasSuffix(val, "ms") {
+		numStr := strings.TrimSuffix(val, "ms")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f
+	}
+	if strings.HasSuffix(val, "min") {
+		numStr := strings.TrimSuffix(val, "min")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 60000
+	}
+	if strings.HasSuffix(val, "h") {
+		numStr := strings.TrimSuffix(val, "h")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 3600000
+	}
+	if strings.HasSuffix(val, "s") {
+		numStr := strings.TrimSuffix(val, "s")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 1000
+	}
+
+	// Clock values
+	parts := strings.Split(val, ":")
+	switch len(parts) {
+	case 3:
+		h, _ := strconv.ParseFloat(parts[0], 64)
+		m, _ := strconv.ParseFloat(parts[1], 64)
+		s, _ := strconv.ParseFloat(parts[2], 64)
+		return (h*3600 + m*60 + s) * 1000
+	case 2:
+		m, _ := strconv.ParseFloat(parts[0], 64)
+		s, _ := strconv.ParseFloat(parts[1], 64)
+		return (m*60 + s) * 1000
+	}
+	return -1
+}
+
+// checkMediaOverlayDurationMeta checks media overlay duration metadata in package document.
+func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Find SMIL overlay items in manifest
+	smilItems := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/smil+xml" {
+			smilItems[item.ID] = true
+		}
+	}
+
+	// Only check durations when media overlays are actually used
+	hasMediaOverlayAttr := false
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay != "" {
+			hasMediaOverlayAttr = true
+			break
+		}
+	}
+	hasMediaDurationMeta := false
+	for _, m := range pkg.PrimaryMetas {
+		if m.Property == "media:duration" {
+			hasMediaDurationMeta = true
+			break
+		}
+	}
+	if !hasMediaDurationMeta {
+		for _, mr := range pkg.MetaRefines {
+			if mr.Property == "media:duration" {
+				hasMediaDurationMeta = true
+				break
+			}
+		}
+	}
+	if !hasMediaOverlayAttr && !hasMediaDurationMeta {
+		return
+	}
+
+	// Find global media:duration (no refines)
+	var globalDuration string
+	for _, m := range pkg.PrimaryMetas {
+		if m.Property == "media:duration" {
+			globalDuration = m.Value
+		}
+	}
+
+	// Find per-item media:duration (refines an overlay item)
+	itemDurations := make(map[string]string)
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "media:duration" && mr.Refines != "" {
+			ref := strings.TrimPrefix(mr.Refines, "#")
+			if smilItems[ref] {
+				itemDurations[ref] = mr.Value
+			}
+		}
+	}
+
+	// Check global duration is defined
+	if globalDuration == "" {
+		r.Add(report.Error, "RSC-005",
+			"global media:duration meta element not set")
+	}
+
+	// Check each overlay item has a duration
+	for id := range smilItems {
+		if _, ok := itemDurations[id]; !ok {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("item media:duration meta element not set for Media Overlay \"%s\"", id))
+		}
+	}
+
+	// Check total duration matches sum of individual (MED-016)
+	if globalDuration != "" && isValidClockValue(globalDuration) {
+		globalMs := clockToMs(globalDuration)
+		sumMs := 0.0
+		allValid := true
+		for _, dur := range itemDurations {
+			ms := clockToMs(dur)
+			if ms < 0 {
+				allValid = false
+				break
+			}
+			sumMs += ms
+		}
+		if allValid && globalMs >= 0 && len(smilItems) > 0 && len(itemDurations) == len(smilItems) {
+			diff := globalMs - sumMs
+			if diff < 0 {
+				diff = -diff
+			}
+			// 1 second tolerance
+			if diff > 1000 {
+				r.Add(report.Warning, "MED-016",
+					fmt.Sprintf("Total media:duration does not match the sum of individual overlay durations"))
+			}
+		}
+	}
 }

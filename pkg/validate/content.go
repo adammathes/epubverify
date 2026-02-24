@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -4629,68 +4630,230 @@ func checkSingleFileEncoding(ep *epub.EPUB, r *report.Report) {
 // checkSingleFileSMIL runs SMIL-specific checks for single-file validation.
 func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	// Stack tracking for parent elements
+	var parentStack []string
+
+	currentParent := func() string {
+		if len(parentStack) == 0 {
+			return ""
+		}
+		return parentStack[len(parentStack)-1]
+	}
+
+	// Track par children
+	type parState struct {
+		textCount int
+	}
+	parStates := make(map[int]*parState) // keyed by stack depth
+
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
-		se, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		if se.Name.Local == "audio" {
-			var src, clipBegin, clipEnd string
-			for _, attr := range se.Attr {
-				switch attr.Name.Local {
-				case "src":
-					src = attr.Value
-				case "clipBegin":
-					clipBegin = attr.Value
-				case "clipEnd":
-					clipEnd = attr.Value
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			depth := len(parentStack)
+			parentStack = append(parentStack, name)
+
+			// meta directly in head (not in metadata)
+			if name == "meta" && currentParent() == "meta" {
+				// This won't fire... let me check differently
+			}
+			if name == "meta" {
+				// Look back for parent = head
+				if depth >= 1 && parentStack[depth-1] == "head" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "meta" not allowed here`,
+						location)
 				}
 			}
-			// MED-014: audio src should not contain a fragment identifier
-			if src != "" && strings.Contains(src, "#") {
-				r.AddWithLocation(report.Error, "MED-014",
-					fmt.Sprintf("Audio source '%s' must not have a fragment identifier", src),
+
+			// seq direct children: text and audio not allowed
+			parent := ""
+			if depth > 0 {
+				parent = parentStack[depth-1]
+			}
+			if parent == "seq" && (name == "text" || name == "audio") {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`element "%s" not allowed here`, name),
 					location)
 			}
-			// MED-008: clipBegin must be before clipEnd
-			if clipBegin != "" && clipEnd != "" {
-				beginMs := parseSMILClockMs(clipBegin)
-				endMs := parseSMILClockMs(clipEnd)
-				if beginMs >= 0 && endMs >= 0 {
-					if beginMs > endMs {
-						r.AddWithLocation(report.Error, "MED-008",
-							fmt.Sprintf("clipBegin value (%s) is after clipEnd value (%s)", clipBegin, clipEnd),
-							location)
+
+			// par content model
+			if parent == "par" {
+				if name == "seq" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "seq" not allowed here`,
+						location)
+				}
+				if name == "text" {
+					ps, ok := parStates[depth-1]
+					if !ok {
+						ps = &parState{}
+						parStates[depth-1] = ps
 					}
-					// MED-009: clipEnd equals clipBegin
-					if beginMs == endMs {
-						r.AddWithLocation(report.Error, "MED-009",
-							fmt.Sprintf("clipEnd value (%s) equals clipBegin value (%s)", clipEnd, clipBegin),
+					ps.textCount++
+					if ps.textCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "text" not allowed here`,
 							location)
 					}
 				}
 			}
-		}
-		// Check epub:type on SMIL elements for OPF-088
-		for _, attr := range se.Attr {
-			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
-				for _, val := range strings.Fields(attr.Value) {
-					if strings.Contains(val, ":") {
-						continue
-					}
-					if !validEpubTypes[val] && !deprecatedEpubTypes[val] {
-						r.AddWithLocation(report.Usage, "OPF-088",
-							fmt.Sprintf(`epub:type value "%s" is not defined in the default vocabulary`, val),
-							location)
+
+			// Initialize par state
+			if name == "par" {
+				parStates[depth] = &parState{}
+			}
+
+			// Audio element checks
+			if name == "audio" {
+				var src, clipBegin, clipEnd string
+				for _, attr := range t.Attr {
+					switch attr.Name.Local {
+					case "src":
+						src = attr.Value
+					case "clipBegin":
+						clipBegin = attr.Value
+					case "clipEnd":
+						clipEnd = attr.Value
 					}
 				}
+				// MED-014: audio src should not contain a fragment identifier
+				if src != "" && strings.Contains(src, "#") {
+					r.AddWithLocation(report.Error, "MED-014",
+						fmt.Sprintf("Audio source '%s' must not have a fragment identifier", src),
+						location)
+				}
+				// Clock value validation
+				if clipBegin != "" && !isValidSMILClock(clipBegin) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`Invalid clock value "%s"`, clipBegin),
+						location)
+				}
+				if clipEnd != "" && !isValidSMILClock(clipEnd) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`Invalid clock value "%s"`, clipEnd),
+						location)
+				}
+				// MED-008/MED-009: clip time comparison (only when both values are valid)
+				validBegin := clipBegin == "" || isValidSMILClock(clipBegin)
+				validEnd := clipEnd == "" || isValidSMILClock(clipEnd)
+				if validBegin && validEnd {
+					beginMs := parseSMILClockMs(clipBegin)
+					endMs := parseSMILClockMs(clipEnd)
+					// Default clipBegin is 0
+					if clipBegin == "" {
+						beginMs = 0
+					}
+					if beginMs >= 0 && endMs >= 0 {
+						if beginMs > endMs {
+							r.AddWithLocation(report.Error, "MED-008",
+								fmt.Sprintf("clipBegin value (%s) is after clipEnd value (%s)", clipBegin, clipEnd),
+								location)
+						}
+						if beginMs == endMs {
+							r.AddWithLocation(report.Error, "MED-009",
+								fmt.Sprintf("clipEnd value (%s) equals clipBegin value (%s)", clipEnd, clipBegin),
+								location)
+						}
+					}
+				}
+			}
+
+			// Check epub:type on SMIL elements for OPF-088
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+					for _, val := range strings.Fields(attr.Value) {
+						if strings.Contains(val, ":") {
+							continue
+						}
+						if !validEpubTypes[val] && !deprecatedEpubTypes[val] {
+							r.AddWithLocation(report.Usage, "OPF-088",
+								fmt.Sprintf(`epub:type value "%s" is not defined in the default vocabulary`, val),
+								location)
+						}
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if len(parentStack) > 0 {
+				depth := len(parentStack) - 1
+				if parentStack[depth] == "par" {
+					delete(parStates, depth)
+				}
+				parentStack = parentStack[:depth]
 			}
 		}
 	}
+}
+
+// isValidSMILClock validates a SMIL3 clock value format.
+func isValidSMILClock(val string) bool {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return false
+	}
+
+	// Timecount values: number followed by unit (h, min, s, ms)
+	if strings.HasSuffix(val, "ms") {
+		numStr := strings.TrimSuffix(val, "ms")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "min") {
+		numStr := strings.TrimSuffix(val, "min")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "h") {
+		numStr := strings.TrimSuffix(val, "h")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "s") {
+		numStr := strings.TrimSuffix(val, "s")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+
+	// Check for invalid unit suffixes (e.g., "10m" instead of "10min")
+	lastChar := val[len(val)-1]
+	if lastChar >= 'a' && lastChar <= 'z' {
+		return false // Has a letter suffix that wasn't caught above
+	}
+
+	// Clock values: HH:MM:SS.mmm or MM:SS.mmm
+	parts := strings.Split(val, ":")
+	switch len(parts) {
+	case 3: // Full clock: HH:MM:SS.mmm
+		h, err1 := parseFloat(parts[0])
+		m, err2 := parseFloat(parts[1])
+		s, err3 := parseFloat(parts[2])
+		if err1 != nil || err2 != nil || err3 != nil {
+			return false
+		}
+		return m < 60 && s < 60 && h >= 0
+	case 2: // Partial clock: MM:SS.mmm
+		m, err1 := parseFloat(parts[0])
+		s, err2 := parseFloat(parts[1])
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		// Partial clock minutes must be < 60 (one or two digits)
+		if len(parts[0]) > 2 {
+			return false
+		}
+		return m < 60 && s < 60
+	case 1: // Just a number (seconds)
+		_, err := parseFloat(val)
+		return err == nil && len(val) > 0 && val[0] != '.'
+	}
+	return false
 }
 
 // parseSMILClockMs parses a SMIL clock value to milliseconds. Returns -1 on error.
@@ -4768,9 +4931,7 @@ func parseFloat(s string) (float64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("empty string")
 	}
-	var result float64
-	_, err := fmt.Sscanf(s, "%f", &result)
-	return result, err
+	return strconv.ParseFloat(s, 64)
 }
 
 // ============================================================================
