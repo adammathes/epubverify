@@ -219,6 +219,12 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 	}
 }
 
+// sourceRef holds a buffered <source> element for deferred audio/video checking.
+type sourceRef struct {
+	href      string
+	mediaType string // from type attribute (may be empty)
+}
+
 // RSC-032: foreign resources (non-core media types) referenced from content
 // documents must have proper fallbacks (manifest fallback or HTML fallback).
 func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, r *report.Report) {
@@ -233,6 +239,10 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(location)
 	inPicture := false
+	// Track audio/video context: when non-empty, we're inside that element
+	// and buffer <source> elements to check as a group (HTML fallback mechanism)
+	mediaParent := "" // "audio" or "video" or ""
+	var bufferedSources []sourceRef
 
 	for {
 		tok, err := decoder.Token()
@@ -240,10 +250,19 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 			break
 		}
 
-		// Track end elements for picture context
+		// Track end elements
 		if ee, ok := tok.(xml.EndElement); ok {
-			if ee.Name.Local == "picture" {
+			switch ee.Name.Local {
+			case "picture":
 				inPicture = false
+			case "audio", "video":
+				if mediaParent == ee.Name.Local {
+					// Process buffered sources: if any source resolves to a core type,
+					// that's the HTML fallback — foreign sources in the same element are OK.
+					checkAudioVideoSources(ep, bufferedSources, itemDir, location, manifestByHref, r)
+					mediaParent = ""
+					bufferedSources = nil
+				}
 			}
 			continue
 		}
@@ -259,7 +278,6 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 		case "img":
 			if inPicture {
 				// MED-003: img inside picture must reference core media types
-				// (manifest fallbacks don't apply in picture context)
 				checkPictureImgRef(ep, se, itemDir, location, manifestByHref, r)
 			} else {
 				for _, attr := range se.Attr {
@@ -268,18 +286,15 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 					}
 				}
 			}
-		case "audio":
+		case "audio", "video":
+			mediaParent = se.Name.Local
+			bufferedSources = nil
+			// Check direct src attribute (not the <source> fallback mechanism)
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "audio", r)
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, se.Name.Local, r)
 				}
-			}
-		case "video":
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "video", r)
-				}
-				if attr.Name.Local == "poster" {
+				if se.Name.Local == "video" && attr.Name.Local == "poster" {
 					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "poster", r)
 				}
 			}
@@ -287,6 +302,20 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 			if inPicture {
 				// MED-007: source in picture without type attr for foreign resource
 				checkPictureSourceRef(ep, se, itemDir, location, manifestByHref, r)
+			} else if mediaParent != "" {
+				// Buffer for deferred audio/video HTML fallback check
+				var href, typeAttr string
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" {
+						href = attr.Value
+					}
+					if attr.Name.Local == "type" {
+						typeAttr = attr.Value
+					}
+				}
+				if href != "" {
+					bufferedSources = append(bufferedSources, sourceRef{href: href, mediaType: typeAttr})
+				}
 			} else {
 				for _, attr := range se.Attr {
 					if attr.Name.Local == "src" {
@@ -307,7 +336,6 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 				}
 			}
 		case "input":
-			// <input type="image" src="..."> uses image
 			var inputType, src string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "type" {
@@ -330,18 +358,82 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 	}
 }
 
+// checkAudioVideoSources processes buffered <source> elements from an <audio> or <video>.
+// If any source resolves to a core media type, foreign sources are OK (HTML fallback).
+// Otherwise RSC-032 fires for each foreign source with no manifest fallback.
+func checkAudioVideoSources(ep *epub.EPUB, sources []sourceRef, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	if len(sources) == 0 {
+		return
+	}
+
+	// Check if any source is a core media type (HTML fallback present)
+	hasCoreSource := false
+	for _, src := range sources {
+		if src.href == "" || isRemoteURL(src.href) {
+			continue
+		}
+		// Check via type attribute first
+		if src.mediaType != "" {
+			mt := src.mediaType
+			if idx := strings.Index(mt, ";"); idx >= 0 {
+				mt = strings.TrimSpace(mt[:idx])
+			}
+			if coreMediaTypes[mt] {
+				hasCoreSource = true
+				break
+			}
+		}
+		// Check via manifest
+		u, err := url.Parse(src.href)
+		if err != nil {
+			continue
+		}
+		target := resolvePath(itemDir, u.Path)
+		item, ok := manifestByHref[target]
+		if !ok {
+			continue
+		}
+		mt := item.MediaType
+		if idx := strings.Index(mt, ";"); idx >= 0 {
+			mt = strings.TrimSpace(mt[:idx])
+		}
+		if coreMediaTypes[mt] {
+			hasCoreSource = true
+			break
+		}
+	}
+
+	if hasCoreSource {
+		return // HTML fallback mechanism satisfied
+	}
+
+	// No core source — check each foreign source individually
+	for _, src := range sources {
+		checkForeignRef(ep, src.href, itemDir, location, manifestByHref, "source", r)
+	}
+}
+
+
 // checkPictureImgRef checks img src/srcset inside <picture> — must be core types (MED-003).
+// Reports once per unique foreign resource (deduplicates src vs srcset references).
 func checkPictureImgRef(ep *epub.EPUB, se xml.StartElement, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	reported := make(map[string]bool)
 	for _, attr := range se.Attr {
 		switch attr.Name.Local {
 		case "src":
-			checkPictureForeignRef(ep, attr.Value, itemDir, location, manifestByHref, r)
+			if !reported[attr.Value] {
+				reported[attr.Value] = true
+				checkPictureForeignRef(ep, attr.Value, itemDir, location, manifestByHref, r)
+			}
 		case "srcset":
 			// Parse srcset: "url [descriptor], url [descriptor], ..."
 			for _, entry := range strings.Split(attr.Value, ",") {
 				parts := strings.Fields(strings.TrimSpace(entry))
 				if len(parts) > 0 && parts[0] != "" {
-					checkPictureForeignRef(ep, parts[0], itemDir, location, manifestByHref, r)
+					if !reported[parts[0]] {
+						reported[parts[0]] = true
+						checkPictureForeignRef(ep, parts[0], itemDir, location, manifestByHref, r)
+					}
 				}
 			}
 		}
@@ -1234,11 +1326,15 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			}
 		}
 
-		// Check <img src="..."> for image references
+		// Check <img src="..."> and <img srcset="..."> for image references
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
+				switch attr.Name.Local {
+				case "src":
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				case "srcset":
+					// RSC-008: srcset resources must be declared in the manifest
+					checkSrcsetRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
 				}
 			}
 		}
@@ -1289,12 +1385,19 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 					href = attr.Value
 				}
 			}
-			if strings.Contains(rel, "stylesheet") && href != "" && !isRemoteURL(href) {
-				target := resolvePath(itemDir, href)
-				if _, exists := ep.Files[target]; !exists {
-					r.AddWithLocation(report.Error, "RSC-007",
-						fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+			if strings.Contains(strings.ToLower(rel), "stylesheet") && href != "" && !isRemoteURL(href) {
+				// RSC-013: stylesheet URLs must not contain fragment identifiers
+				if u, err := url.Parse(href); err == nil && u.Fragment != "" {
+					r.AddWithLocation(report.Error, "RSC-013",
+						fmt.Sprintf("Fragment identifier is not allowed in stylesheet URL: '%s'", href),
 						fullPath)
+				} else {
+					target := resolvePath(itemDir, href)
+					if _, exists := ep.Files[target]; !exists {
+						r.AddWithLocation(report.Error, "RSC-007",
+							fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+							fullPath)
+					}
 				}
 			}
 		}
@@ -1373,6 +1476,41 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 		r.AddWithLocation(report.Error, "RSC-006",
 			fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", src),
 			location)
+	}
+}
+
+// checkSrcsetRef checks each URL in a srcset attribute.
+// RSC-007: resource not found in container.
+// RSC-008: resource in container but not declared in manifest.
+func checkSrcsetRef(ep *epub.EPUB, srcset, itemDir, location string, manifestPaths map[string]bool, r *report.Report) {
+	reported := make(map[string]bool)
+	for _, entry := range strings.Split(srcset, ",") {
+		parts := strings.Fields(strings.TrimSpace(entry))
+		if len(parts) == 0 || parts[0] == "" {
+			continue
+		}
+		href := parts[0]
+		if reported[href] || isRemoteURL(href) {
+			continue
+		}
+		reported[href] = true
+		u, err := url.Parse(href)
+		if err != nil || u.Path == "" {
+			continue
+		}
+		target := resolvePath(itemDir, u.Path)
+		if manifestPaths[target] {
+			continue // declared in manifest — OK
+		}
+		if _, exists := ep.Files[target]; !exists {
+			r.AddWithLocation(report.Error, "RSC-007",
+				fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+				location)
+		} else {
+			r.AddWithLocation(report.Error, "RSC-008",
+				fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", href),
+				location)
+		}
 	}
 }
 
@@ -1819,7 +1957,7 @@ func checkLangXMLLangMatch(data []byte, location string, r *report.Report) {
 			}
 		}
 		if hasLang && hasXMLLang && !strings.EqualFold(lang, xmlLang) {
-			r.AddWithLocation(report.Error, "HTM-026",
+			r.AddWithLocation(report.Error, "RSC-005",
 				fmt.Sprintf("Attributes lang and xml:lang must have the same value when both are present, but found '%s' and '%s'", lang, xmlLang),
 				location)
 			return

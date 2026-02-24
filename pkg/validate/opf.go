@@ -1038,8 +1038,21 @@ func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
 		}
 	}
 
+	// Build set of items that are themselves fallbacks for other items.
+	// We only check the top of a fallback chain, not intermediate items.
+	isFallbackTarget := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.Fallback != "" {
+			isFallbackTarget[item.Fallback] = true
+		}
+	}
+
 	for _, item := range pkg.Manifest {
 		if item.Fallback == "" {
+			continue
+		}
+		// Skip items that are themselves fallback targets — only check chain roots
+		if isFallbackTarget[item.ID] {
 			continue
 		}
 		mt := item.MediaType
@@ -1054,7 +1067,13 @@ func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
 		visited := make(map[string]bool)
 		current := item.Fallback
 		resolved := false
-		for current != "" && !visited[current] {
+		isCircular := false
+		for current != "" {
+			if visited[current] {
+				// Detected a cycle — OPF-045 handles this, skip RSC-032
+				isCircular = true
+				break
+			}
 			visited[current] = true
 			next, ok := byID[current]
 			if !ok {
@@ -1071,9 +1090,6 @@ func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
 			current = next.Fallback
 		}
 
-		// If the loop stopped because we hit a cycle (current is already visited),
-		// OPF-045 already handles circular chains — don't also emit RSC-032.
-		isCircular := current != "" && visited[current]
 		if !resolved && !isCircular {
 			r.Add(report.Error, "RSC-032",
 				fmt.Sprintf("Fallback chain for manifest item '%s' does not resolve to a core media type", item.ID))
