@@ -315,6 +315,12 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 			inBody = true
 		case "seq":
 			inSeq = true
+			// Check epub:textref for RSC-012 (unresolved fragment in seq element)
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "textref" {
+					checkSMILFragmentRef(ep, attr.Value, smilDir, fullPath, r)
+				}
+			}
 		case "par":
 			inPar = true
 		case "audio":
@@ -407,31 +413,76 @@ func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location
 	}
 }
 
-// MED-008: text src must reference an existing fragment
+// checkSMILText validates a SMIL <text src="..."> element.
 func checkSMILText(ep *epub.EPUB, se xml.StartElement, smilDir string, location string, r *report.Report) {
 	for _, attr := range se.Attr {
 		if attr.Name.Local == "src" && attr.Value != "" {
-			u, err := url.Parse(attr.Value)
-			if err != nil || u.Scheme != "" {
-				continue
-			}
-			target := resolvePath(smilDir, u.Path)
-			if _, exists := ep.Files[target]; !exists {
-				r.AddWithLocation(report.Error, "MED-008",
-					fmt.Sprintf("Fragment identifier is not defined in '%s'", attr.Value),
-					location)
-			} else if u.Fragment != "" {
-				// Check that the fragment ID actually exists in the target document
-				targetData, err := ep.ReadFile(target)
-				if err == nil {
-					ids := collectIDs(targetData)
-					if !ids[u.Fragment] {
-						r.AddWithLocation(report.Error, "MED-008",
-							fmt.Sprintf("Fragment identifier is not defined in '%s'", attr.Value),
-							location)
-					}
-				}
-			}
+			checkSMILFragmentRef(ep, attr.Value, smilDir, location, r)
+		}
+	}
+}
+
+// checkSMILFragmentRef validates a SMIL text src or epub:textref reference.
+// MED-008: target file does not exist.
+// MED-017: scheme-based fragment identifier (e.g. xpointer).
+// MED-018: invalid SVG fragment identifier.
+// RSC-012: fragment identifier does not resolve to an element in target document.
+func checkSMILFragmentRef(ep *epub.EPUB, src, smilDir, location string, r *report.Report) {
+	u, err := url.Parse(src)
+	if err != nil || u.Scheme != "" {
+		return
+	}
+	target := resolvePath(smilDir, u.Path)
+	if _, exists := ep.Files[target]; !exists {
+		r.AddWithLocation(report.Error, "MED-008",
+			fmt.Sprintf("Fragment identifier is not defined in '%s'", src),
+			location)
+		return
+	}
+	if u.Fragment == "" {
+		return
+	}
+
+	frag := u.Fragment
+	isSVGTarget := strings.HasSuffix(strings.ToLower(u.Path), ".svg")
+
+	if isSVGTarget {
+		// Valid SVG view fragment: svgView(...) - allowed, no error
+		if strings.HasPrefix(frag, "svgView(") {
+			return
+		}
+		// Scheme-based fragment (contains '(')
+		if strings.Contains(frag, "(") {
+			r.AddWithLocation(report.Warning, "MED-017",
+				fmt.Sprintf("Scheme-based fragment identifier in '%s' is not supported", src),
+				location)
+			return
+		}
+		// Invalid SVG fragment (contains '=')
+		if strings.Contains(frag, "=") {
+			r.AddWithLocation(report.Warning, "MED-018",
+				fmt.Sprintf("Invalid SVG fragment identifier in '%s'", src),
+				location)
+			return
+		}
+	} else {
+		// XHTML or other target: scheme-based fragment (contains '(')
+		if strings.Contains(frag, "(") {
+			r.AddWithLocation(report.Warning, "MED-017",
+				fmt.Sprintf("Scheme-based fragment identifier in '%s' is not supported", src),
+				location)
+			return
+		}
+	}
+
+	// Plain fragment ID: check if it resolves to an element in the target document.
+	targetData, err := ep.ReadFile(target)
+	if err == nil {
+		ids := collectIDs(targetData)
+		if !ids[frag] {
+			r.AddWithLocation(report.Error, "RSC-012",
+				fmt.Sprintf("Fragment identifier is not defined: '%s'", src),
+				location)
 		}
 	}
 }
