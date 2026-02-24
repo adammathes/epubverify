@@ -324,15 +324,33 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 				}
 			}
 		case "embed":
+			var embedSrc, embedType string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "embed", r)
+					embedSrc = attr.Value
+				}
+				if attr.Name.Local == "type" {
+					embedType = attr.Value
+				}
+			}
+			if embedSrc != "" {
+				if !checkTypeMismatch(embedSrc, embedType, itemDir, location, manifestByHref, r) {
+					checkForeignRef(ep, embedSrc, itemDir, location, manifestByHref, "embed", r)
 				}
 			}
 		case "object":
+			var objectData, objectType string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "data" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "object", r)
+					objectData = attr.Value
+				}
+				if attr.Name.Local == "type" {
+					objectType = attr.Value
+				}
+			}
+			if objectData != "" {
+				if !checkTypeMismatch(objectData, objectType, itemDir, location, manifestByHref, r) {
+					checkForeignRef(ep, objectData, itemDir, location, manifestByHref, "object", r)
 				}
 			}
 		case "input":
@@ -440,21 +458,39 @@ func checkPictureImgRef(ep *epub.EPUB, se xml.StartElement, itemDir, location st
 	}
 }
 
-// checkPictureSourceRef checks source elements inside <picture> — MED-007 if no type attr for foreign resource.
+// checkPictureSourceRef checks source elements inside <picture>.
+// OPF-013 if type attr doesn't match manifest media-type.
+// MED-007 if no type attr for foreign resource.
 func checkPictureSourceRef(ep *epub.EPUB, se xml.StartElement, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
-	hasType := false
-	var srcset string
+	var typeAttr, srcset string
 	for _, attr := range se.Attr {
 		if attr.Name.Local == "type" {
-			hasType = true
+			typeAttr = attr.Value
 		}
 		if attr.Name.Local == "srcset" {
 			srcset = attr.Value
 		}
 	}
-	if hasType || srcset == "" {
-		return // type declared or no srcset → OK
+	if srcset == "" {
+		return
 	}
+	// Get the first URL from srcset for type mismatch check
+	firstHref := ""
+	for _, entry := range strings.Split(srcset, ",") {
+		parts := strings.Fields(strings.TrimSpace(entry))
+		if len(parts) > 0 && parts[0] != "" {
+			firstHref = parts[0]
+			break
+		}
+	}
+	// OPF-013: type attribute doesn't match manifest media-type
+	if typeAttr != "" && firstHref != "" {
+		if checkTypeMismatch(firstHref, typeAttr, itemDir, location, manifestByHref, r) {
+			return
+		}
+		return // type matches or no manifest entry — skip MED-007
+	}
+	// No type attribute: check if any srcset URL references a foreign resource → MED-007
 	// No type attribute: check if any srcset URL references a foreign resource
 	for _, entry := range strings.Split(srcset, ",") {
 		parts := strings.Fields(strings.TrimSpace(entry))
@@ -515,6 +551,38 @@ func checkPictureForeignRef(ep *epub.EPUB, href, itemDir, location string, manif
 	r.AddWithLocation(report.Error, "MED-003",
 		fmt.Sprintf("The `picture` element's `img` fallback references a foreign resource '%s' of type '%s'", href, item.MediaType),
 		location)
+}
+
+// checkTypeMismatch checks if the element's type attribute matches the manifest media-type.
+// If they don't match, OPF-013 is emitted and true is returned (caller should skip RSC-032).
+func checkTypeMismatch(href, typeAttr, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) bool {
+	if typeAttr == "" || href == "" || isRemoteURL(href) {
+		return false
+	}
+	u, err := url.Parse(href)
+	if err != nil || u.Path == "" {
+		return false
+	}
+	target := resolvePath(itemDir, u.Path)
+	item, ok := manifestByHref[target]
+	if !ok {
+		return false
+	}
+	manifestMT := item.MediaType
+	if idx := strings.Index(manifestMT, ";"); idx >= 0 {
+		manifestMT = strings.TrimSpace(manifestMT[:idx])
+	}
+	declaredMT := typeAttr
+	if idx := strings.Index(declaredMT, ";"); idx >= 0 {
+		declaredMT = strings.TrimSpace(declaredMT[:idx])
+	}
+	if !strings.EqualFold(manifestMT, declaredMT) {
+		r.AddWithLocation(report.Warning, "OPF-013",
+			fmt.Sprintf("'type' attribute value '%s' does not match the resource's manifest media type '%s'", typeAttr, item.MediaType),
+			location)
+		return true
+	}
+	return false
 }
 
 func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHref map[string]epub.ManifestItem, context string, r *report.Report) {
@@ -924,11 +992,14 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 }
 
 // hasRemoteURLInCSS checks if CSS content contains any remote URL references
-// (excluding @namespace declarations which use url() for namespace URIs)
+// (excluding @namespace and @import declarations which are handled separately)
 func hasRemoteURLInCSS(css string) bool {
-	// Remove @namespace lines first as they use url() for identifiers, not resources
+	// Remove @namespace lines (use url() for identifiers, not resources)
 	namespaceRe := regexp.MustCompile(`(?m)@namespace\s+[^\n;]+;`)
 	cleaned := namespaceRe.ReplaceAllString(css, "")
+	// Remove @import lines (remote @import is handled by RSC-006, not remote-resources)
+	importRe := regexp.MustCompile(`(?m)@import\s+[^\n;]+;`)
+	cleaned = importRe.ReplaceAllString(cleaned, "")
 	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'"\)\s]+)['"]?\)`)
 	return urlRe.MatchString(cleaned)
 }
@@ -1208,12 +1279,28 @@ func collectIDs(data []byte) map[string]bool {
 // - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
 func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
+	// Match href="..." in processing instruction data
+	piHrefRe := regexp.MustCompile(`href\s*=\s*["']([^"']+)["']`)
 
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
+
+		// RSC-006: Remote stylesheet in SVG <?xml-stylesheet href="...">
+		if pi, ok := tok.(xml.ProcInst); ok {
+			if pi.Target == "xml-stylesheet" {
+				m := piHrefRe.FindSubmatch(pi.Inst)
+				if m != nil && isRemoteURL(string(m[1])) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", string(m[1])),
+						location)
+				}
+			}
+			continue
+		}
+
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
@@ -1274,8 +1361,17 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// Remote audio/video resources are ALLOWED in EPUB 3 but need remote-resources property.
-		// The property check is handled by checkPropertyDeclarations; nothing more needed here.
+		// Remote audio/video resources are ALLOWED in EPUB 3.
+		// RSC-031: warn when using http:// instead of https:// for remote resources.
+		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && isNonHTTPSRemote(attr.Value) {
+					r.AddWithLocation(report.Warning, "RSC-031",
+						fmt.Sprintf("Remote resource uses insecure 'http' scheme: '%s'", attr.Value),
+						location)
+				}
+			}
+		}
 
 		// RSC-006: Remote stylesheet references are not allowed
 		if se.Name.Local == "link" {
@@ -1294,11 +1390,35 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 					location)
 			}
 		}
+
+		// RSC-006: Remote stylesheet in SVG inline <style> @import
+		if se.Name.Local == "style" {
+			inner, _ := decoder.Token()
+			if cd, ok2 := inner.(xml.CharData); ok2 {
+				css := string(cd)
+				importRe := regexp.MustCompile(`@import\s+(?:url\(['"]?|['"])([^'")\s]+)`)
+				for _, m := range importRe.FindAllStringSubmatch(css, -1) {
+					if isRemoteURL(m[1]) {
+						r.AddWithLocation(report.Error, "RSC-006",
+							fmt.Sprintf("Remote resource reference is not allowed: '%s'", m[1]),
+							location)
+					}
+				}
+			}
+		}
 	}
 }
 
 func isRemoteURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
+}
+
+func isFileURL(s string) bool {
+	return strings.HasPrefix(s, "file://") || strings.HasPrefix(s, "file:/")
+}
+
+func isNonHTTPSRemote(s string) bool {
+	return strings.HasPrefix(s, "http://")
 }
 
 // checkContentReferences finds href/src attributes in XHTML and validates them.

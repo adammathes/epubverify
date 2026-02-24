@@ -354,10 +354,8 @@ func checkCSSImportTargets(ep *epub.EPUB, css string, location string, manifestH
 
 		if !inContainer {
 			if inManifest {
-				// RSC-001: in manifest but missing from container
-				r.AddWithLocation(report.Error, "RSC-001",
-					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
-					location)
+				// RSC-001: in manifest but missing from container — handled by checkManifestFilesExist
+				// Don't double-report here
 			} else {
 				// Not in container, not in manifest - RSC-007
 				r.AddWithLocation(report.Error, "RSC-007",
@@ -406,10 +404,31 @@ func checkCSSSyntax(css string, location string, r *report.Report) {
 // but the referencing content document needs the remote-resources property.
 // We check for remote URLs in the CSS and report OPF-014 if no content document
 // declaring remote-resources references this CSS.
+// RSC-031: warn if remote URL uses http:// instead of https://.
+// RSC-030: error if file:// URL is used.
 func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.ManifestItem, r *report.Report) {
-	// Remove @namespace lines as they use url() for namespace identifiers, not resources
+	// Strip @namespace lines (use url() for namespace identifiers, not resources)
 	namespaceRe := regexp.MustCompile(`(?m)@namespace\s+[^\n;]+;`)
-	cleaned := namespaceRe.ReplaceAllString(css, "")
+	strippedCSS := namespaceRe.ReplaceAllString(css, "")
+
+	// RSC-031: http:// remote URLs in CSS are insecure
+	httpURLRe := regexp.MustCompile(`url\(['"]?(http://[^'"\)\s]+)['"]?\)`)
+	for _, m := range httpURLRe.FindAllStringSubmatch(strippedCSS, -1) {
+		r.AddWithLocation(report.Warning, "RSC-031",
+			fmt.Sprintf("Remote resource uses insecure 'http' scheme: '%s'", m[1]),
+			location)
+	}
+
+	// RSC-030: file:// URLs are not allowed
+	fileURLRe := regexp.MustCompile(`url\(['"]?(file:[^'"\)\s]+)['"]?\)`)
+	for _, m := range fileURLRe.FindAllStringSubmatch(strippedCSS, -1) {
+		r.AddWithLocation(report.Error, "RSC-030",
+			fmt.Sprintf("Use of 'file' URL scheme is prohibited: '%s'", m[1]),
+			location)
+	}
+
+	// Remove @namespace lines as they use url() for namespace identifiers, not resources
+	cleaned := strippedCSS
 	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'"\)\s]+)['"]?\)`)
 	if !urlRe.MatchString(cleaned) {
 		return
@@ -485,6 +504,10 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 		for _, u := range urls {
 			href := u[1]
 			if isRemoteURL(href) {
+				continue
+			}
+			// Skip file:// URLs (handled by RSC-030)
+			if isFileURL(href) {
 				continue
 			}
 			// Skip empty URLs (handled by CSS-002)

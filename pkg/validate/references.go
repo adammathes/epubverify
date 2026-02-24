@@ -75,9 +75,18 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 		if strings.Contains(item.Href, "..") {
 			continue
 		}
-		// Skip remote resources (http/https URLs in manifest are valid
-		// when the referencing content doc has remote-resources property)
+		// RSC-030: file:// URLs are not allowed in the manifest
+		if strings.HasPrefix(item.Href, "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("Use of 'file' URL scheme is prohibited: '%s'", item.Href))
+			continue
+		}
+		// RSC-006: remote content documents (XHTML/SVG) in manifest are not allowed
 		if strings.HasPrefix(item.Href, "http://") || strings.HasPrefix(item.Href, "https://") {
+			if item.MediaType == "application/xhtml+xml" || item.MediaType == "image/svg+xml" {
+				r.Add(report.Error, "RSC-006",
+					fmt.Sprintf("Remote resource reference is not allowed: '%s'", item.Href))
+			}
 			continue
 		}
 		fullPath := ep.ResolveHref(item.Href)
