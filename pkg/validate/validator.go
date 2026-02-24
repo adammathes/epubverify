@@ -106,6 +106,12 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		}
 	}
 
+	// Post-processing: in single-file mode, remap specific check IDs to RSC-005
+	// to match EPUBCheck's schema validation behavior.
+	if opts.SingleFileMode {
+		r.RemapToRSC005(rsc005Mapping)
+	}
+
 	// Post-processing: when not in Strict mode, downgrade certain warnings
 	// to INFO for checks that epubcheck does not flag. This aligns output
 	// with the epubverify-spec test suite while keeping the checks active
@@ -121,6 +127,69 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 	}
 
 	return r, nil
+}
+
+// rsc005Mapping maps specific check IDs to RSC-005 with EPUBCheck-compatible
+// messages. Each entry transforms the original message text into the format
+// expected by EPUBCheck's schema validation (RelaxNG).
+var rsc005Mapping = map[string]func(string) string{
+	"OPF-001": func(msg string) string {
+		if strings.Contains(msg, "dc:title") {
+			return `missing required element "dc:title"`
+		}
+		if strings.Contains(msg, "version") {
+			return `missing required attribute "version"`
+		}
+		return msg
+	},
+	"OPF-002": func(msg string) string {
+		return `missing required element "dc:identifier"`
+	},
+	"OPF-003": func(msg string) string {
+		return `missing required element "dc:language"`
+	},
+	"OPF-004": func(msg string) string {
+		return `missing required element "dcterms:modified"`
+	},
+	"OPF-007": func(msg string) string {
+		return `missing required attribute "media-type"`
+	},
+	"OPF-010": func(msg string) string {
+		return `missing required element "itemref"`
+	},
+	"OPF-019": func(msg string) string {
+		return `value of property "dcterms:modified" must be of the form "CCYY-MM-DDThh:mm:ssZ"`
+	},
+	"OPF-030": func(msg string) string {
+		return `"unique-identifier" attribute does not resolve to a dc:identifier element`
+	},
+	"OPF-031": func(msg string) string {
+		return `must be a string with length at least 1`
+	},
+	"OPF-032": func(msg string) string {
+		return `must be a string with length at least 1`
+	},
+	"OPF-034": func(msg string) string {
+		return `Itemref refers to the same manifest entry as a previous itemref`
+	},
+	"OPF-008": func(msg string) string {
+		return `missing required attribute "unique-identifier"`
+	},
+	"OPF-037": func(msg string) string {
+		if strings.Contains(msg, "must be a relative URL") {
+			return `@refines must be a relative URL`
+		}
+		if strings.Contains(msg, "refines missing target") {
+			return `@refines missing target id`
+		}
+		return msg
+	},
+	"OPF-042": func(msg string) string {
+		return `The value of the "rendition:flow" property must be either "paginated", "scrolled-doc", "scrolled-continuous", or "auto"`
+	},
+	"OPF-044": func(msg string) string {
+		return `The media-overlay attribute must refer to an item with media type "application/smil+xml"; must be of the "application/smil+xml" type`
+	},
 }
 
 // divergenceChecks lists check IDs where epubverify flags issues that

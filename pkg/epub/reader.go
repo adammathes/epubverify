@@ -421,9 +421,8 @@ func parseMetadata(data []byte) Metadata {
 				val := readElementText(decoder)
 				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val})
 			case "language":
-				if text := readElementText(decoder); text != "" {
-					md.Languages = append(md.Languages, text)
-				}
+				text := readElementText(decoder)
+				md.Languages = append(md.Languages, text)
 			case "date":
 				if text := readElementText(decoder); text != "" {
 					md.Dates = append(md.Dates, text)

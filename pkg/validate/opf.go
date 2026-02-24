@@ -231,7 +231,14 @@ func checkDCIdentifier(pkg *epub.Package, r *report.Report) {
 
 // OPF-003
 func checkDCLanguage(pkg *epub.Package, r *report.Report) {
-	if len(pkg.Metadata.Languages) == 0 {
+	hasNonEmpty := false
+	for _, lang := range pkg.Metadata.Languages {
+		if lang != "" {
+			hasNonEmpty = true
+			break
+		}
+	}
+	if !hasNonEmpty && len(pkg.Metadata.Languages) == 0 {
 		r.Add(report.Error, "OPF-003", "Package metadata is missing required element dc:language")
 	}
 }
@@ -393,6 +400,11 @@ var bcp47Re = regexp.MustCompile(`^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{1,8})*$`)
 
 func checkDCLanguageValid(pkg *epub.Package, r *report.Report) {
 	for _, lang := range pkg.Metadata.Languages {
+		if strings.TrimSpace(lang) == "" {
+			// Empty/whitespace-only language is a schema validation error
+			r.Add(report.Error, "OPF-031", "Element dc:language must be a string with length at least 1")
+			continue
+		}
 		if !bcp47Re.MatchString(lang) {
 			r.Add(report.Error, "OPF-020",
 				fmt.Sprintf("Language tag '%s' is not well-formed according to BCP 47", lang))
@@ -867,7 +879,17 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 	}
 
 	for _, mr := range pkg.MetaRefines {
-		target := strings.TrimPrefix(mr.Refines, "#")
+		refines := mr.Refines
+		if refines == "" {
+			continue
+		}
+		// Check for absolute URLs - refines must be a relative URL
+		if strings.Contains(refines, "://") {
+			r.Add(report.Error, "OPF-037",
+				fmt.Sprintf("@refines must be a relative URL, but found '%s'", refines))
+			continue
+		}
+		target := strings.TrimPrefix(refines, "#")
 		if target == "" {
 			continue
 		}
