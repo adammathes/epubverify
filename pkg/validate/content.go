@@ -20,6 +20,9 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		return
 	}
 
+	// OPF-073: DOCTYPE external identifier checks (runs over all manifest items)
+	checkDOCTYPEExternalIdentifiers(ep, r)
+
 	// Build set of manifest-declared resources (resolved full paths).
 	manifestPaths := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -2494,6 +2497,153 @@ func checkNoRDFElements(data []byte, location string, r *report.Report) {
 					"RDF metadata elements should not be used in EPUB content documents",
 					location)
 				return
+			}
+		}
+	}
+}
+
+// OPF-073: DOCTYPE external identifier checks.
+// Allowed (publicID, systemID) pairs and the media types they are valid for:
+//   - NCX: "-//NISO//DTD ncx 2005-1//EN" + "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd" → application/x-dtbncx+xml
+//   - SVG: "-//W3C//DTD SVG 1.1//EN" + "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" → image/svg+xml
+//   - MathML: "-//W3C//DTD MathML 3.0//EN" + "http://www.w3.org/Math/DTD/mathml3/mathml3.dtd" → application/mathml+xml and variants
+
+type allowedExternalID struct {
+	publicID    string
+	systemID    string
+	mediaTypes  []string
+}
+
+var allowedExternalIDs = []allowedExternalID{
+	{
+		publicID:   "-//NISO//DTD ncx 2005-1//EN",
+		systemID:   "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd",
+		mediaTypes: []string{"application/x-dtbncx+xml"},
+	},
+	{
+		publicID:   "-//W3C//DTD SVG 1.1//EN",
+		systemID:   "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd",
+		mediaTypes: []string{"image/svg+xml"},
+	},
+	{
+		publicID:   "-//W3C//DTD MathML 3.0//EN",
+		systemID:   "http://www.w3.org/Math/DTD/mathml3/mathml3.dtd",
+		mediaTypes: []string{"application/mathml+xml", "application/mathml-presentation+xml", "application/mathml-content+xml"},
+	},
+}
+
+// extractDOCTYPEIdentifiers parses a DOCTYPE directive string and returns the public and system IDs.
+// Input is the content of <!...> without the brackets, e.g. `DOCTYPE ncx PUBLIC "..." "..."`.
+func extractDOCTYPEIdentifiers(directive string) (publicID, systemID string) {
+	// Quick check: must be a DOCTYPE directive
+	upper := strings.ToUpper(strings.TrimSpace(directive))
+	if !strings.HasPrefix(upper, "DOCTYPE") {
+		return
+	}
+
+	// Extract quoted strings
+	var quoted []string
+	rest := directive
+	for {
+		q := -1
+		for i, c := range rest {
+			if c == '"' || c == '\'' {
+				q = i
+				break
+			}
+		}
+		if q < 0 {
+			break
+		}
+		delim := rest[q]
+		end := strings.IndexByte(rest[q+1:], delim)
+		if end < 0 {
+			break
+		}
+		quoted = append(quoted, rest[q+1:q+1+end])
+		rest = rest[q+1+end+1:]
+	}
+
+	if len(quoted) == 0 {
+		return
+	}
+
+	// Check if PUBLIC or SYSTEM keyword is present
+	upperDirective := strings.ToUpper(directive)
+	if strings.Contains(upperDirective, "PUBLIC") {
+		if len(quoted) >= 1 {
+			publicID = quoted[0]
+		}
+		if len(quoted) >= 2 {
+			systemID = quoted[1]
+		}
+	} else if strings.Contains(upperDirective, "SYSTEM") {
+		if len(quoted) >= 1 {
+			systemID = quoted[0]
+		}
+	}
+	return
+}
+
+func checkDOCTYPEExternalIdentifiers(ep *epub.EPUB, r *report.Report) {
+	// OPF-073 only applies to EPUB 3 publications
+	if ep.Package.Version < "3.0" {
+		return
+	}
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		// Scan for DOCTYPE directive
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder.Strict = false
+		decoder.AutoClose = xml.HTMLAutoClose
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			// DOCTYPE appears as xml.Directive
+			if dir, ok := tok.(xml.Directive); ok {
+				directive := string(dir)
+				publicID, systemID := extractDOCTYPEIdentifiers(directive)
+				if publicID == "" && systemID == "" {
+					continue
+				}
+				// Check if this is an allowed external identifier
+				allowed := false
+				correctMediaType := false
+				for _, entry := range allowedExternalIDs {
+					if publicID == entry.publicID && systemID == entry.systemID {
+						allowed = true
+						for _, mt := range entry.mediaTypes {
+							if item.MediaType == mt {
+								correctMediaType = true
+								break
+							}
+						}
+						break
+					}
+				}
+				if !allowed {
+					r.AddWithLocation(report.Error, "OPF-073",
+						"DOCTYPE external identifier is not allowed",
+						fullPath)
+				} else if !correctMediaType {
+					r.AddWithLocation(report.Error, "OPF-073",
+						"DOCTYPE external identifier is not allowed for this media type",
+						fullPath)
+				}
+			}
+			// Stop after first element (DOCTYPE appears before root element)
+			if _, ok := tok.(xml.StartElement); ok {
+				break
 			}
 		}
 	}
