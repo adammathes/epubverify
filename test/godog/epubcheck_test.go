@@ -591,10 +591,12 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text, formatMessages(s.result.Messages))
 	})
 
-	ctx.Step(`^the message contains '([^']*)'`, func(text string) error {
+	ctx.Step(`^the message contains '((?:[^'\\]|\\.)*)'`, func(text string) error {
 		if s.result == nil {
 			return fmt.Errorf("no validation result available")
 		}
+		// Unescape \' to ' in the captured text
+		text = strings.ReplaceAll(text, `\'`, `'`)
 		if strings.Contains(s.lastMessage, text) {
 			return nil
 		}

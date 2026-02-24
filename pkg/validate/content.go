@@ -2969,6 +2969,13 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
 			checkTitleElement(data, fullPath, r)
 			checkPrefixAttrLocation(data, fullPath, r)
 			checkPrefixDeclarations(data, fullPath, r)
+			checkNestedTime(data, fullPath, r)
+			checkMathMLContentOnly(data, fullPath, r)
+			checkMathMLAnnotation(data, fullPath, r)
+			checkHiddenAttrValue(data, fullPath, r)
+			checkDatetimeFormat(data, fullPath, r)
+			checkURLConformance(data, fullPath, r)
+			checkEntityReferences(data, fullPath, r)
 
 			// Usage-level checks
 			checkHTM055Discouraged(data, fullPath, r)
@@ -3965,55 +3972,28 @@ func checkHTM004SingleFile(data []byte, location string, r *report.Report) {
 
 // checkImageMapValid detects invalid image map constructs (RSC-005).
 func checkImageMapValid(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	inMap := false
-	hasArea := false
+	content := string(data)
+	isHTML5 := strings.Contains(content, "<!DOCTYPE html>") || strings.Contains(content, "<!doctype html>")
+	decoder := xml.NewDecoder(strings.NewReader(content))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
-		switch t := tok.(type) {
-		case xml.StartElement:
-			if t.Name.Local == "map" {
-				inMap = true
-				hasArea = false
-				// Check for name attribute
-				hasName := false
-				for _, attr := range t.Attr {
-					if attr.Name.Local == "name" && attr.Value != "" {
-						hasName = true
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "img" && isHTML5 {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "usemap" {
+					val := attr.Value
+					if val != "" && !strings.HasPrefix(val, "#") {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`value of attribute "usemap" is invalid; must start with "#"`,
+							location)
 					}
 				}
-				if !hasName {
-					r.AddWithLocation(report.Error, "RSC-005",
-						`The "map" element requires a "name" attribute`,
-						location)
-				}
-			}
-			if t.Name.Local == "area" {
-				hasArea = true
-			}
-			if t.Name.Local == "img" {
-				for _, attr := range t.Attr {
-					if attr.Name.Local == "usemap" {
-						val := attr.Value
-						if val != "" && !strings.HasPrefix(val, "#") {
-							r.AddWithLocation(report.Error, "RSC-005",
-								`value of attribute "usemap" is invalid; must start with "#"`,
-								location)
-						}
-					}
-				}
-			}
-		case xml.EndElement:
-			if t.Name.Local == "map" {
-				if inMap && !hasArea {
-					r.AddWithLocation(report.Error, "RSC-005",
-						`The "map" element must contain at least one "area" element`,
-						location)
-				}
-				inMap = false
 			}
 		}
 	}
@@ -4083,38 +4063,59 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 		"seamless":      true,
 	}
 	obsoleteElements := map[string]bool{
-		"keygen": true,
+		"keygen":  true,
+		"command": true,
 	}
 	// Obsolete element-specific attributes
 	obsoleteMenuAttrs := map[string]bool{
 		"type": true, "label": true,
 	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	menuDepth := 0  // depth inside a menu element (1 = direct child)
+	inMenu := false
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
-		se, ok := tok.(xml.StartElement)
-		if !ok {
-			continue
-		}
-		if obsoleteElements[se.Name.Local] {
-			r.AddWithLocation(report.Error, "RSC-005",
-				fmt.Sprintf(`element "%s" not allowed here`, se.Name.Local),
-				location)
-		}
-		for _, attr := range se.Attr {
-			if obsoleteAttrs[attr.Name.Local] {
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "menu" {
+				inMenu = true
+				menuDepth = 0
+			} else if inMenu {
+				menuDepth++
+			}
+			if obsoleteElements[t.Name.Local] {
 				r.AddWithLocation(report.Error, "RSC-005",
-					fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+					fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
 					location)
 			}
-			// menu element obsolete attributes
-			if se.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
+			// button as direct child of menu (not nested in li)
+			if inMenu && menuDepth == 1 && t.Name.Local == "button" {
 				r.AddWithLocation(report.Error, "RSC-005",
-					fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+					`element "button" not allowed here`,
 					location)
+			}
+			for _, attr := range t.Attr {
+				if obsoleteAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+				// menu element obsolete attributes
+				if t.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "menu" {
+				inMenu = false
+				menuDepth = 0
+			} else if inMenu {
+				menuDepth--
 			}
 		}
 	}
@@ -4721,7 +4722,14 @@ func checkTableBorderAttr(data []byte, location string, r *report.Report) {
 
 // checkCSS008StyleType detects style elements in <head> without a type declaration (CSS-008).
 func checkCSS008StyleType(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	// In HTML5 (EPUB 3), the type attribute is not required on style elements.
+	// Only check for EPUB 2 / XHTML 1.1 documents (no HTML5 doctype).
+	content := string(data)
+	if strings.Contains(content, "<!DOCTYPE html>") || strings.Contains(content, "<!doctype html>") {
+		// HTML5 doctype — type attribute not required
+		return
+	}
+	decoder := xml.NewDecoder(strings.NewReader(content))
 	inHead := false
 	for {
 		tok, err := decoder.Token()
@@ -4803,11 +4811,20 @@ func checkStyleAttrCSS(data []byte, location string, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "style" {
-				// Check for obviously invalid CSS syntax (unbalanced braces, etc.)
-				val := attr.Value
+				val := strings.TrimSpace(attr.Value)
+				if val == "" {
+					continue
+				}
+				// Check for invalid CSS syntax
+				// A style attribute should contain property: value declarations
 				if strings.Contains(val, "{") || strings.Contains(val, "}") {
 					r.AddWithLocation(report.Error, "CSS-008",
 						`invalid CSS syntax in "style" attribute; must not contain declaration blocks`,
+						location)
+				} else if !strings.Contains(val, ":") {
+					// No colon means no property:value pair
+					r.AddWithLocation(report.Error, "CSS-008",
+						`invalid CSS syntax in "style" attribute`,
 						location)
 				}
 			}
@@ -4975,6 +4992,318 @@ func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
 								location)
 						}
 					}
+				}
+			}
+		}
+	}
+}
+
+// checkNestedTime detects <time> elements nested inside other <time> elements (RSC-005).
+func checkNestedTime(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	depth := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "time" {
+				if depth > 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "time" not allowed here`,
+						location)
+				}
+				depth++
+			}
+		case xml.EndElement:
+			if t.Name.Local == "time" && depth > 0 {
+				depth--
+			}
+		}
+	}
+}
+
+// checkMathMLContentOnly detects Content MathML elements used directly
+// inside <math> (not inside <semantics>/<annotation-xml>) (RSC-005).
+func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
+	mathNS := "http://www.w3.org/1998/Math/MathML"
+	contentMathMLElements := map[string]bool{
+		"apply": true, "cn": true, "ci": true, "csymbol": true,
+		"cerror": true, "cbytes": true, "cs": true, "share": true,
+		"piecewise": true, "bind": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	mathDepth := 0  // depth inside a math element
+	inMath := false
+	reported := map[string]bool{}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			isMathNS := t.Name.Space == mathNS
+			if t.Name.Local == "math" {
+				inMath = true
+				mathDepth = 0
+				reported = map[string]bool{}
+			} else if inMath {
+				mathDepth++
+			}
+			// Only check direct children of math (mathDepth == 1)
+			if inMath && mathDepth == 1 && isMathNS && contentMathMLElements[t.Name.Local] && !reported[t.Name.Local] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+					location)
+				reported[t.Name.Local] = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "math" {
+				inMath = false
+				mathDepth = 0
+			} else if inMath {
+				mathDepth--
+			}
+		}
+	}
+}
+
+// checkMathMLAnnotation validates MathML annotation-xml attributes (RSC-005).
+func checkMathMLAnnotation(data []byte, location string, r *report.Report) {
+	mathNS := "http://www.w3.org/1998/Math/MathML"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "annotation-xml" {
+			continue
+		}
+		if se.Name.Space != mathNS {
+			continue
+		}
+		encoding := ""
+		name := ""
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "encoding" {
+				encoding = attr.Value
+			}
+			if attr.Name.Local == "name" {
+				name = attr.Value
+			}
+		}
+		encLower := strings.ToLower(encoding)
+		if encLower == "mathml-content" {
+			if name == "" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "annotation-xml" missing required attribute "name"`,
+					location)
+			} else if name != "contentequiv" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`value of attribute "name" is invalid`,
+					location)
+			}
+		}
+		if encLower == "application/xml+xhtml" {
+			r.AddWithLocation(report.Error, "RSC-005",
+				`value of attribute "encoding" is invalid; must be equal to "application/xhtml+xml"`,
+				location)
+		}
+	}
+}
+
+// checkHiddenAttrValue validates the hidden attribute value (RSC-005).
+func checkHiddenAttrValue(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "hidden" {
+				val := strings.ToLower(strings.TrimSpace(attr.Value))
+				if val != "" && val != "hidden" && val != "until-found" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`value of attribute "hidden" is invalid`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkDatetimeFormat validates datetime attribute values on <time> elements (RSC-005).
+func checkDatetimeFormat(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "time" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "datetime" {
+				val := strings.TrimSpace(attr.Value)
+				if val != "" && !isValidDatetime(val) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`value of attribute "datetime" is invalid`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// isValidDatetime checks if a string is a valid HTML datetime value.
+func isValidDatetime(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// ISO 8601 duration (PnDTnHnMnS or PnW)
+	if strings.HasPrefix(s, "P") {
+		return isValidDuration(s)
+	}
+	// Bare duration components: nW, nD, nH, nM, nS, n.nS (EPUBCheck accepts these)
+	// Also space-separated multi-unit: "123W 123H 32D 12S"
+	if isBareDuration(s) {
+		return true
+	}
+	if s == "Z" {
+		return true
+	}
+	// Timezone offset: +HH:MM or -HH:MM or +HHMM or -HHMM
+	if len(s) >= 5 && (s[0] == '+' || s[0] == '-') && len(s) <= 6 {
+		return regexp.MustCompile(`^[+-]\d{2}:?\d{2}$`).MatchString(s)
+	}
+	// Yearless date: --MM-DD
+	if regexp.MustCompile(`^--\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Month-day: MM-DD (without year)
+	if regexp.MustCompile(`^\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Year: YYYY
+	if regexp.MustCompile(`^\d{4}$`).MatchString(s) {
+		return true
+	}
+	// Year-month: YYYY-MM
+	if regexp.MustCompile(`^\d{4}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Date: YYYY-MM-DD
+	if regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Week: YYYY-Wnn
+	if regexp.MustCompile(`^\d{4}-W\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Time: HH:MM, HH:MM:SS, HH:MM:SS.sss
+	if regexp.MustCompile(`^\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$`).MatchString(s) {
+		return true
+	}
+	// Datetime: date T/space time [timezone]
+	datetimeRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?([Z]|[+-]\d{2}:?\d{2})?$`)
+	return datetimeRe.MatchString(s)
+}
+
+// isBareDuration checks if a string is a bare duration value like "123W", "32D", "12H", "1M", "12S"
+// or space-separated multi-unit "123W 123H 32D 12S".
+func isBareDuration(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	parts := strings.Fields(s)
+	for _, p := range parts {
+		if !regexp.MustCompile(`^\d+(\.\d+)?[WDHMS]$`).MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidDuration checks if a string is a valid ISO 8601 duration.
+func isValidDuration(s string) bool {
+	if !strings.HasPrefix(s, "P") || len(s) < 2 {
+		return false
+	}
+	s = s[1:]
+	if regexp.MustCompile(`^\d+W$`).MatchString(s) {
+		return true
+	}
+	parts := strings.SplitN(s, "T", 2)
+	datePart := parts[0]
+	if datePart != "" {
+		if !regexp.MustCompile(`^\d+D$`).MatchString(datePart) {
+			return false
+		}
+	}
+	if len(parts) == 2 {
+		timePart := parts[1]
+		if timePart == "" {
+			return false
+		}
+		if !regexp.MustCompile(`^(\d+H)?(\d+M)?(\d+(\.\d+)?S)?$`).MatchString(timePart) {
+			return false
+		}
+		if !strings.ContainsAny(timePart, "HMS") {
+			return false
+		}
+	}
+	return true
+}
+
+// checkURLConformance checks for non-conforming URLs and unparseable hosts (RSC-020).
+func checkURLConformance(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "href" || attr.Name.Local == "src" || attr.Name.Local == "poster" {
+				val := strings.TrimSpace(attr.Value)
+				if val == "" || strings.HasPrefix(val, "#") || strings.HasPrefix(val, "mailto:") {
+					continue
+				}
+				if !strings.Contains(val, "://") {
+					continue
+				}
+				parts := strings.SplitN(val, "://", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				hostPath := parts[1]
+				host := hostPath
+				if idx := strings.IndexAny(hostPath, "/?#"); idx >= 0 {
+					host = hostPath[:idx]
+				}
+				// Check for spaces or invalid characters in host
+				if strings.ContainsAny(host, " ,<>{}|\\^`") {
+					r.AddWithLocation(report.Error, "RSC-020",
+						fmt.Sprintf(`Invalid URL "%s"`, val),
+						location)
 				}
 			}
 		}
