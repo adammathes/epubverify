@@ -20,6 +20,9 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		return
 	}
 
+	// OPF-073: DOCTYPE external identifier checks (runs over all manifest items)
+	checkDOCTYPEExternalIdentifiers(ep, r)
+
 	// Build set of manifest-declared resources (resolved full paths).
 	manifestPaths := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -55,6 +58,22 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			continue
 		}
 		checkSVGPropertyDeclarations(ep, data, fullPath, item, r)
+		checkNoRemoteResources(ep, data, fullPath, item, r)
+
+		// HTM-048: FXL SVG spine items must have viewBox on root svg element
+		if spineItemIDs[item.ID] {
+			itemIsFXL := isFXL
+			if props, ok := spineProps[item.ID]; ok {
+				if hasProperty(props, "rendition:layout-reflowable") {
+					itemIsFXL = false
+				} else if hasProperty(props, "rendition:layout-pre-paginated") {
+					itemIsFXL = true
+				}
+			}
+			if itemIsFXL {
+				checkFXLSVGViewBox(data, fullPath, r)
+			}
+		}
 	}
 
 	for _, item := range ep.Package.Manifest {
@@ -142,8 +161,11 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		}
 
 		// RSC-003: fragment identifiers must resolve (skip nav - handled by NAV checks)
+		// Skip when external base URL is set (all relative hrefs become remote)
 		if !isNav {
-			checkFragmentIdentifiers(ep, data, fullPath, r)
+			if extBase, _ := detectExternalBaseURL(data); extBase == "" {
+				checkFragmentIdentifiers(ep, data, fullPath, r)
+			}
 		}
 
 		// RSC-004: no remote resources (img src with http://)
@@ -154,6 +176,8 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// Skip nav document - its links are checked by NAV-003/006/007
 		if !isNav {
 			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
+			// RSC-014: hyperlinks to SVG symbol elements are not allowed
+			checkSVGSymbolLinks(data, fullPath, r)
 		}
 
 		// HTM-016: unique IDs within content document
@@ -216,7 +240,20 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		if ep.Package.Version >= "3.0" && !isNav {
 			checkForeignResourceFallbacks(ep, data, fullPath, r)
 		}
+
+		// RSC-005: invalid HTML elements (elements not in valid HTML5 set)
+		if ep.Package.Version >= "3.0" {
+			checkInvalidHTMLElements(data, fullPath, r)
+			// RSC-005: Schematron-like checks (e.g., nested dfn)
+			checkNestedDFN(data, fullPath, r)
+		}
 	}
+}
+
+// sourceRef holds a buffered <source> element for deferred audio/video checking.
+type sourceRef struct {
+	href      string
+	mediaType string // from type attribute (may be empty)
 }
 
 // RSC-032: foreign resources (non-core media types) referenced from content
@@ -232,59 +269,122 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(location)
+	inPicture := false
+	// Track audio/video context: when non-empty, we're inside that element
+	// and buffer <source> elements to check as a group (HTML fallback mechanism)
+	mediaParent := "" // "audio" or "video" or ""
+	var bufferedSources []sourceRef
 
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
+
+		// Track end elements
+		if ee, ok := tok.(xml.EndElement); ok {
+			switch ee.Name.Local {
+			case "picture":
+				inPicture = false
+			case "audio", "video":
+				if mediaParent == ee.Name.Local {
+					// Process buffered sources: if any source resolves to a core type,
+					// that's the HTML fallback — foreign sources in the same element are OK.
+					checkAudioVideoSources(ep, bufferedSources, itemDir, location, manifestByHref, r)
+					mediaParent = ""
+					bufferedSources = nil
+				}
+			}
+			continue
+		}
+
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
 		}
 
 		switch se.Name.Local {
+		case "picture":
+			inPicture = true
 		case "img":
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "img", r)
+			if inPicture {
+				// MED-003: img inside picture must reference core media types
+				checkPictureImgRef(ep, se, itemDir, location, manifestByHref, r)
+			} else {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" {
+						checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "img", r)
+					}
 				}
 			}
-		case "audio":
+		case "audio", "video":
+			mediaParent = se.Name.Local
+			bufferedSources = nil
+			// Check direct src attribute (not the <source> fallback mechanism)
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "audio", r)
+					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, se.Name.Local, r)
 				}
-			}
-		case "video":
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "video", r)
-				}
-				if attr.Name.Local == "poster" {
+				if se.Name.Local == "video" && attr.Name.Local == "poster" {
 					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "poster", r)
 				}
 			}
 		case "source":
-			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "source", r)
+			if inPicture {
+				// MED-007: source in picture without type attr for foreign resource
+				checkPictureSourceRef(ep, se, itemDir, location, manifestByHref, r)
+			} else if mediaParent != "" {
+				// Buffer for deferred audio/video HTML fallback check
+				var href, typeAttr string
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" {
+						href = attr.Value
+					}
+					if attr.Name.Local == "type" {
+						typeAttr = attr.Value
+					}
+				}
+				if href != "" {
+					bufferedSources = append(bufferedSources, sourceRef{href: href, mediaType: typeAttr})
+				}
+			} else {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "src" {
+						checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "source", r)
+					}
 				}
 			}
 		case "embed":
+			var embedSrc, embedType string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "embed", r)
+					embedSrc = attr.Value
+				}
+				if attr.Name.Local == "type" {
+					embedType = attr.Value
+				}
+			}
+			if embedSrc != "" {
+				if !checkTypeMismatch(embedSrc, embedType, itemDir, location, manifestByHref, r) {
+					checkForeignRef(ep, embedSrc, itemDir, location, manifestByHref, "embed", r)
 				}
 			}
 		case "object":
+			var objectData, objectType string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "data" {
-					checkForeignRef(ep, attr.Value, itemDir, location, manifestByHref, "object", r)
+					objectData = attr.Value
+				}
+				if attr.Name.Local == "type" {
+					objectType = attr.Value
+				}
+			}
+			if objectData != "" {
+				if !checkTypeMismatch(objectData, objectType, itemDir, location, manifestByHref, r) {
+					checkForeignRef(ep, objectData, itemDir, location, manifestByHref, "object", r)
 				}
 			}
 		case "input":
-			// <input type="image" src="..."> uses image
 			var inputType, src string
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "type" {
@@ -305,6 +405,215 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 			}
 		}
 	}
+}
+
+// checkAudioVideoSources processes buffered <source> elements from an <audio> or <video>.
+// If any source resolves to a core media type, foreign sources are OK (HTML fallback).
+// Otherwise RSC-032 fires for each foreign source with no manifest fallback.
+func checkAudioVideoSources(ep *epub.EPUB, sources []sourceRef, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	if len(sources) == 0 {
+		return
+	}
+
+	// Check if any source is a core media type (HTML fallback present)
+	hasCoreSource := false
+	for _, src := range sources {
+		if src.href == "" || isRemoteURL(src.href) {
+			continue
+		}
+		// Check via type attribute first
+		if src.mediaType != "" {
+			mt := src.mediaType
+			if idx := strings.Index(mt, ";"); idx >= 0 {
+				mt = strings.TrimSpace(mt[:idx])
+			}
+			if coreMediaTypes[mt] {
+				hasCoreSource = true
+				break
+			}
+		}
+		// Check via manifest
+		u, err := url.Parse(src.href)
+		if err != nil {
+			continue
+		}
+		target := resolvePath(itemDir, u.Path)
+		item, ok := manifestByHref[target]
+		if !ok {
+			continue
+		}
+		mt := item.MediaType
+		if idx := strings.Index(mt, ";"); idx >= 0 {
+			mt = strings.TrimSpace(mt[:idx])
+		}
+		if coreMediaTypes[mt] {
+			hasCoreSource = true
+			break
+		}
+	}
+
+	if hasCoreSource {
+		return // HTML fallback mechanism satisfied
+	}
+
+	// No core source — check each foreign source individually
+	for _, src := range sources {
+		checkForeignRef(ep, src.href, itemDir, location, manifestByHref, "source", r)
+	}
+}
+
+
+// checkPictureImgRef checks img src/srcset inside <picture> — must be core types (MED-003).
+// Reports once per unique foreign resource (deduplicates src vs srcset references).
+func checkPictureImgRef(ep *epub.EPUB, se xml.StartElement, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	reported := make(map[string]bool)
+	for _, attr := range se.Attr {
+		switch attr.Name.Local {
+		case "src":
+			if !reported[attr.Value] {
+				reported[attr.Value] = true
+				checkPictureForeignRef(ep, attr.Value, itemDir, location, manifestByHref, r)
+			}
+		case "srcset":
+			// Parse srcset: "url [descriptor], url [descriptor], ..."
+			for _, entry := range strings.Split(attr.Value, ",") {
+				parts := strings.Fields(strings.TrimSpace(entry))
+				if len(parts) > 0 && parts[0] != "" {
+					if !reported[parts[0]] {
+						reported[parts[0]] = true
+						checkPictureForeignRef(ep, parts[0], itemDir, location, manifestByHref, r)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkPictureSourceRef checks source elements inside <picture>.
+// OPF-013 if type attr doesn't match manifest media-type.
+// MED-007 if no type attr for foreign resource.
+func checkPictureSourceRef(ep *epub.EPUB, se xml.StartElement, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	var typeAttr, srcset string
+	for _, attr := range se.Attr {
+		if attr.Name.Local == "type" {
+			typeAttr = attr.Value
+		}
+		if attr.Name.Local == "srcset" {
+			srcset = attr.Value
+		}
+	}
+	if srcset == "" {
+		return
+	}
+	// Get the first URL from srcset for type mismatch check
+	firstHref := ""
+	for _, entry := range strings.Split(srcset, ",") {
+		parts := strings.Fields(strings.TrimSpace(entry))
+		if len(parts) > 0 && parts[0] != "" {
+			firstHref = parts[0]
+			break
+		}
+	}
+	// OPF-013: type attribute doesn't match manifest media-type
+	if typeAttr != "" && firstHref != "" {
+		if checkTypeMismatch(firstHref, typeAttr, itemDir, location, manifestByHref, r) {
+			return
+		}
+		return // type matches or no manifest entry — skip MED-007
+	}
+	// No type attribute: check if any srcset URL references a foreign resource → MED-007
+	// No type attribute: check if any srcset URL references a foreign resource
+	for _, entry := range strings.Split(srcset, ",") {
+		parts := strings.Fields(strings.TrimSpace(entry))
+		if len(parts) == 0 || parts[0] == "" {
+			continue
+		}
+		href := parts[0]
+		if isRemoteURL(href) {
+			continue
+		}
+		u, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		target := resolvePath(itemDir, u.Path)
+		item, ok := manifestByHref[target]
+		if !ok {
+			continue
+		}
+		mt := item.MediaType
+		if idx := strings.Index(mt, ";"); idx >= 0 {
+			mt = strings.TrimSpace(mt[:idx])
+		}
+		if !coreMediaTypes[mt] {
+			r.AddWithLocation(report.Error, "MED-007",
+				fmt.Sprintf("The `source` element references a foreign resource '%s' but does not declare its media type in a 'type' attribute", href),
+				location)
+			return // Report once per source element
+		}
+	}
+}
+
+// checkPictureForeignRef checks a reference inside <picture><img> — foreign types → MED-003.
+func checkPictureForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	if href == "" || isRemoteURL(href) {
+		return
+	}
+	u, err := url.Parse(href)
+	if err != nil {
+		return
+	}
+	refPath := u.Path
+	if refPath == "" {
+		return
+	}
+	target := resolvePath(itemDir, refPath)
+	item, ok := manifestByHref[target]
+	if !ok {
+		return
+	}
+	mt := item.MediaType
+	if idx := strings.Index(mt, ";"); idx >= 0 {
+		mt = strings.TrimSpace(mt[:idx])
+	}
+	if coreMediaTypes[mt] {
+		return
+	}
+	r.AddWithLocation(report.Error, "MED-003",
+		fmt.Sprintf("The `picture` element's `img` fallback references a foreign resource '%s' of type '%s'", href, item.MediaType),
+		location)
+}
+
+// checkTypeMismatch checks if the element's type attribute matches the manifest media-type.
+// If they don't match, OPF-013 is emitted and true is returned (caller should skip RSC-032).
+func checkTypeMismatch(href, typeAttr, itemDir, location string, manifestByHref map[string]epub.ManifestItem, r *report.Report) bool {
+	if typeAttr == "" || href == "" || isRemoteURL(href) {
+		return false
+	}
+	u, err := url.Parse(href)
+	if err != nil || u.Path == "" {
+		return false
+	}
+	target := resolvePath(itemDir, u.Path)
+	item, ok := manifestByHref[target]
+	if !ok {
+		return false
+	}
+	manifestMT := item.MediaType
+	if idx := strings.Index(manifestMT, ";"); idx >= 0 {
+		manifestMT = strings.TrimSpace(manifestMT[:idx])
+	}
+	declaredMT := typeAttr
+	if idx := strings.Index(declaredMT, ";"); idx >= 0 {
+		declaredMT = strings.TrimSpace(declaredMT[:idx])
+	}
+	if !strings.EqualFold(manifestMT, declaredMT) {
+		r.AddWithLocation(report.Warning, "OPF-013",
+			fmt.Sprintf("'type' attribute value '%s' does not match the resource's manifest media type '%s'", typeAttr, item.MediaType),
+			location)
+		return true
+	}
+	return false
 }
 
 func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHref map[string]epub.ManifestItem, context string, r *report.Report) {
@@ -357,11 +666,7 @@ func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHr
 	if strings.HasPrefix(mt, "video/") && (context == "video" || context == "source" || context == "img" || context == "object") {
 		return // Video foreign types are exempt in video/source/img/object context
 	}
-	if strings.HasPrefix(mt, "audio/") && context == "source" {
-		// Audio in <source> elements: check if there's another <source> sibling with a core type
-		// For now, allow all audio sources - RSC-032 should fire on <audio src> not <source>
-		return
-	}
+	// Note: audio in <source> is NOT exempt - non-core audio types still need fallbacks
 
 	// Check for manifest fallback
 	if item.Fallback != "" {
@@ -718,11 +1023,14 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 }
 
 // hasRemoteURLInCSS checks if CSS content contains any remote URL references
-// (excluding @namespace declarations which use url() for namespace URIs)
+// (excluding @namespace and @import declarations which are handled separately)
 func hasRemoteURLInCSS(css string) bool {
-	// Remove @namespace lines first as they use url() for identifiers, not resources
+	// Remove @namespace lines (use url() for identifiers, not resources)
 	namespaceRe := regexp.MustCompile(`(?m)@namespace\s+[^\n;]+;`)
 	cleaned := namespaceRe.ReplaceAllString(css, "")
+	// Remove @import lines (remote @import is handled by RSC-006, not remote-resources)
+	importRe := regexp.MustCompile(`(?m)@import\s+[^\n;]+;`)
+	cleaned = importRe.ReplaceAllString(cleaned, "")
 	urlRe := regexp.MustCompile(`url\(['"]?(https?://[^'"\)\s]+)['"]?\)`)
 	return urlRe.MatchString(cleaned)
 }
@@ -743,12 +1051,18 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 	content := string(data)
 	hasRemote := false
 
-	// Check for remote URLs in SVG (href, xlink:href attributes and url() in style)
+	// Strip XML processing instructions — their remote hrefs are disallowed (RSC-006)
+	// and should not trigger the remote-resources property requirement (OPF-014).
+	piRe := regexp.MustCompile(`<\?[^?]*\?>`)
+	stripped := piRe.ReplaceAllString(content, "")
+
+	// Check for remote URLs in SVG element attributes (href, xlink:href)
 	remoteRe := regexp.MustCompile(`(?:href|xlink:href)\s*=\s*["'](https?://[^"']+)["']`)
-	if remoteRe.MatchString(content) {
+	if remoteRe.MatchString(stripped) {
 		hasRemote = true
 	}
-	if hasRemoteURLInCSS(content) {
+	// hasRemoteURLInCSS already strips @import (which fire RSC-006, not OPF-014)
+	if hasRemoteURLInCSS(stripped) {
 		hasRemote = true
 	}
 
@@ -759,7 +1073,68 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 	}
 }
 
-// HTM-013/HTM-014: Fixed-layout viewport checks
+// checkFXLSVGViewBox checks that a fixed-layout SVG content document has a viewBox
+// attribute on the root svg element. HTM-048.
+func checkFXLSVGViewBox(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "svg" {
+			hasViewBox := false
+			for _, attr := range se.Attr {
+				if strings.EqualFold(attr.Name.Local, "viewBox") {
+					hasViewBox = true
+					break
+				}
+			}
+			if !hasViewBox {
+				r.AddWithLocation(report.Error, "HTM-048",
+					"Fixed-layout SVG documents must declare a 'viewBox' attribute on the root 'svg' element",
+					location)
+			}
+			return // Only check root svg
+		}
+	}
+}
+
+// viewportDim represents a parsed key=value pair from a viewport meta content.
+type viewportDim struct {
+	key   string
+	value string
+	hasEq bool // true if '=' was present in the source
+}
+
+// viewportUnits matches a trailing CSS unit or % on a dimension value.
+var viewportUnitRe = regexp.MustCompile(`(?i)(px|em|ex|rem|%|vw|vh|pt|pc|cm|mm|in)$`)
+
+// parseViewportDims splits a viewport content string into key[=value] pairs.
+func parseViewportDims(content string) []viewportDim {
+	var dims []viewportDim
+	for _, part := range strings.Split(content, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		idx := strings.IndexByte(part, '=')
+		if idx < 0 {
+			dims = append(dims, viewportDim{key: strings.ToLower(strings.TrimSpace(part))})
+		} else {
+			key := strings.ToLower(strings.TrimSpace(part[:idx]))
+			val := part[idx+1:] // keep original spacing for whitespace-only detection
+			dims = append(dims, viewportDim{key: key, value: val, hasEq: true})
+		}
+	}
+	return dims
+}
+
+// HTM-046/047/056/057/059: Fixed-layout XHTML viewport checks
 func checkFXLViewport(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	hasViewport := false
@@ -798,27 +1173,72 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 	}
 
 	if !hasViewport {
-		r.AddWithLocation(report.Error, "HTM-013",
+		r.AddWithLocation(report.Error, "HTM-046",
 			"Fixed-layout content document has no viewport meta element",
 			location)
 		return
 	}
 
-	// HTM-014: viewport must have width and height
+	dims := parseViewportDims(viewportContent)
+
+	// HTM-047: key= with empty or all-whitespace value (syntax invalid)
+	for _, d := range dims {
+		if d.hasEq && strings.TrimSpace(d.value) == "" {
+			r.AddWithLocation(report.Error, "HTM-047",
+				fmt.Sprintf("The viewport meta element has an invalid value for dimension '%s'", d.key),
+				location)
+			return
+		}
+	}
+
+	// HTM-059: duplicate width or height keys
+	seen := make(map[string]int)
+	for _, d := range dims {
+		if d.key == "width" || d.key == "height" {
+			seen[d.key]++
+		}
+	}
+	for _, key := range []string{"width", "height"} {
+		if seen[key] > 1 {
+			r.AddWithLocation(report.Error, "HTM-059",
+				fmt.Sprintf("The viewport meta element declares '%s' more than once", key),
+				location)
+		}
+	}
+	if seen["width"] > 1 || seen["height"] > 1 {
+		return
+	}
+
+	// HTM-057: dimension present but value has units or no value (key without =)
+	for _, d := range dims {
+		if d.key != "width" && d.key != "height" {
+			continue
+		}
+		val := strings.TrimSpace(d.value)
+		if !d.hasEq || val == "" {
+			// key with no = at all (empty value treated as HTM-057)
+			r.AddWithLocation(report.Error, "HTM-057",
+				fmt.Sprintf("The value of viewport dimension '%s' must be a number without units", d.key),
+				location)
+		} else if viewportUnitRe.MatchString(val) {
+			r.AddWithLocation(report.Error, "HTM-057",
+				fmt.Sprintf("The value of viewport dimension '%s' must be a number without units", d.key),
+				location)
+		}
+	}
+
+	// HTM-056: missing width or height
 	hasWidth := false
 	hasHeight := false
-	viewportRe := regexp.MustCompile(`(?i)(width|height)\s*=\s*[\w.-]+`)
-	matches := viewportRe.FindAllStringSubmatch(viewportContent, -1)
-	for _, m := range matches {
-		switch strings.ToLower(m[1]) {
-		case "width":
+	for _, d := range dims {
+		if d.key == "width" {
 			hasWidth = true
-		case "height":
+		} else if d.key == "height" {
 			hasHeight = true
 		}
 	}
 	if !hasWidth || !hasHeight {
-		r.AddWithLocation(report.Error, "HTM-014",
+		r.AddWithLocation(report.Error, "HTM-056",
 			"Viewport metadata must specify both width and height dimensions",
 			location)
 	}
@@ -879,7 +1299,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 	if refPath == "" {
 		// Self-reference fragment
 		if !localIDs[fragment] {
-			r.AddWithLocation(report.Error, "RSC-003",
+			r.AddWithLocation(report.Error, "RSC-012",
 				fmt.Sprintf("Fragment identifier is not defined: '#%s'", fragment),
 				location)
 		}
@@ -895,7 +1315,7 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 
 	targetIDs := collectIDs(targetData)
 	if !targetIDs[fragment] {
-		r.AddWithLocation(report.Error, "RSC-003",
+		r.AddWithLocation(report.Error, "RSC-012",
 			fmt.Sprintf("Fragment identifier is not defined: '%s#%s'", refPath, fragment),
 			location)
 	}
@@ -926,13 +1346,42 @@ func collectIDs(data []byte) map[string]bool {
 // - Remote fonts (in CSS/SVG) are ALLOWED
 // - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
 func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
+	// Build map of remote manifest URLs for RSC-008 checks.
+	remoteManifestURLs := make(map[string]bool)
+	if ep.Package != nil {
+		for _, mItem := range ep.Package.Manifest {
+			if isRemoteURL(mItem.Href) {
+				remoteManifestURLs[mItem.Href] = true
+			}
+		}
+	}
+
+	// Detect external base URL (from <base href="..."> or xml:base="...") for RSC-006
+	_, isHTMLBase := detectExternalBaseURL(data)
+
 	decoder := xml.NewDecoder(bytes.NewReader(data))
+	// Match href="..." in processing instruction data
+	piHrefRe := regexp.MustCompile(`href\s*=\s*["']([^"']+)["']`)
 
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
+
+		// RSC-006: Remote stylesheet in SVG <?xml-stylesheet href="...">
+		if pi, ok := tok.(xml.ProcInst); ok {
+			if pi.Target == "xml-stylesheet" {
+				m := piHrefRe.FindSubmatch(pi.Inst)
+				if m != nil && isRemoteURL(string(m[1])) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", string(m[1])),
+						location)
+				}
+			}
+			continue
+		}
+
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
@@ -993,8 +1442,25 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// Remote audio/video resources are ALLOWED in EPUB 3 but need remote-resources property.
-		// The property check is handled by checkPropertyDeclarations; nothing more needed here.
+		// Remote audio/video resources are ALLOWED in EPUB 3 if declared in manifest.
+		// RSC-008: remote audio/video not declared in manifest.
+		// RSC-031: warn when using http:// instead of https:// for remote resources.
+		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" {
+					if isNonHTTPSRemote(attr.Value) {
+						r.AddWithLocation(report.Warning, "RSC-031",
+							fmt.Sprintf("Remote resource uses insecure 'http' scheme: '%s'", attr.Value),
+							location)
+					}
+					if isRemoteURL(attr.Value) && !remoteManifestURLs[attr.Value] {
+						r.AddWithLocation(report.Error, "RSC-008",
+							fmt.Sprintf("Remote resource '%s' is not declared in the package document", attr.Value),
+							location)
+					}
+				}
+			}
+		}
 
 		// RSC-006: Remote stylesheet references are not allowed
 		if se.Name.Local == "link" {
@@ -1007,10 +1473,103 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 					rel = attr.Value
 				}
 			}
-			if rel == "stylesheet" && isRemoteURL(href) {
-				r.AddWithLocation(report.Error, "RSC-006",
-					fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
-					location)
+			if rel == "stylesheet" {
+				if isRemoteURL(href) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
+						location)
+				} else if href != "" && isHTMLBase {
+					// RSC-006: relative stylesheet becomes remote via HTML <base> element
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
+						location)
+				}
+			}
+		}
+
+		// RSC-015: SVG <use> element must reference a document fragment
+		if se.Name.Local == "use" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if href != "" && !strings.Contains(href, "#") && !isRemoteURL(href) {
+						r.AddWithLocation(report.Error, "RSC-015",
+							fmt.Sprintf("SVG 'use' element must reference a fragment identifier: '%s'", href),
+							location)
+					}
+				}
+			}
+		}
+
+		// RSC-006: Remote stylesheet in SVG inline <style> @import
+		if se.Name.Local == "style" {
+			inner, _ := decoder.Token()
+			if cd, ok2 := inner.(xml.CharData); ok2 {
+				css := string(cd)
+				importRe := regexp.MustCompile(`@import\s+(?:url\(['"]?|['"])([^'")\s]+)`)
+				for _, m := range importRe.FindAllStringSubmatch(css, -1) {
+					if isRemoteURL(m[1]) {
+						r.AddWithLocation(report.Error, "RSC-006",
+							fmt.Sprintf("Remote resource reference is not allowed: '%s'", m[1]),
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkSVGSymbolLinks checks for hyperlinks to SVG symbol elements.
+// RSC-014: linking to a symbol is an incompatible resource type.
+func checkSVGSymbolLinks(data []byte, location string, r *report.Report) {
+	// First pass: collect all symbol element IDs
+	symbolIDs := make(map[string]bool)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "symbol" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "id" && attr.Value != "" {
+					symbolIDs[attr.Value] = true
+				}
+			}
+		}
+	}
+	if len(symbolIDs) == 0 {
+		return
+	}
+
+	// Second pass: check <a href="#id"> against symbol IDs
+	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "a" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if strings.HasPrefix(href, "#") {
+						frag := href[1:]
+						if symbolIDs[frag] {
+							r.AddWithLocation(report.Error, "RSC-014",
+								fmt.Sprintf("Hyperlink to SVG 'symbol' element is not allowed: '%s'", href),
+								location)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1020,10 +1579,38 @@ func isRemoteURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
+func isFileURL(s string) bool {
+	return strings.HasPrefix(s, "file://") || strings.HasPrefix(s, "file:/")
+}
+
+func isNonHTTPSRemote(s string) bool {
+	return strings.HasPrefix(s, "http://")
+}
+
 // checkContentReferences finds href/src attributes in XHTML and validates them.
 func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref string, manifestPaths map[string]bool, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
+
+	// Detect external base URL for RSC-006 (relative paths become remote)
+	externalBase, _ := detectExternalBaseURL(data)
+
+	// Build map of remote manifest URLs (http/https hrefs) for RSC-006 checks on <a> links.
+	remoteManifestItems := make(map[string]epub.ManifestItem)
+	// Build manifest path → media type map for RSC-011
+	manifestByPath := make(map[string]epub.ManifestItem)
+	if ep.Package != nil {
+		for _, mItem := range ep.Package.Manifest {
+			if isRemoteURL(mItem.Href) {
+				remoteManifestItems[mItem.Href] = mItem
+			}
+			if mItem.Href != "\x00MISSING" {
+				manifestByPath[ep.ResolveHref(mItem.Href)] = mItem
+			}
+		}
+	}
+	// Build spine set for RSC-011: content doc hyperlinks must point to spine docs
+	spinePathSet := buildSpinePathSet(ep)
 
 	for {
 		tok, err := decoder.Token()
@@ -1036,25 +1623,88 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			continue
 		}
 
-		// Check <a href="..."> for internal links
+		// Check <a href="..."> for internal links and remote image references
 		if se.Name.Local == "a" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "href" {
-					checkHyperlink(ep, attr.Value, itemDir, fullPath, r)
+					// RSC-006: <a> linking to a remote image is not allowed
+					if isRemoteURL(attr.Value) {
+						if mItem, ok2 := remoteManifestItems[attr.Value]; ok2 {
+							if strings.HasPrefix(mItem.MediaType, "image/") {
+								r.AddWithLocation(report.Error, "RSC-006",
+									fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+									fullPath)
+							}
+						}
+					} else if externalBase != "" {
+						// RSC-006: relative href becomes remote via external base URL
+						u, err := url.Parse(attr.Value)
+						if err == nil && u.Scheme == "" && u.Path != "" {
+							r.AddWithLocation(report.Error, "RSC-006",
+								fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+								fullPath)
+						}
+						// Skip checkHyperlink since local lookup would give wrong RSC-007
+					} else {
+						// RSC-011: hyperlinks to XHTML/SVG docs must point to spine items
+						u, err := url.Parse(attr.Value)
+						if err == nil && u.Scheme == "" && u.Path != "" {
+							target := resolvePath(itemDir, u.Path)
+							if mItem, ok2 := manifestByPath[target]; ok2 {
+								isContentDoc := mItem.MediaType == "application/xhtml+xml" || mItem.MediaType == "image/svg+xml"
+								if isContentDoc && !spinePathSet[target] {
+									r.AddWithLocation(report.Error, "RSC-011",
+										fmt.Sprintf("Content document '%s' is hyperlinked but not listed in the spine", attr.Value),
+										fullPath)
+								}
+							}
+						}
+						checkHyperlink(ep, attr.Value, itemDir, fullPath, r)
+					}
 				}
 			}
 		}
 
-		// Check <img src="..."> for image references
+		// Check <img src="..."> and <img srcset="..."> for image references
 		if se.Name.Local == "img" {
 			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" {
+				switch attr.Name.Local {
+				case "src":
+					// RSC-009: fragment identifier on non-SVG image reference
+					if idx := strings.Index(attr.Value, "#"); idx >= 0 {
+						base := attr.Value[:idx]
+						if !strings.HasSuffix(strings.ToLower(base), ".svg") {
+							r.AddWithLocation(report.Warning, "RSC-009",
+								fmt.Sprintf("Fragment identifier not allowed on non-SVG image reference: '%s'", attr.Value),
+								fullPath)
+						}
+					}
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				case "srcset":
+					// RSC-008: srcset resources must be declared in the manifest
+					checkSrcsetRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
 				}
 			}
 		}
 
-		// RSC-007: Check <iframe src="...">, <embed src="...">, <object data="...">
+		// RSC-009: SVG <image> with fragment on non-SVG resource
+		if se.Name.Local == "image" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if idx := strings.Index(href, "#"); idx >= 0 {
+						base := href[:idx]
+						if !strings.HasSuffix(strings.ToLower(base), ".svg") {
+							r.AddWithLocation(report.Warning, "RSC-009",
+								fmt.Sprintf("Fragment identifier not allowed on non-SVG image reference: '%s'", href),
+								fullPath)
+						}
+					}
+				}
+			}
+		}
+
+		// RSC-007: MathML altimg not found; <iframe src="...">, <embed src="...">, <object data="...">
 		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
@@ -1065,6 +1715,15 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 		if se.Name.Local == "object" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "data" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: MathML <math altimg="..."> must reference an existing resource
+		if se.Name.Local == "math" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "altimg" && attr.Value != "" {
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
 				}
 			}
@@ -1084,6 +1743,35 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "cite" {
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: Check <link rel="stylesheet" href="..."> for missing stylesheets
+		if se.Name.Local == "link" {
+			rel := ""
+			href := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "rel" {
+					rel = attr.Value
+				}
+				if attr.Name.Local == "href" {
+					href = attr.Value
+				}
+			}
+			if strings.Contains(strings.ToLower(rel), "stylesheet") && href != "" && !isRemoteURL(href) {
+				// RSC-013: stylesheet URLs must not contain fragment identifiers
+				if u, err := url.Parse(href); err == nil && u.Fragment != "" {
+					r.AddWithLocation(report.Error, "RSC-013",
+						fmt.Sprintf("Fragment identifier is not allowed in stylesheet URL: '%s'", href),
+						fullPath)
+				} else {
+					target := resolvePath(itemDir, href)
+					if _, exists := ep.Files[target]; !exists {
+						r.AddWithLocation(report.Error, "RSC-007",
+							fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+							fullPath)
+					}
 				}
 			}
 		}
@@ -1118,8 +1806,8 @@ func checkHyperlink(ep *epub.EPUB, href, itemDir, location string, r *report.Rep
 
 	target := resolvePath(itemDir, refPath)
 	if _, exists := ep.Files[target]; !exists {
-		r.AddWithLocation(report.Error, "HTM-008",
-			fmt.Sprintf("Hyperlink reference '%s' (%s) was not found in the container", refPath, target),
+		r.AddWithLocation(report.Error, "RSC-007",
+			fmt.Sprintf("Referenced resource '%s' could not be found in the container", refPath),
 			location)
 	}
 }
@@ -1162,6 +1850,41 @@ func checkResourceRef(ep *epub.EPUB, src, itemDir, location string, manifestPath
 		r.AddWithLocation(report.Error, "RSC-006",
 			fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", src),
 			location)
+	}
+}
+
+// checkSrcsetRef checks each URL in a srcset attribute.
+// RSC-007: resource not found in container.
+// RSC-008: resource in container but not declared in manifest.
+func checkSrcsetRef(ep *epub.EPUB, srcset, itemDir, location string, manifestPaths map[string]bool, r *report.Report) {
+	reported := make(map[string]bool)
+	for _, entry := range strings.Split(srcset, ",") {
+		parts := strings.Fields(strings.TrimSpace(entry))
+		if len(parts) == 0 || parts[0] == "" {
+			continue
+		}
+		href := parts[0]
+		if reported[href] || isRemoteURL(href) {
+			continue
+		}
+		reported[href] = true
+		u, err := url.Parse(href)
+		if err != nil || u.Path == "" {
+			continue
+		}
+		target := resolvePath(itemDir, u.Path)
+		if manifestPaths[target] {
+			continue // declared in manifest — OK
+		}
+		if _, exists := ep.Files[target]; !exists {
+			r.AddWithLocation(report.Error, "RSC-007",
+				fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
+				location)
+		} else {
+			r.AddWithLocation(report.Error, "RSC-008",
+				fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", href),
+				location)
+		}
 	}
 }
 
@@ -1337,6 +2060,45 @@ func checkNoBaseElement(data []byte, location string, r *report.Report) {
 			}
 		}
 	}
+}
+
+// detectExternalBaseURL scans an XHTML document for an external base URL set via
+// <base href="http://..."> or xml:base="http://..." on the root element.
+// Returns (baseURL, isHTMLBase) where isHTMLBase is true if found via <base> element.
+// Returns ("", false) if no external base URL is set.
+func detectExternalBaseURL(data []byte) (string, bool) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	first := true
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		// Check for xml:base on the first element (root element)
+		if first {
+			first = false
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "base" && attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+					if isRemoteURL(attr.Value) {
+						return attr.Value, false // xml:base
+					}
+				}
+			}
+		}
+		// Check for <base href="..."> element
+		if se.Name.Local == "base" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" && isRemoteURL(attr.Value) {
+					return attr.Value, true // HTML <base> element
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // HTM-010: EPUB 3 content documents must use HTML5 DOCTYPE or no DOCTYPE.
@@ -1608,8 +2370,8 @@ func checkLangXMLLangMatch(data []byte, location string, r *report.Report) {
 			}
 		}
 		if hasLang && hasXMLLang && !strings.EqualFold(lang, xmlLang) {
-			r.AddWithLocation(report.Error, "HTM-026",
-				fmt.Sprintf("Attributes lang and xml:lang must have the same value when both are present, but found '%s' and '%s'", lang, xmlLang),
+			r.AddWithLocation(report.Error, "RSC-005",
+				fmt.Sprintf("lang and xml:lang attributes must have the same value when both are present, but found '%s' and '%s'", lang, xmlLang),
 				location)
 			return
 		}
@@ -1806,6 +2568,281 @@ func checkNoRDFElements(data []byte, location string, r *report.Report) {
 					"RDF metadata elements should not be used in EPUB content documents",
 					location)
 				return
+			}
+		}
+	}
+}
+
+// OPF-073: DOCTYPE external identifier checks.
+// Allowed (publicID, systemID) pairs and the media types they are valid for:
+//   - NCX: "-//NISO//DTD ncx 2005-1//EN" + "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd" → application/x-dtbncx+xml
+//   - SVG: "-//W3C//DTD SVG 1.1//EN" + "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" → image/svg+xml
+//   - MathML: "-//W3C//DTD MathML 3.0//EN" + "http://www.w3.org/Math/DTD/mathml3/mathml3.dtd" → application/mathml+xml and variants
+
+type allowedExternalID struct {
+	publicID    string
+	systemID    string
+	mediaTypes  []string
+}
+
+var allowedExternalIDs = []allowedExternalID{
+	{
+		publicID:   "-//NISO//DTD ncx 2005-1//EN",
+		systemID:   "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd",
+		mediaTypes: []string{"application/x-dtbncx+xml"},
+	},
+	{
+		publicID:   "-//W3C//DTD SVG 1.1//EN",
+		systemID:   "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd",
+		mediaTypes: []string{"image/svg+xml"},
+	},
+	{
+		publicID:   "-//W3C//DTD MathML 3.0//EN",
+		systemID:   "http://www.w3.org/Math/DTD/mathml3/mathml3.dtd",
+		mediaTypes: []string{"application/mathml+xml", "application/mathml-presentation+xml", "application/mathml-content+xml"},
+	},
+}
+
+// extractDOCTYPEIdentifiers parses a DOCTYPE directive string and returns the public and system IDs.
+// Input is the content of <!...> without the brackets, e.g. `DOCTYPE ncx PUBLIC "..." "..."`.
+func extractDOCTYPEIdentifiers(directive string) (publicID, systemID string) {
+	// Quick check: must be a DOCTYPE directive
+	upper := strings.ToUpper(strings.TrimSpace(directive))
+	if !strings.HasPrefix(upper, "DOCTYPE") {
+		return
+	}
+
+	// Extract quoted strings
+	var quoted []string
+	rest := directive
+	for {
+		q := -1
+		for i, c := range rest {
+			if c == '"' || c == '\'' {
+				q = i
+				break
+			}
+		}
+		if q < 0 {
+			break
+		}
+		delim := rest[q]
+		end := strings.IndexByte(rest[q+1:], delim)
+		if end < 0 {
+			break
+		}
+		quoted = append(quoted, rest[q+1:q+1+end])
+		rest = rest[q+1+end+1:]
+	}
+
+	if len(quoted) == 0 {
+		return
+	}
+
+	// Check if PUBLIC or SYSTEM keyword is present
+	upperDirective := strings.ToUpper(directive)
+	if strings.Contains(upperDirective, "PUBLIC") {
+		if len(quoted) >= 1 {
+			publicID = quoted[0]
+		}
+		if len(quoted) >= 2 {
+			systemID = quoted[1]
+		}
+	} else if strings.Contains(upperDirective, "SYSTEM") {
+		if len(quoted) >= 1 {
+			systemID = quoted[0]
+		}
+	}
+	return
+}
+
+func checkDOCTYPEExternalIdentifiers(ep *epub.EPUB, r *report.Report) {
+	// OPF-073 only applies to EPUB 3 publications
+	if ep.Package.Version < "3.0" {
+		return
+	}
+	for _, item := range ep.Package.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		// Scan for DOCTYPE directive
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder.Strict = false
+		decoder.AutoClose = xml.HTMLAutoClose
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			// DOCTYPE appears as xml.Directive
+			if dir, ok := tok.(xml.Directive); ok {
+				directive := string(dir)
+				publicID, systemID := extractDOCTYPEIdentifiers(directive)
+				if publicID == "" && systemID == "" {
+					continue
+				}
+				// Check if this is an allowed external identifier
+				allowed := false
+				correctMediaType := false
+				for _, entry := range allowedExternalIDs {
+					if publicID == entry.publicID && systemID == entry.systemID {
+						allowed = true
+						for _, mt := range entry.mediaTypes {
+							if item.MediaType == mt {
+								correctMediaType = true
+								break
+							}
+						}
+						break
+					}
+				}
+				if !allowed {
+					r.AddWithLocation(report.Error, "OPF-073",
+						"DOCTYPE external identifier is not allowed",
+						fullPath)
+				} else if !correctMediaType {
+					r.AddWithLocation(report.Error, "OPF-073",
+						"DOCTYPE external identifier is not allowed for this media type",
+						fullPath)
+				}
+			}
+			// Stop after first element (DOCTYPE appears before root element)
+			if _, ok := tok.(xml.StartElement); ok {
+				break
+			}
+		}
+	}
+}
+
+// validHTMLElements contains all valid HTML5 element names (lowercase).
+var validHTMLElements = map[string]bool{
+	"a": true, "abbr": true, "address": true, "area": true, "article": true,
+	"aside": true, "audio": true, "b": true, "base": true, "bdi": true,
+	"bdo": true, "blockquote": true, "body": true, "br": true, "button": true,
+	"canvas": true, "caption": true, "cite": true, "code": true, "col": true,
+	"colgroup": true, "data": true, "datalist": true, "dd": true, "del": true,
+	"details": true, "dfn": true, "dialog": true, "div": true, "dl": true,
+	"dt": true, "em": true, "embed": true, "fieldset": true, "figcaption": true,
+	"figure": true, "footer": true, "form": true, "h1": true, "h2": true,
+	"h3": true, "h4": true, "h5": true, "h6": true, "head": true, "header": true,
+	"hgroup": true, "hr": true, "html": true, "i": true, "iframe": true,
+	"img": true, "input": true, "ins": true, "kbd": true, "label": true,
+	"legend": true, "li": true, "link": true, "main": true, "map": true,
+	"mark": true, "math": true, "menu": true, "meta": true, "meter": true,
+	"nav": true, "noscript": true, "object": true, "ol": true, "optgroup": true,
+	"option": true, "output": true, "p": true, "picture": true, "pre": true,
+	"progress": true, "q": true, "rp": true, "rt": true, "ruby": true,
+	"s": true, "samp": true, "script": true, "search": true, "section": true,
+	"select": true, "slot": true, "small": true, "source": true, "span": true,
+	"strong": true, "style": true, "sub": true, "summary": true, "sup": true,
+	"svg": true, "table": true, "tbody": true, "td": true, "template": true,
+	"textarea": true, "tfoot": true, "th": true, "thead": true, "time": true,
+	"title": true, "tr": true, "track": true, "u": true, "ul": true,
+	"var": true, "video": true, "wbr": true,
+	// Obsolete/legacy elements that are still commonly used
+	"acronym": true, "applet": true, "basefont": true, "bgsound": true,
+	"big": true, "blink": true, "center": true, "dir": true, "font": true,
+	"frame": true, "frameset": true, "isindex": true, "keygen": true,
+	"listing": true, "marquee": true, "menuitem": true,
+	"multicol": true, "nextid": true, "nobr": true, "noembed": true,
+	"noframes": true, "param": true, "plaintext": true, "rb": true,
+	"rtc": true, "spacer": true, "strike": true, "tt": true, "xmp": true,
+	// EPUB extensions in XHTML namespace
+	"epub:switch": true, "epub:case": true, "epub:default": true,
+	// Experimental/proposed elements
+	"portal": true,
+}
+
+// checkInvalidHTMLElements reports RSC-005 for elements not in the valid HTML5 element set.
+// Only checks elements in the XHTML namespace; skips content inside <svg> or <math> subtrees.
+func checkInvalidHTMLElements(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+	const svgNS = "http://www.w3.org/2000/svg"
+	const mathNS = "http://www.w3.org/1998/Math/MathML"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0 // non-zero when inside svg/math/foreignObject
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			// Skip non-XHTML namespace elements (includes SVG, MathML inline)
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			// Custom elements (contain '-') are always valid
+			if strings.Contains(name, "-") {
+				continue
+			}
+			// Enter foreign content for svg and math
+			if name == "svg" || name == "math" || name == "foreignobject" {
+				foreignDepth = 1
+				continue
+			}
+			if !validHTMLElements[name] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf("element \"%s\" not allowed here", name),
+					location)
+				return // report only first error
+			}
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+			}
+		}
+	}
+}
+
+// checkNestedDFN reports RSC-005 when a <dfn> element contains a descendant <dfn>.
+func checkNestedDFN(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	dfnDepth := 0
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				continue
+			}
+			if strings.ToLower(t.Name.Local) == "dfn" {
+				if dfnDepth > 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						"dfn must not have a dfn descendant",
+						location)
+					return
+				}
+				dfnDepth++
+			}
+		case xml.EndElement:
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				continue
+			}
+			if strings.ToLower(t.Name.Local) == "dfn" && dfnDepth > 0 {
+				dfnDepth--
 			}
 		}
 	}

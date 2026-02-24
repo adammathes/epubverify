@@ -55,6 +55,24 @@ func isFontMediaType(mt string) bool {
 		strings.Contains(mt, "font")
 }
 
+// acceptedFontTypeAliases are non-core font media types that are widely accepted
+// aliases for standard font formats (e.g. application/x-font-ttf for TrueType).
+// These should NOT trigger CSS-007 because they are effectively equivalent to
+// core font types, just using older/alternate naming conventions.
+var acceptedFontTypeAliases = map[string]bool{
+	"font/otf":                    true,
+	"font/ttf":                    true,
+	"font/woff":                   true,
+	"font/woff2":                  true,
+	"application/font-woff":       true,
+	"application/font-woff2":      true,
+	"application/vnd.ms-opentype": true,
+	"application/font-sfnt":       true,
+	"application/x-font-ttf":      true,
+	"application/x-font-opentype": true,
+	"application/x-font-truetype": true,
+}
+
 // Core image media types per EPUB spec
 var coreImageTypes = map[string]bool{
 	"image/gif":     true,
@@ -117,8 +135,9 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 				fmt.Sprintf("Video '%s' uses non-core media type '%s'; prefer MP4 or WebM", item.Href, item.MediaType))
 		}
 
-		// MED-001: image media type must match actual content
-		// MED-003: image must not be corrupted
+		// OPF-029: image media type must match actual content
+		// MED-004: image must not be corrupted
+		// PKG-021: image file must not be empty
 		// Only check core image types — foreign image resources may have
 		// arbitrary binary formats that don't match known magic bytes.
 		if strings.HasPrefix(item.MediaType, "image/") && item.MediaType != "image/svg+xml" && !isNonCoreImage {
@@ -151,9 +170,19 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 	if ep.Package.Version >= "3.0" {
 		checkMediaOverlayProperty(ep, r)
 	}
+
+	// MED-010/011/012/013: cross-reference checks between SMIL text refs and manifest
+	if ep.Package.Version >= "3.0" {
+		checkMediaOverlayCrossRefs(ep, r)
+	}
+
+	// CSS-030: media:active-class or media:playback-active-class defined but no CSS in content docs
+	if ep.Package.Version >= "3.0" {
+		checkMediaActiveClassCSS(ep, r)
+	}
 }
 
-// MED-001: verify image file type matches declared media type
+// OPF-029: verify image file type matches declared media type in manifest.
 // Returns true if a mismatch was detected.
 func checkImageMediaType(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r *report.Report) bool {
 	data, err := ep.ReadFile(fullPath)
@@ -167,22 +196,30 @@ func checkImageMediaType(ep *epub.EPUB, item epub.ManifestItem, fullPath string,
 	}
 
 	if detected != item.MediaType {
-		r.Add(report.Error, "MED-001",
-			fmt.Sprintf("The file '%s' does not appear to match the media type '%s'", item.Href, item.MediaType))
+		r.Add(report.Error, "OPF-029",
+			fmt.Sprintf("The file '%s' does not appear to match the declared media type '%s'", item.Href, item.MediaType))
 		return true
 	}
 	return false
 }
 
-// MED-003: verify image is not corrupted
+// MED-004: verify image is not corrupted; PKG-021: image file must not be empty.
 func checkImageNotCorrupted(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r *report.Report) {
 	data, err := ep.ReadFile(fullPath)
 	if err != nil {
 		return
 	}
 
+	if len(data) == 0 {
+		r.Add(report.Error, "PKG-021",
+			fmt.Sprintf("The image file '%s' is empty", item.Href))
+		r.Add(report.Error, "MED-004",
+			fmt.Sprintf("Corrupted image file '%s': the file is empty", item.Href))
+		return
+	}
+
 	if len(data) < 8 {
-		r.Add(report.Error, "MED-003",
+		r.Add(report.Error, "MED-004",
 			fmt.Sprintf("Corrupted image file '%s': file too small", item.Href))
 		return
 	}
@@ -191,17 +228,17 @@ func checkImageNotCorrupted(ep *epub.EPUB, item epub.ManifestItem, fullPath stri
 	switch item.MediaType {
 	case "image/png":
 		if !bytes.HasPrefix(data, pngMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid PNG header", item.Href))
 		}
 	case "image/jpeg":
 		if !bytes.HasPrefix(data, jpegMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid JPEG header", item.Href))
 		}
 	case "image/gif":
 		if !bytes.HasPrefix(data, gifMagic) {
-			r.Add(report.Error, "MED-003",
+			r.Add(report.Error, "MED-004",
 				fmt.Sprintf("Corrupted image file '%s': invalid GIF header", item.Href))
 		}
 	}
@@ -288,6 +325,12 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 			inBody = true
 		case "seq":
 			inSeq = true
+			// Check epub:textref for RSC-012 (unresolved fragment in seq element)
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "textref" {
+					checkSMILFragmentRef(ep, attr.Value, smilDir, fullPath, r)
+				}
+			}
 		case "par":
 			inPar = true
 		case "audio":
@@ -355,7 +398,19 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 }
 
 // MED-007: audio src must exist in container
+// MED-005: audio clip must be a Core Media Type
 func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location string, r *report.Report) {
+	// Build manifest lookup: resolved path → media type
+	manifestByPath := make(map[string]string)
+	if ep.Package != nil {
+		for _, item := range ep.Package.Manifest {
+			if item.Href != "\x00MISSING" {
+				fp := ep.ResolveHref(item.Href)
+				manifestByPath[fp] = item.MediaType
+			}
+		}
+	}
+
 	for _, attr := range se.Attr {
 		if attr.Name.Local == "src" && attr.Value != "" {
 			u, err := url.Parse(attr.Value)
@@ -367,6 +422,13 @@ func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location
 				r.AddWithLocation(report.Error, "MED-007",
 					fmt.Sprintf("Referenced resource '%s' could not be found in the container", attr.Value),
 					location)
+			} else if mt, ok := manifestByPath[target]; ok {
+				// MED-005: audio clip must be a Core Media Type
+				if !coreMediaTypes[mt] {
+					r.AddWithLocation(report.Error, "MED-005",
+						fmt.Sprintf("Audio clip '%s' is not a Core Media Type (found '%s')", attr.Value, mt),
+						location)
+				}
 			}
 		}
 		// MED-010: clipBegin/clipEnd must be valid SMIL clock values
@@ -380,31 +442,76 @@ func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location
 	}
 }
 
-// MED-008: text src must reference an existing fragment
+// checkSMILText validates a SMIL <text src="..."> element.
 func checkSMILText(ep *epub.EPUB, se xml.StartElement, smilDir string, location string, r *report.Report) {
 	for _, attr := range se.Attr {
 		if attr.Name.Local == "src" && attr.Value != "" {
-			u, err := url.Parse(attr.Value)
-			if err != nil || u.Scheme != "" {
-				continue
-			}
-			target := resolvePath(smilDir, u.Path)
-			if _, exists := ep.Files[target]; !exists {
-				r.AddWithLocation(report.Error, "MED-008",
-					fmt.Sprintf("Fragment identifier is not defined in '%s'", attr.Value),
-					location)
-			} else if u.Fragment != "" {
-				// Check that the fragment ID actually exists in the target document
-				targetData, err := ep.ReadFile(target)
-				if err == nil {
-					ids := collectIDs(targetData)
-					if !ids[u.Fragment] {
-						r.AddWithLocation(report.Error, "MED-008",
-							fmt.Sprintf("Fragment identifier is not defined in '%s'", attr.Value),
-							location)
-					}
-				}
-			}
+			checkSMILFragmentRef(ep, attr.Value, smilDir, location, r)
+		}
+	}
+}
+
+// checkSMILFragmentRef validates a SMIL text src or epub:textref reference.
+// MED-008: target file does not exist.
+// MED-017: scheme-based fragment identifier (e.g. xpointer).
+// MED-018: invalid SVG fragment identifier.
+// RSC-012: fragment identifier does not resolve to an element in target document.
+func checkSMILFragmentRef(ep *epub.EPUB, src, smilDir, location string, r *report.Report) {
+	u, err := url.Parse(src)
+	if err != nil || u.Scheme != "" {
+		return
+	}
+	target := resolvePath(smilDir, u.Path)
+	if _, exists := ep.Files[target]; !exists {
+		r.AddWithLocation(report.Error, "MED-008",
+			fmt.Sprintf("Fragment identifier is not defined in '%s'", src),
+			location)
+		return
+	}
+	if u.Fragment == "" {
+		return
+	}
+
+	frag := u.Fragment
+	isSVGTarget := strings.HasSuffix(strings.ToLower(u.Path), ".svg")
+
+	if isSVGTarget {
+		// Valid SVG view fragment: svgView(...) - allowed, no error
+		if strings.HasPrefix(frag, "svgView(") {
+			return
+		}
+		// Scheme-based fragment (contains '(')
+		if strings.Contains(frag, "(") {
+			r.AddWithLocation(report.Warning, "MED-017",
+				fmt.Sprintf("Scheme-based fragment identifier in '%s' is not supported", src),
+				location)
+			return
+		}
+		// Invalid SVG fragment (contains '=')
+		if strings.Contains(frag, "=") {
+			r.AddWithLocation(report.Warning, "MED-018",
+				fmt.Sprintf("Invalid SVG fragment identifier in '%s'", src),
+				location)
+			return
+		}
+	} else {
+		// XHTML or other target: scheme-based fragment (contains '(')
+		if strings.Contains(frag, "(") {
+			r.AddWithLocation(report.Warning, "MED-017",
+				fmt.Sprintf("Scheme-based fragment identifier in '%s' is not supported", src),
+				location)
+			return
+		}
+	}
+
+	// Plain fragment ID: check if it resolves to an element in the target document.
+	targetData, err := ep.ReadFile(target)
+	if err == nil {
+		ids := collectIDs(targetData)
+		if !ids[frag] {
+			r.AddWithLocation(report.Error, "RSC-012",
+				fmt.Sprintf("Fragment identifier is not defined: '%s'", src),
+				location)
 		}
 	}
 }
@@ -462,4 +569,225 @@ func checkMediaOverlayProperty(ep *epub.EPUB, r *report.Report) {
 				fmt.Sprintf("Media Overlay Document referenced by '%s' could not be found: '%s'", item.Href, item.MediaOverlay))
 		}
 	}
+}
+
+// checkMediaOverlayCrossRefs validates cross-references between SMIL overlay text refs
+// and manifest item media-overlay attributes.
+// MED-010: overlay references content doc but content doc lacks media-overlay
+// MED-011: content doc referenced from more than one overlay
+// MED-012: content doc's media-overlay points to wrong overlay (other overlay references it)
+// MED-013: content doc's media-overlay overlay doesn't reference it (no overlay does)
+func checkMediaOverlayCrossRefs(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
+
+	// Build manifest path → manifest item map
+	manifestByPath := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestByPath[ep.ResolveHref(item.Href)] = item
+		}
+	}
+
+	// Build manifest ID → manifest item map
+	manifestByID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		manifestByID[item.ID] = item
+	}
+
+	// Parse all SMIL files and build: contentDocPath → list of overlayIDs that reference it
+	type overlayRef struct {
+		overlayID   string
+		overlayPath string
+	}
+	contentDocOverlays := make(map[string][]overlayRef) // contentDocPath → overlays that reference it
+
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/smil+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		smilPath := ep.ResolveHref(item.Href)
+		smilDir := path.Dir(smilPath)
+
+		data, err := ep.ReadFile(smilPath)
+		if err != nil {
+			continue
+		}
+
+		// Parse SMIL to find <text src="..."> references
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		seen := make(map[string]bool) // avoid duplicate refs from same SMIL
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok || se.Name.Local != "text" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local != "src" {
+					continue
+				}
+				srcURL, err := url.Parse(attr.Value)
+				if err != nil || srcURL.Scheme != "" {
+					continue
+				}
+				// Strip fragment: get the base content doc path
+				contentPath := resolvePath(smilDir, srcURL.Path)
+				if seen[contentPath] {
+					continue
+				}
+				seen[contentPath] = true
+				contentDocOverlays[contentPath] = append(contentDocOverlays[contentPath],
+					overlayRef{overlayID: item.ID, overlayPath: smilPath})
+			}
+		}
+	}
+
+	// MED-011: content doc referenced from more than one overlay
+	for contentPath, refs := range contentDocOverlays {
+		if len(refs) > 1 {
+			contentItem, _ := manifestByPath[contentPath]
+			r.Add(report.Error, "MED-011",
+				fmt.Sprintf("Content document '%s' is referenced from more than one Media Overlay: '%s' and '%s'",
+					contentItem.Href, refs[0].overlayID, refs[1].overlayID))
+		}
+	}
+
+	// MED-010: overlay references content doc but content doc has no media-overlay attribute
+	for contentPath, refs := range contentDocOverlays {
+		contentItem, ok := manifestByPath[contentPath]
+		if !ok {
+			continue
+		}
+		if contentItem.MediaType != "application/xhtml+xml" && contentItem.MediaType != "image/svg+xml" {
+			continue
+		}
+		if contentItem.MediaOverlay == "" {
+			r.Add(report.Error, "MED-010",
+				fmt.Sprintf("Content document '%s' is referenced from overlay '%s' but has no 'media-overlay' attribute",
+					contentItem.Href, refs[0].overlayID))
+		}
+	}
+
+	// MED-012/MED-013: content docs with media-overlay: check if declared overlay references them
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay == "" {
+			continue
+		}
+		if item.MediaType != "application/xhtml+xml" && item.MediaType != "image/svg+xml" {
+			continue
+		}
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		contentPath := ep.ResolveHref(item.Href)
+
+		// Get the overlays that reference this content doc
+		refs := contentDocOverlays[contentPath]
+
+		// Check if the declared overlay references this content doc
+		declaredOverlayItem, hasDeclared := manifestByID[item.MediaOverlay]
+		if !hasDeclared {
+			continue // already handled by checkMediaOverlayProperty
+		}
+		declaredOverlayPath := ep.ResolveHref(declaredOverlayItem.Href)
+
+		declaredOverlayRefsThis := false
+		for _, ref := range refs {
+			if ref.overlayPath == declaredOverlayPath {
+				declaredOverlayRefsThis = true
+				break
+			}
+		}
+
+		if !declaredOverlayRefsThis {
+			// Declared overlay doesn't reference this content doc
+			if len(refs) > 0 {
+				// MED-012: another overlay references it (pointing to wrong overlay)
+				r.Add(report.Error, "MED-012",
+					fmt.Sprintf("Content document '%s' declares media-overlay '%s' but is actually referenced from overlay '%s'",
+						item.Href, item.MediaOverlay, refs[0].overlayID))
+			} else {
+				// MED-013: no overlay references this content doc at all
+				r.Add(report.Error, "MED-013",
+					fmt.Sprintf("Content document '%s' declares media-overlay '%s' but is not referenced from that overlay",
+						item.Href, item.MediaOverlay))
+			}
+		}
+	}
+}
+
+// checkMediaActiveClassCSS checks CSS-030: when media:active-class or
+// media:playback-active-class is defined, each content document with a
+// media overlay must have an associated CSS stylesheet.
+func checkMediaActiveClassCSS(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
+
+	// Check if any media:active-class or media:playback-active-class metadata exists
+	if !pkg.HasMediaActiveClass {
+		return
+	}
+
+	// For each content document with a media-overlay, check if it has CSS
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay == "" || item.Href == "\x00MISSING" {
+			continue
+		}
+		mt := item.MediaType
+		if mt != "application/xhtml+xml" && mt != "image/svg+xml" {
+			continue
+		}
+
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		if !contentDocHasCSS(data, mt) {
+			r.AddWithLocation(report.Error, "CSS-030",
+				fmt.Sprintf("The 'media:active-class' property is defined but no CSS was found in content document '%s'", item.Href),
+				fullPath)
+		}
+	}
+}
+
+// contentDocHasCSS returns true if a content document has a CSS stylesheet.
+// For XHTML: looks for <link rel="stylesheet">, <style> element, or @import in style
+// For SVG: looks for <style> element or <?xml-stylesheet?> PI
+func contentDocHasCSS(data []byte, mediaType string) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			// <style> element (XHTML or SVG)
+			if t.Name.Local == "style" {
+				return true
+			}
+			// <link rel="stylesheet"> (XHTML)
+			if t.Name.Local == "link" {
+				var rel string
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "rel" {
+						rel = attr.Value
+					}
+				}
+				if rel == "stylesheet" {
+					return true
+				}
+			}
+		case xml.ProcInst:
+			// SVG <?xml-stylesheet?> processing instruction
+			if t.Target == "xml-stylesheet" {
+				return true
+			}
+		}
+	}
+	return false
 }

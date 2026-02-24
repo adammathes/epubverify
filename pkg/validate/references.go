@@ -10,6 +10,7 @@ import (
 
 	"github.com/adammathes/epubverify/pkg/epub"
 	"github.com/adammathes/epubverify/pkg/report"
+	"golang.org/x/text/unicode/norm"
 )
 
 // checkReferences validates cross-references between manifest and zip contents.
@@ -19,19 +20,22 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 		return
 	}
 
+	// PKG-025: publication resources must not be in META-INF
+	checkNoResourcesInMetaInf(ep, r)
+
 	// RSC-001: every manifest href must exist in the zip
 	checkManifestFilesExist(ep, r)
 
 	// RSC-010: manifest hrefs must be valid URLs
 	checkManifestHrefValidURL(ep, r)
 
-	// RSC-011: manifest hrefs must not use path traversal
+	// RSC-026: manifest hrefs must not use path traversal or absolute paths
 	checkManifestNoPathTraversal(ep, r)
 
-	// RSC-012: no duplicate zip entries
+	// OPF-060: no duplicate zip entries
 	checkNoDuplicateZipEntries(ep, r)
 
-	// RSC-013: manifest hrefs must not be absolute paths
+	// RSC-026: manifest hrefs must not be absolute paths
 	checkManifestNoAbsolutePath(ep, r)
 
 	// RSC-002: every file in the container should be in the manifest
@@ -48,6 +52,9 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 
 	// NAV-002: nav document must have epub:type="toc"
 	checkNavHasToc(ep, r)
+
+	// PKG-026: IDPF-obfuscated resources must be core media type fonts
+	checkObfuscatedResources(ep, r)
 }
 
 // RSC-001 / RSC-005 / RSC-009: manifest file existence checks
@@ -60,24 +67,32 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 		if ep.Package.Version < "3.0" && item.MediaType == "application/x-dtbncx+xml" {
 			continue
 		}
-		// Skip absolute paths - handled by RSC-013
+		// Skip absolute paths - handled by RSC-026
 		if strings.HasPrefix(item.Href, "/") {
 			continue
 		}
-		// Skip remote resources (http/https URLs in manifest are valid
-		// when the referencing content doc has remote-resources property)
+		// Skip path traversal - handled by RSC-026
+		if strings.Contains(item.Href, "..") {
+			continue
+		}
+		// RSC-030: file:// URLs are not allowed in the manifest
+		if strings.HasPrefix(item.Href, "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("Use of 'file' URL scheme is prohibited: '%s'", item.Href))
+			continue
+		}
+		// RSC-006: remote XHTML content documents in manifest are not allowed
+		// (Remote SVG checked at content level; SVG can also be used as fonts)
 		if strings.HasPrefix(item.Href, "http://") || strings.HasPrefix(item.Href, "https://") {
+			if item.MediaType == "application/xhtml+xml" {
+				r.Add(report.Error, "RSC-006",
+					fmt.Sprintf("Remote resource reference is not allowed: '%s'", item.Href))
+			}
 			continue
 		}
 		fullPath := ep.ResolveHref(item.Href)
 		if _, exists := ep.Files[fullPath]; !exists {
-			checkID := "RSC-001"
-			if item.MediaType == "text/css" {
-				checkID = "RSC-005"
-			} else if isFontMediaType(item.MediaType) {
-				checkID = "RSC-009"
-			}
-			r.Add(report.Error, checkID,
+			r.Add(report.Error, "RSC-001",
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", item.Href))
 		}
 	}
@@ -216,7 +231,11 @@ func checkNavHasToc(ep *epub.EPUB, r *report.Report) {
 	}
 
 	if !navDocHasToc(data) {
-		r.Add(report.Error, "NAV-002", "Required toc nav element (epub:type='toc') not found in navigation document")
+		// EPUBCheck reports this as a schema validation error (RSC-005) since the
+		// nav document schema requires a toc nav element.
+		r.AddWithLocation(report.Error, "RSC-005",
+			"Required toc nav element (epub:type='toc') not found in navigation document",
+			fullPath)
 	}
 }
 
@@ -298,16 +317,35 @@ func checkNavigation(ep *epub.EPUB, r *report.Report) {
 			fullPath)
 	}
 
-	// NAV-010: landmark entries should use valid epub:type values
-	// The EPUB 3 structural semantics vocabulary is extensible, so unknown
-	// values are informational rather than violations.
-	for _, t := range navInfo.landmarkTypes {
-		if !validEpubTypes[t] && !strings.Contains(t, ":") {
-			r.AddWithLocation(report.Info, "NAV-010",
-				fmt.Sprintf("Landmark nav entry uses unknown epub:type value '%s'", t),
+	// NAV-010: external links are not allowed in toc, page-list, or landmarks nav elements
+	for _, link := range navInfo.tocLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'toc' nav element must not contain links to remote resources: '%s'", link.href),
 				fullPath)
 		}
 	}
+	for _, link := range navInfo.landmarkLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'landmarks' nav element must not contain links to remote resources: '%s'", link.href),
+				fullPath)
+		}
+	}
+	for _, link := range navInfo.pageListLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'page-list' nav element must not contain links to remote resources: '%s'", link.href),
+				fullPath)
+		}
+	}
+
+	// RSC-011: toc nav links must point to documents in the spine
+	// RSC-010: toc nav links must point to content documents (XHTML or SVG)
+	checkNavTocSpineLinks(ep, navInfo, fullPath, r)
+
+	// NAV-011: toc nav links must follow spine reading order
+	checkNavTOCOrder(ep, navInfo, fullPath, r)
 }
 
 type navLink struct {
@@ -444,16 +482,227 @@ func checkNavLinkResolves(ep *epub.EPUB, href, navFullPath, checkID string, r *r
 
 	refPath := u.Path
 	if refPath == "" {
-		return // fragment-only
+		// Fragment-only: check the fragment against the nav doc itself
+		if u.Fragment != "" {
+			navData, err := ep.ReadFile(navFullPath)
+			if err == nil {
+				ids := collectNavIDs(navData)
+				if !ids[u.Fragment] {
+					r.AddWithLocation(report.Error, "RSC-012",
+						fmt.Sprintf("Fragment identifier is not defined: '#%s'", u.Fragment),
+						navFullPath)
+				}
+			}
+		}
+		return
 	}
 
 	navDir := path.Dir(navFullPath)
 	target := resolvePath(navDir, refPath)
-	if _, exists := ep.Files[target]; !exists {
-		r.AddWithLocation(report.Error, checkID,
+	// Also try NFC-normalized path for diacritic filenames
+	nfcTarget := norm.NFC.String(target)
+	_, exists := ep.Files[target]
+	if !exists && nfcTarget != target {
+		_, exists = ep.Files[nfcTarget]
+	}
+	if !exists {
+		r.AddWithLocation(report.Error, "RSC-007",
 			fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 			navFullPath)
+		return
 	}
+
+	// Check fragment identifier if present
+	if u.Fragment != "" {
+		// EPUB CFI fragments are always valid (they encode location within documents)
+		if strings.HasPrefix(u.Fragment, "epubcfi(") {
+			return
+		}
+		targetData, err := ep.ReadFile(target)
+		if err != nil && nfcTarget != target {
+			targetData, err = ep.ReadFile(nfcTarget)
+		}
+		if err == nil {
+			ids := collectNavIDs(targetData)
+			if !ids[u.Fragment] {
+				r.AddWithLocation(report.Error, "RSC-012",
+					fmt.Sprintf("Fragment identifier is not defined: '%s#%s'", refPath, u.Fragment),
+					navFullPath)
+			}
+		}
+	}
+}
+
+// collectNavIDs collects all id attributes from an HTML/XHTML document.
+func collectNavIDs(data []byte) map[string]bool {
+	return collectIDs(data)
+}
+
+// checkNavTocSpineLinks checks RSC-011 (toc link to non-spine doc) and
+// RSC-010 (toc link to non-content-document type).
+func checkNavTocSpineLinks(ep *epub.EPUB, navInfo navDocInfo, navPath string, r *report.Report) {
+	navDir := path.Dir(navPath)
+
+	// Build spine set: manifest full path → true
+	spineSet := buildSpinePathSet(ep)
+
+	// Build manifest path → media-type map
+	manifestMT := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestMT[ep.ResolveHref(item.Href)] = item.MediaType
+		}
+	}
+
+	for _, link := range navInfo.tocLinks {
+		if link.href == "" || isRemoteURL(link.href) {
+			continue
+		}
+		u, err := url.Parse(link.href)
+		if err != nil || u.Scheme != "" || u.Path == "" {
+			continue
+		}
+		target := resolvePath(navDir, u.Path)
+
+		mt, inManifest := manifestMT[target]
+		if !inManifest {
+			continue // file not in manifest, already reported by RSC-007
+		}
+
+		// RSC-010: toc nav links must point to XHTML or SVG content documents
+		isContentDoc := mt == "application/xhtml+xml" || mt == "image/svg+xml"
+		if !isContentDoc {
+			r.AddWithLocation(report.Error, "RSC-010",
+				fmt.Sprintf("The 'toc' nav element links to a resource that is not a Content Document: '%s'", link.href),
+				navPath)
+			continue
+		}
+
+		// RSC-011: toc nav links to content docs must be in the spine
+		if !spineSet[target] {
+			r.AddWithLocation(report.Error, "RSC-011",
+				fmt.Sprintf("Content document '%s' is referenced from the 'toc' nav but is not listed in the spine", link.href),
+				navPath)
+		}
+	}
+}
+
+// buildSpinePathSet returns a set of full file paths for all spine items.
+func buildSpinePathSet(ep *epub.EPUB) map[string]bool {
+	// manifest ID (trimmed) → full path
+	idToPath := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			idToPath[strings.TrimSpace(item.ID)] = ep.ResolveHref(item.Href)
+		}
+	}
+	spineSet := make(map[string]bool)
+	for _, ref := range ep.Package.Spine {
+		if p := idToPath[strings.TrimSpace(ref.IDRef)]; p != "" {
+			spineSet[p] = true
+		}
+	}
+	return spineSet
+}
+
+// buildSpinePositions returns a map of full file path → spine index (0-based).
+func buildSpinePositions(ep *epub.EPUB) map[string]int {
+	idToPath := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			idToPath[strings.TrimSpace(item.ID)] = ep.ResolveHref(item.Href)
+		}
+	}
+	positions := make(map[string]int)
+	for i, ref := range ep.Package.Spine {
+		if p := idToPath[strings.TrimSpace(ref.IDRef)]; p != "" {
+			positions[p] = i
+		}
+	}
+	return positions
+}
+
+// checkNavTOCOrder checks NAV-011: toc links must follow spine reading order
+// and fragment document order.
+func checkNavTOCOrder(ep *epub.EPUB, navInfo navDocInfo, navPath string, r *report.Report) {
+	navDir := path.Dir(navPath)
+	spinePositions := buildSpinePositions(ep)
+
+	lastSpinePos := -1
+	lastFragPos := make(map[string]int) // fullPath → last seen fragment byte offset
+
+	for _, link := range navInfo.tocLinks {
+		if link.href == "" || isRemoteURL(link.href) {
+			continue
+		}
+		u, err := url.Parse(link.href)
+		if err != nil || u.Scheme != "" || u.Path == "" {
+			continue
+		}
+		target := resolvePath(navDir, u.Path)
+
+		spinePos, inSpine := spinePositions[target]
+		if !inSpine {
+			continue // not in spine, already reported
+		}
+
+		fragOffset := 0 // no fragment = beginning of doc = offset 0
+		if u.Fragment != "" {
+			data, err := ep.ReadFile(target)
+			if err == nil {
+				elemPos := collectElementPositions(data)
+				if pos, ok := elemPos[u.Fragment]; ok {
+					fragOffset = pos
+				} else {
+					fragOffset = -1 // unknown fragment, skip fragment check
+				}
+			}
+		}
+
+		if spinePos < lastSpinePos {
+			// Out of spine order
+			r.AddWithLocation(report.Warning, "NAV-011",
+				fmt.Sprintf("The 'toc' nav link to '%s' is not in spine reading order", link.href),
+				navPath)
+		} else if spinePos == lastSpinePos && fragOffset >= 0 {
+			// Same document: check fragment order
+			if fragOffset < lastFragPos[target] {
+				r.AddWithLocation(report.Warning, "NAV-011",
+					fmt.Sprintf("The 'toc' nav link to '%s' is not in document reading order", link.href),
+					navPath)
+			}
+		}
+
+		// Update tracking (always update to current position)
+		lastSpinePos = spinePos
+		if fragOffset >= 0 {
+			lastFragPos[target] = fragOffset
+		}
+	}
+}
+
+// collectElementPositions returns a map of element id → byte offset in the document.
+func collectElementPositions(data []byte) map[string]int {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	positions := make(map[string]int)
+	for {
+		offset := decoder.InputOffset()
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				positions[attr.Value] = int(offset)
+				break
+			}
+		}
+	}
+	return positions
 }
 
 // RSC-010: manifest hrefs must be valid URLs
@@ -488,40 +737,46 @@ func isHexDigit(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
-// RSC-011: manifest hrefs must not use path traversal
+// RSC-026: manifest hrefs must not use path traversal
 func checkManifestNoPathTraversal(ep *epub.EPUB, r *report.Report) {
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.Contains(item.Href, "..") {
-			r.Add(report.Error, "RSC-011",
-				fmt.Sprintf("Referenced resource '%s' could not be found in the container: path traversal not allowed", item.Href))
+			// Items that resolve to META-INF are reported as PKG-025, not RSC-026
+			rawPath := ep.ResolveHref(item.Href)
+			cleanPath := path.Clean(rawPath)
+			if strings.HasPrefix(cleanPath, "META-INF/") {
+				continue
+			}
+			r.Add(report.Error, "RSC-026",
+				fmt.Sprintf("Referenced resource '%s' cannot be accessed (path traversal not allowed)", item.Href))
 		}
 	}
 }
 
-// RSC-012: no duplicate zip entries (exact same path appearing more than once)
+// OPF-060: no duplicate zip entries (exact same path appearing more than once)
 func checkNoDuplicateZipEntries(ep *epub.EPUB, r *report.Report) {
 	seen := make(map[string]bool)
 	for _, f := range ep.ZipFile.File {
 		if seen[f.Name] {
-			r.Add(report.Error, "RSC-012",
+			r.Add(report.Error, "OPF-060",
 				fmt.Sprintf("Duplicate entry in the ZIP file: '%s'", f.Name))
 		}
 		seen[f.Name] = true
 	}
 }
 
-// RSC-013: manifest hrefs must not be absolute paths
+// RSC-026: manifest hrefs must not be absolute paths
 func checkManifestNoAbsolutePath(ep *epub.EPUB, r *report.Report) {
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.HasPrefix(item.Href, "/") {
-			r.Add(report.Error, "RSC-013",
-				fmt.Sprintf("Referenced resource '%s' leaks outside the container: absolute paths not allowed", item.Href))
+			r.Add(report.Error, "RSC-026",
+				fmt.Sprintf("Referenced resource '%s' cannot be accessed (absolute paths not allowed)", item.Href))
 		}
 	}
 }
@@ -651,4 +906,80 @@ func hasProperty(properties, prop string) bool {
 		}
 	}
 	return false
+}
+
+// PKG-026: IDPF-obfuscated resources (Algorithm="http://www.idpf.org/2008/embedding")
+// must be core media type fonts. Reports an error for each non-CMT or non-font resource.
+func checkObfuscatedResources(ep *epub.EPUB, r *report.Report) {
+	_, exists := ep.Files["META-INF/encryption.xml"]
+	if !exists {
+		return
+	}
+	data, err := ep.ReadFile("META-INF/encryption.xml")
+	if err != nil {
+		return
+	}
+
+	// Build manifest lookup by href and full path
+	manifestByPath := make(map[string]epub.ManifestItem)
+	for _, item := range ep.Package.Manifest {
+		manifestByPath[item.Href] = item
+		manifestByPath[ep.ResolveHref(item.Href)] = item
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	var isIDPF bool
+	var inEncData bool
+	var currentURI string
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+
+		switch t := tok.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "EncryptedData":
+				inEncData = true
+				isIDPF = false
+				currentURI = ""
+			case "EncryptionMethod":
+				if inEncData {
+					for _, attr := range t.Attr {
+						if attr.Name.Local == "Algorithm" &&
+							attr.Value == "http://www.idpf.org/2008/embedding" {
+							isIDPF = true
+						}
+					}
+				}
+			case "CipherReference":
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "URI" {
+						currentURI = attr.Value
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "EncryptedData" {
+				if isIDPF && currentURI != "" {
+					item, found := manifestByPath[currentURI]
+					if !found {
+						item, found = manifestByPath[ep.ResolveHref(currentURI)]
+					}
+					if found {
+						mt := item.MediaType
+						if !coreMediaTypes[mt] || !isFontMediaType(mt) {
+							r.Add(report.Error, "PKG-026",
+								fmt.Sprintf("Obfuscated resource '%s' with media type '%s' is not an EPUB Core Media Type font", currentURI, mt))
+						}
+					}
+				}
+				inEncData = false
+				isIDPF = false
+				currentURI = ""
+			}
+		}
+	}
 }

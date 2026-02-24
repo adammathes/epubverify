@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"path"
 	"strings"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Open opens an EPUB file and parses its structure.
@@ -145,6 +147,7 @@ func (ep *EPUB) ParseOPF() error {
 	ep.HasMetadata = structInfo.hasMetadata
 	ep.HasManifest = structInfo.hasManifest
 	ep.HasSpine = structInfo.hasSpine
+	ep.IsLegacyOEBPS12 = structInfo.isLegacyOEBPS12
 
 	p := &Package{
 		UniqueIdentifier:         structInfo.uniqueIdentifier,
@@ -152,6 +155,7 @@ func (ep *EPUB) ParseOPF() error {
 		Dir:                      structInfo.dir,
 		Prefix:                   structInfo.prefix,
 		SpineToc:                 structInfo.spineToc,
+		SpinePageMap:             structInfo.spinePageMap,
 		PageProgressionDirection: structInfo.pageProgressionDirection,
 		HasGuide:                 structInfo.hasGuide,
 		MetaRefines:              structInfo.metaRefines,
@@ -179,9 +183,12 @@ func (ep *EPUB) ParseOPF() error {
 			p.RenditionSpread = m.value
 		case "rendition:flow":
 			p.RenditionFlow = m.value
+		case "media:active-class", "media:playback-active-class":
+			p.HasMediaActiveClass = true
 		}
 	}
 	p.ModifiedCount = modifiedCount
+	p.MetadataLinks = structInfo.metadataLinks
 
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
@@ -201,6 +208,7 @@ func (ep *EPUB) ParseOPF() error {
 }
 
 type opfStructInfo struct {
+	isLegacyOEBPS12          bool
 	version                  string
 	uniqueIdentifier         string
 	dir                      string
@@ -210,6 +218,7 @@ type opfStructInfo struct {
 	hasSpine                 bool
 	hasGuide                 bool
 	spineToc                 string
+	spinePageMap             string
 	pageProgressionDirection string
 	spineItems               []SpineItemref
 	metas                    []metaInfo
@@ -217,6 +226,7 @@ type opfStructInfo struct {
 	metaIDs                  []string
 	guideRefs                []GuideReference
 	elementOrder             []string
+	metadataLinks            []MetadataLink
 }
 
 type metaInfo struct {
@@ -245,6 +255,10 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 
 		switch se.Name.Local {
 		case "package":
+			// Detect OEBPS 1.2 namespace
+			if se.Name.Space == "http://openebook.org/namespaces/oeb-package/1.0/" {
+				info.isLegacyOEBPS12 = true
+			}
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "version":
@@ -272,6 +286,8 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					info.spineToc = attr.Value
 				case "page-progression-direction":
 					info.pageProgressionDirection = attr.Value
+				case "page-map":
+					info.spinePageMap = attr.Value
 				}
 			}
 		case "guide":
@@ -335,6 +351,25 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 						Value:    val,
 					})
 				}
+			}
+		case "link":
+			var href, rel, mediaType string
+			for _, attr := range se.Attr {
+				switch attr.Name.Local {
+				case "href":
+					href = attr.Value
+				case "rel":
+					rel = attr.Value
+				case "media-type":
+					mediaType = attr.Value
+				}
+			}
+			if href != "" {
+				info.metadataLinks = append(info.metadataLinks, MetadataLink{
+					Href:      href,
+					Rel:       rel,
+					MediaType: mediaType,
+				})
 			}
 		}
 	}
@@ -513,15 +548,19 @@ func (ep *EPUB) OPFDir() string {
 
 // ResolveHref resolves a relative href from the OPF file to a full path within the EPUB.
 // Manifest hrefs are IRI-encoded (e.g. spaces as %20), but ZIP entry names use
-// decoded forms, so we percent-decode before joining.
+// decoded forms, so we percent-decode before joining. Path is cleaned to normalize
+// any ".." segments. Unicode characters are NFC-normalized so that NFD-encoded
+// hrefs (e.g. u+combining-diaeresis) match NFC ZIP entry names.
 func (ep *EPUB) ResolveHref(href string) string {
 	decoded, err := url.PathUnescape(href)
 	if err != nil {
 		decoded = href // fall back to raw href if decoding fails
 	}
+	// Normalize to NFC so decomposed (NFD) hrefs match composed (NFC) ZIP entry names
+	decoded = norm.NFC.String(decoded)
 	dir := ep.OPFDir()
 	if dir == "." {
-		return decoded
+		return path.Clean(decoded)
 	}
-	return dir + "/" + decoded
+	return path.Clean(dir + "/" + decoded)
 }

@@ -1,6 +1,8 @@
 package validate
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -30,19 +32,30 @@ func Validate(path string) (*report.Report, error) {
 }
 
 // ValidateWithOptions runs validation with the given options.
-func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
+func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) {
 	r := report.NewReport()
 
-	ep, err := epub.Open(path)
+	// PKG-016: warn if the .epub extension is not all lowercase
+	ext := filepath.Ext(epubPath)
+	if strings.EqualFold(ext, ".epub") && ext != ".epub" {
+		r.Add(report.Warning, "PKG-016", "The '.epub' file extension should use lowercase characters")
+	}
+
+	ep, err := epub.Open(epubPath)
 	if err != nil {
 		errMsg := err.Error()
-		// PKG-008: Unable to read EPUB file (ZIP error)
-		if strings.Contains(errMsg, "zip") || strings.Contains(errMsg, "EOF") ||
-			strings.Contains(errMsg, "not a valid") || strings.Contains(errMsg, "opening epub") {
-			r.Add(report.Fatal, "PKG-008", "Unable to read EPUB file: "+errMsg)
-		} else {
-			r.Add(report.Fatal, "PKG-008", "Unable to read EPUB file: "+errMsg)
+		// Differentiate between empty file (PKG-003), wrong file type (PKG-004), and
+		// other ZIP errors (e.g. truncated ZIP with valid magic but no end directory).
+		fi, statErr := os.Stat(epubPath)
+		if statErr == nil && fi.Size() == 0 {
+			// Empty file
+			r.Add(report.Error, "PKG-003", "The EPUB publication must be a valid ZIP archive (zip file is empty)")
+		} else if !hasZIPMagic(epubPath) {
+			// File does not start with ZIP local file header magic → corrupted ZIP header
+			r.Add(report.Fatal, "PKG-004", "Fatal error in opening ZIP container (corrupted ZIP header)")
 		}
+		// Always report PKG-008 for any ZIP open failure
+		r.Add(report.Fatal, "PKG-008", "Unable to read EPUB file: "+errMsg)
 		return r, nil
 	}
 	defer ep.Close()
@@ -82,6 +95,9 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 		// Phase 10: EPUB 2 specific checks
 		checkEPUB2(ep, r)
 
+		// Phase 10b: Legacy NCX checks (for any publication with an NCX)
+		checkLegacyNCXForAll(ep, r)
+
 		// Phase 11: Accessibility checks (opt-in, not flagged by epubcheck without --profile)
 		if opts.Accessibility {
 			checkAccessibility(ep, r)
@@ -96,6 +112,12 @@ func ValidateWithOptions(path string, opts Options) (*report.Report, error) {
 		r.DowngradeToInfo(divergenceChecks)
 	}
 
+	// Post-downgrade: emit OEBPS 1.2 legacy media type warnings AFTER DowngradeToInfo
+	// so they are not downgraded to INFO. These are real EPUBCheck warnings.
+	if ep.IsLegacyOEBPS12 && ep.Package != nil && ep.Package.Version != "" {
+		checkLegacyOEBPS12MediaTypes(ep.Package, r)
+	}
+
 	return r, nil
 }
 
@@ -108,10 +130,24 @@ var divergenceChecks = map[string]bool{
 	"HTM-009":  true, // base element
 	"HTM-021":  true, // position:absolute in inline style
 	"NAV-009":  true, // hidden attribute on nav
-	"CSS-003":  true, // @font-face missing src
 	"CSS-005":  true, // @import rules
+	"CSS-011":  true, // @font-face missing src
 	"OPF-039":  true, // deprecated guide element in EPUB 3
 	"MED-012":  true, // video non-core media type
 	"E2-012":   true, // invalid guide reference type
 	"E2-015":   true, // NCX depth mismatch
+}
+
+// hasZIPMagic returns true if the file starts with the ZIP local file header signature (PK\x03\x04).
+func hasZIPMagic(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	if _, err := f.Read(magic); err != nil {
+		return false
+	}
+	return magic[0] == 0x50 && magic[1] == 0x4B && magic[2] == 0x03 && magic[3] == 0x04
 }

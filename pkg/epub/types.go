@@ -16,6 +16,7 @@ type EPUB struct {
 
 	// Parsed from OPF
 	Package *Package
+	IsLegacyOEBPS12 bool // true if package uses OEBPS 1.2 namespace
 
 	// Raw OPF parse info (set during ParseOPF)
 	OPFParseError error
@@ -40,6 +41,7 @@ type Package struct {
 	Manifest         []ManifestItem
 	Spine            []SpineItemref
 	SpineToc         string // EPUB 2 spine toc attribute
+	SpinePageMap     string // EPUB 2 spine page-map attribute (Adobe extension)
 	RenditionLayout  string // "pre-paginated" or "reflowable"
 	RenditionFlow    string // rendition:flow property
 	Guide            []GuideReference
@@ -51,6 +53,15 @@ type Package struct {
 	MetaRefines      []MetaRefines  // meta elements with refines attribute
 	MetaIDs          []string       // id attributes from all meta elements in metadata
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
+	HasMediaActiveClass bool        // true if media:active-class or media:playback-active-class is defined
+	MetadataLinks    []MetadataLink // <link> elements in the metadata section
+}
+
+// MetadataLink represents a <link> element in the OPF metadata section.
+type MetadataLink struct {
+	Href      string
+	Rel       string
+	MediaType string
 }
 
 // Metadata holds the OPF metadata section.

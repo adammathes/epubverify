@@ -1,7 +1,9 @@
 package validate
 
 import (
+	"encoding/xml"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -19,6 +21,17 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 		return true
 	}
 
+	// OEBPS 1.2: detect legacy namespace
+	if ep.IsLegacyOEBPS12 {
+		if ep.Package.Version == "" {
+			// No version attribute → OPF-001 for missing version, stop further processing
+			r.Add(report.Error, "OPF-001", "Package version attribute is missing or empty")
+			return false
+		}
+		// Has version → legacy media type checks happen after DowngradeToInfo in the validator
+		return false
+	}
+
 	pkg := ep.Package
 
 	// RSC-005: required elements present (schema validation)
@@ -31,7 +44,7 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	}
 
 	if !ep.HasSpine {
-		r.Add(report.Error, "RSC-005", "Package document is missing required element: spine")
+		r.Add(report.Error, "RSC-005", `missing required element "spine"`)
 	}
 
 	// OPF-015: version must be valid (2.0 or 3.0)
@@ -58,7 +71,7 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-005: manifest item IDs must be unique
 	checkManifestUniqueIDs(pkg, r)
 
-	// OPF-016: manifest item hrefs must be unique
+	// OPF-074: manifest item hrefs must be unique
 	checkManifestUniqueHrefs(pkg, r)
 
 	// OPF-018: manifest items must have id
@@ -77,16 +90,19 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	checkSpineIdrefResolves(pkg, r)
 
 	// OPF-010: spine must not be empty
-	checkSpineNotEmpty(pkg, r)
+	checkSpineNotEmpty(ep, r)
 
-	// OPF-017: spine idrefs should be unique
+	// OPF-034: spine idrefs should be unique (repeated spine items)
 	checkSpineUniqueIdrefs(pkg, r)
 
-	// OPF-021: fallback attribute must reference existing manifest item
+	// OPF-040: fallback attribute must reference existing manifest item
 	checkFallbackExists(pkg, r)
 
-	// OPF-022: fallback chains must not be circular
+	// OPF-045: fallback chains must not be circular (also covers self-reference)
 	checkFallbackNoCycle(pkg, r)
+
+	// RSC-032: fallback chain must resolve to a core media type
+	checkFallbackChainResolves(pkg, r)
 
 	// OPF-023: spine items must be content documents (or have fallback)
 	checkSpineContentDocs(pkg, r)
@@ -118,7 +134,7 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-033: manifest href must not contain fragment
 	checkManifestHrefNoFragment(pkg, r)
 
-	// OPF-034: package dir attribute must be valid
+	// OPF-012: package dir attribute must be valid
 	checkPackageDirValid(pkg, r)
 
 	// OPF-035: page-progression-direction must be valid
@@ -136,7 +152,7 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-039: guide element deprecated in EPUB 3
 	checkEPUB3GuideDeprecated(pkg, r)
 
-	// OPF-040: UUID format validation
+	// OPF-085: UUID format validation
 	checkUUIDFormat(pkg, r)
 
 	// OPF-041: spine must contain at least one linear item
@@ -150,6 +166,18 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 
 	// OPF-044: media-overlay references
 	checkMediaOverlayRef(pkg, r)
+
+	// RSC-005/OPF-063: page-map attribute on spine is not allowed
+	checkSpinePageMap(ep, pkg, r)
+
+	// OPF-099: OPF must not reference itself in manifest
+	checkManifestSelfReference(ep, pkg, r)
+
+	// OPF-093/RSC-007w: package metadata link checks
+	checkPackageMetadataLinks(ep, pkg, r)
+
+	// OPF-096: non-linear spine items must be reachable
+	checkSpineNonLinearReachable(ep, r)
 
 	return false
 }
@@ -228,7 +256,7 @@ func checkUniqueIdentifierResolves(pkg *epub.Package, r *report.Report) {
 			return
 		}
 	}
-	r.Add(report.Error, "OPF-008",
+	r.Add(report.Error, "OPF-030",
 		fmt.Sprintf("The unique-identifier '%s' was not found among dc:identifier elements", pkg.UniqueIdentifier))
 }
 
@@ -252,21 +280,29 @@ func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 }
 
 // OPF-010
-func checkSpineNotEmpty(pkg *epub.Package, r *report.Report) {
-	if len(pkg.Spine) == 0 {
+func checkSpineNotEmpty(ep *epub.EPUB, r *report.Report) {
+	if !ep.HasSpine {
+		return // RSC-005 already covers missing spine element
+	}
+	if len(ep.Package.Spine) == 0 {
 		r.Add(report.Error, "OPF-010", "The spine is incomplete: it must contain at least one itemref element")
 	}
 }
 
 // OPF-015: package version must be valid
+// OPF-001 (version): missing version attribute
 func checkPackageVersion(pkg *epub.Package, r *report.Report) {
-	if pkg.Version != "" && pkg.Version != "2.0" && pkg.Version != "3.0" {
+	if pkg.Version == "" {
+		r.Add(report.Error, "OPF-001", "Package version attribute is missing or empty")
+		return
+	}
+	if pkg.Version != "2.0" && pkg.Version != "3.0" {
 		r.Add(report.Error, "OPF-015",
 			fmt.Sprintf("Unsupported package version '%s'", pkg.Version))
 	}
 }
 
-// OPF-016: manifest hrefs must be unique
+// OPF-074: manifest hrefs must be unique
 func checkManifestUniqueHrefs(pkg *epub.Package, r *report.Report) {
 	seen := make(map[string]bool)
 	for _, item := range pkg.Manifest {
@@ -274,14 +310,14 @@ func checkManifestUniqueHrefs(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if seen[item.Href] {
-			r.Add(report.Error, "OPF-016",
+			r.Add(report.Error, "OPF-074",
 				fmt.Sprintf("Resource '%s' is declared in several manifest items", item.Href))
 		}
 		seen[item.Href] = true
 	}
 }
 
-// OPF-017: spine idrefs should be unique
+// OPF-034: spine idrefs should be unique (repeated spine items)
 func checkSpineUniqueIdrefs(pkg *epub.Package, r *report.Report) {
 	seen := make(map[string]bool)
 	for _, ref := range pkg.Spine {
@@ -289,7 +325,7 @@ func checkSpineUniqueIdrefs(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if seen[ref.IDRef] {
-			r.Add(report.Error, "OPF-017",
+			r.Add(report.Error, "OPF-034",
 				fmt.Sprintf("Spine itemref references same manifest entry as a previous itemref: '%s'", ref.IDRef))
 		}
 		seen[ref.IDRef] = true
@@ -331,7 +367,7 @@ func checkDCLanguageValid(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-021: fallback must reference existing manifest item
+// OPF-040: fallback must reference existing manifest item
 func checkFallbackExists(pkg *epub.Package, r *report.Report) {
 	manifestIDs := make(map[string]bool)
 	for _, item := range pkg.Manifest {
@@ -345,13 +381,13 @@ func checkFallbackExists(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if !manifestIDs[item.Fallback] {
-			r.Add(report.Error, "OPF-021",
+			r.Add(report.Error, "OPF-040",
 				fmt.Sprintf("Manifest item '%s' fallback '%s' could not be found", item.ID, item.Fallback))
 		}
 	}
 }
 
-// OPF-022: fallback chains must not be circular
+// OPF-045: fallback chains must not be circular (also covers self-reference)
 func checkFallbackNoCycle(pkg *epub.Package, r *report.Report) {
 	fallbackMap := make(map[string]string)
 	for _, item := range pkg.Manifest {
@@ -375,7 +411,7 @@ func checkFallbackNoCycle(pkg *epub.Package, r *report.Report) {
 				for _, c := range chain {
 					inCycle[c] = true
 				}
-				r.Add(report.Error, "OPF-022",
+				r.Add(report.Error, "OPF-045",
 					fmt.Sprintf("Manifest fallback chain contains a circular reference starting at '%s'", id))
 				break
 			}
@@ -468,8 +504,19 @@ func checkMediaTypeMatches(ep *epub.EPUB, r *report.Report) {
 		}
 
 		if item.MediaType != expectedType {
-			// Skip image-to-image mismatches - handled by MED-001
+			// Image-to-image mismatches: handled by MED-001 (content ≠ declared)
+			// and PKG-022 (content = declared but extension is wrong)
 			if strings.HasPrefix(item.MediaType, "image/") && strings.HasPrefix(expectedType, "image/") {
+				// PKG-022: extension doesn't match declared type, but content matches declared
+				data, err := ep.ReadFile(fullPath)
+				if err == nil {
+					actualType := detectImageType(data)
+					if actualType == item.MediaType {
+						r.Add(report.Warning, "PKG-022",
+							fmt.Sprintf("The file extension of '%s' doesn't match its media type '%s'", item.Href, item.MediaType))
+					}
+					// If actualType != item.MediaType, MED-001 handles it
+				}
 				continue
 			}
 			// Skip SVG mismatch - handled by MED-004
@@ -587,23 +634,26 @@ var validManifestProperties = map[string]bool{
 
 // Valid spine itemref properties
 var validSpineProperties = map[string]bool{
-	"page-spread-left":        true,
-	"page-spread-right":       true,
-	"rendition:layout-pre-paginated": true,
-	"rendition:layout-reflowable":    true,
-	"rendition:orientation-auto":     true,
+	"page-spread-left":                true,
+	"page-spread-right":               true,
+	"page-spread-center":              true,
+	"rendition:layout-pre-paginated":  true,
+	"rendition:layout-reflowable":     true,
+	"rendition:orientation-auto":      true,
 	"rendition:orientation-landscape": true,
 	"rendition:orientation-portrait":  true,
-	"rendition:spread-auto":          true,
-	"rendition:spread-landscape":     true,
-	"rendition:spread-both":          true,
-	"rendition:spread-none":          true,
+	"rendition:page-spread-center":    true,
+	"rendition:spread-auto":           true,
+	"rendition:spread-landscape":      true,
+	"rendition:spread-both":           true,
+	"rendition:spread-none":           true,
+	"rendition:spread-portrait":       true,
 }
 
-// OPF-027: package element must have unique-identifier attribute
+// OPF-048: package element must have unique-identifier attribute
 func checkPackageUniqueIdentifierAttr(pkg *epub.Package, r *report.Report) {
 	if pkg.UniqueIdentifier == "" {
-		r.Add(report.Error, "OPF-027", "Package element is missing unique-identifier attribute")
+		r.Add(report.Error, "OPF-048", "Package element is missing its required unique-identifier attribute")
 	}
 }
 
@@ -687,14 +737,14 @@ func checkManifestHrefNoFragment(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-034: package dir attribute must be valid
+// OPF-012: package dir attribute must be valid
 func checkPackageDirValid(pkg *epub.Package, r *report.Report) {
 	if pkg.Dir == "" {
 		return
 	}
-	if pkg.Dir != "ltr" && pkg.Dir != "rtl" {
-		r.Add(report.Error, "OPF-034",
-			fmt.Sprintf("Package element dir attribute value '%s' is invalid: must be equal to 'ltr' or 'rtl'", pkg.Dir))
+	if pkg.Dir != "ltr" && pkg.Dir != "rtl" && pkg.Dir != "auto" {
+		r.Add(report.Error, "OPF-012",
+			fmt.Sprintf("Package element dir attribute value '%s' is invalid: must be equal to 'ltr', 'rtl', or 'auto'", pkg.Dir))
 	}
 }
 
@@ -819,7 +869,24 @@ func checkEPUB3GuideDeprecated(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-040: UUID format validation
+// checkLegacyOEBPS12MediaTypes checks for legacy media types in OEBPS 1.2 publications.
+// OPF-039: text/x-oeb1-document (legacy HTML media type)
+// OPF-038: text/html (deprecated HTML media type in EPUB 2)
+func checkLegacyOEBPS12MediaTypes(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		switch item.MediaType {
+		case "text/x-oeb1-document":
+			r.Add(report.Warning, "OPF-039",
+				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
+		case "text/html":
+			r.Add(report.Warning, "OPF-038",
+				fmt.Sprintf("The media-type '%s' is not a valid EPUB media type for content documents", item.MediaType))
+		}
+	}
+}
+
+
+// OPF-085: UUID format validation
 var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func checkUUIDFormat(pkg *epub.Package, r *report.Report) {
@@ -827,7 +894,7 @@ func checkUUIDFormat(pkg *epub.Package, r *report.Report) {
 		if strings.HasPrefix(id.Value, "urn:uuid:") {
 			uuid := strings.TrimPrefix(id.Value, "urn:uuid:")
 			if !uuidRe.MatchString(uuid) {
-				r.Add(report.Warning, "OPF-040",
+				r.Add(report.Warning, "OPF-085",
 					fmt.Sprintf("UUID value '%s' is invalid", uuid))
 			}
 		}
@@ -927,6 +994,281 @@ func checkMediaOverlayRef(pkg *epub.Package, r *report.Report) {
 		if target.MediaType != "application/smil+xml" {
 			r.Add(report.Error, "OPF-044",
 				fmt.Sprintf("Media Overlay Document referenced by '%s' has wrong type '%s': expected application/smil+xml", item.Href, target.MediaType))
+		}
+	}
+}
+
+// RSC-005/OPF-063: spine page-map attribute is not allowed (Adobe extension)
+func checkSpinePageMap(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.SpinePageMap == "" {
+		return
+	}
+	r.Add(report.Error, "RSC-005", `attribute "page-map" not allowed here`)
+
+	// OPF-063: page-map attribute must reference a valid manifest item
+	manifestIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+	if !manifestIDs[pkg.SpinePageMap] {
+		r.Add(report.Warning, "OPF-063",
+			fmt.Sprintf("The 'page-map' attribute references an item '%s' that could not be found in the manifest", pkg.SpinePageMap))
+	}
+}
+
+// OPF-099: manifest must not reference the OPF file itself
+func checkManifestSelfReference(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	opfPath := ep.RootfilePath
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		resolved := ep.ResolveHref(item.Href)
+		if resolved == opfPath {
+			r.Add(report.Error, "OPF-099",
+				fmt.Sprintf("The package document '%s' references itself in the manifest", opfPath))
+			return
+		}
+	}
+}
+
+
+// RSC-032: fallback chain must ultimately resolve to a core media type
+func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
+	// Build ID → item map
+	byID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			byID[item.ID] = item
+		}
+	}
+
+	// Build set of items that are themselves fallbacks for other items.
+	// We only check the top of a fallback chain, not intermediate items.
+	isFallbackTarget := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.Fallback != "" {
+			isFallbackTarget[item.Fallback] = true
+		}
+	}
+
+	for _, item := range pkg.Manifest {
+		if item.Fallback == "" {
+			continue
+		}
+		// Skip items that are themselves fallback targets — only check chain roots
+		if isFallbackTarget[item.ID] {
+			continue
+		}
+		mt := item.MediaType
+		if idx := strings.Index(mt, ";"); idx >= 0 {
+			mt = strings.TrimSpace(mt[:idx])
+		}
+		if coreMediaTypes[mt] || isFontMediaType(mt) {
+			continue // Core type, no fallback chain needed
+		}
+
+		// Walk fallback chain to find if any item resolves to core type
+		visited := make(map[string]bool)
+		current := item.Fallback
+		resolved := false
+		isCircular := false
+		for current != "" {
+			if visited[current] {
+				// Detected a cycle — OPF-045 handles this, skip RSC-032
+				isCircular = true
+				break
+			}
+			visited[current] = true
+			next, ok := byID[current]
+			if !ok {
+				break // Broken chain - OPF-040 already reported this
+			}
+			nextMt := next.MediaType
+			if idx := strings.Index(nextMt, ";"); idx >= 0 {
+				nextMt = strings.TrimSpace(nextMt[:idx])
+			}
+			if coreMediaTypes[nextMt] {
+				resolved = true
+				break
+			}
+			current = next.Fallback
+		}
+
+		if !resolved && !isCircular {
+			r.Add(report.Error, "RSC-032",
+				fmt.Sprintf("Fallback chain for manifest item '%s' does not resolve to a core media type", item.ID))
+		}
+	}
+}
+
+// OPF-093: local (non-remote) <link> elements in the OPF metadata section
+// must have a media-type attribute.
+// RSC-007w: <link> elements pointing to resources missing from the EPUB container.
+func checkPackageMetadataLinks(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	for _, link := range pkg.MetadataLinks {
+		href := link.Href
+		if href == "" {
+			continue
+		}
+		// Only check non-remote (local) resources
+		if isRemoteURL(href) {
+			continue
+		}
+		// OPF-093: local link must have media-type
+		if link.MediaType == "" {
+			r.Add(report.Error, "OPF-093",
+				fmt.Sprintf("Metadata link to local resource '%s' is missing required 'media-type' attribute", href))
+		}
+		// RSC-007w: local link target must exist in the EPUB
+		// Strip fragment before resolving (e.g. content_001.xhtml#meta-json)
+		hrefPath := href
+		if idx := strings.Index(hrefPath, "#"); idx >= 0 {
+			hrefPath = hrefPath[:idx]
+		}
+		target := ep.ResolveHref(hrefPath)
+		if _, exists := ep.Files[target]; !exists {
+			r.Add(report.Warning, "RSC-007w",
+				fmt.Sprintf("Metadata link resource '%s' could not be found in the container", href))
+		}
+	}
+}
+
+// OPF-096: all non-linear spine items (linear="no") must be reachable via
+// the navigation document or a hyperlink from a linear content document.
+func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	pkg := ep.Package
+
+	// Build map of all manifest items by ID
+	manifestByID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		manifestByID[item.ID] = item
+	}
+
+	// Collect non-linear spine items
+	type nonLinearItem struct {
+		id   string
+		path string
+	}
+	var nonLinear []nonLinearItem
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			if item, ok := manifestByID[ref.IDRef]; ok && item.Href != "\x00MISSING" {
+				nonLinear = append(nonLinear, nonLinearItem{
+					id:   ref.IDRef,
+					path: ep.ResolveHref(item.Href),
+				})
+			}
+		}
+	}
+	if len(nonLinear) == 0 {
+		return
+	}
+
+	// Build set of reachable paths: start with nav doc links
+	reachable := make(map[string]bool)
+
+	// Find nav document and collect its links
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if !hasProperty(item.Properties, "nav") {
+			continue
+		}
+		navPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(navPath)
+		if err != nil {
+			continue
+		}
+		navDir := path.Dir(navPath)
+		// Collect all hrefs from nav document (scan <a href="..."> elements)
+		navDecoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := navDecoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "a" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local != "href" {
+					continue
+				}
+				u, err := url.Parse(attr.Value)
+				if err != nil || u.Scheme != "" {
+					continue
+				}
+				if u.Path == "" {
+					continue
+				}
+				target := resolvePath(navDir, u.Path)
+				reachable[target] = true
+			}
+		}
+	}
+
+	// Collect hyperlinks from all linear content documents
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			continue
+		}
+		item, ok := manifestByID[ref.IDRef]
+		if !ok || item.Href == "\x00MISSING" {
+			continue
+		}
+		docPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(docPath)
+		if err != nil {
+			continue
+		}
+		docDir := path.Dir(docPath)
+		// Scan for href attributes in a elements
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "a" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local != "href" {
+					continue
+				}
+				u, err := url.Parse(attr.Value)
+				if err != nil || u.Scheme != "" {
+					continue
+				}
+				if u.Path == "" {
+					continue
+				}
+				target := resolvePath(docDir, u.Path)
+				reachable[target] = true
+			}
+		}
+	}
+
+	// Report non-linear items that are not reachable
+	for _, item := range nonLinear {
+		if !reachable[item.path] {
+			r.Add(report.Error, "OPF-096",
+				fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
 		}
 	}
 }

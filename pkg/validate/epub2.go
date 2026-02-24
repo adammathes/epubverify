@@ -17,6 +17,10 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	if ep.Package == nil || ep.Package.Version >= "3.0" {
 		return
 	}
+	// Skip EPUB 2 checks for OEBPS 1.2 publications (OPF-001 was already emitted)
+	if ep.IsLegacyOEBPS12 {
+		return
+	}
 
 	// E2-004: spine must have toc attribute
 	checkEPUB2SpineToc(ep, r)
@@ -27,10 +31,18 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	// E2-006: EPUB 2 must not have dcterms:modified
 	checkEPUB2NoDCTermsModified(ep, r)
 
-	// E2-009: guide references must resolve
+	// OPF-031: guide references must resolve
 	checkEPUB2GuideRefs(ep, r)
 
+	// OPF-050: spine toc attribute must point to NCX document
+	// This also emits CHK-008 if toc references a non-NCX item, and returns false
+	tocIsNCX := checkSpineTocToNCX(ep, r)
+
 	// E2-001: NCX must be present
+	// If toc attribute pointed to a non-NCX resource, skip NCX validation
+	if ep.Package.SpineToc != "" && !tocIsNCX {
+		return
+	}
 	ncxPath := findNCXPath(ep)
 	if ncxPath == "" {
 		return // Can't check further
@@ -62,11 +74,29 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	// E2-008: navPoint content src must resolve
 	checkNCXContentSrcResolves(ep, data, ncxFullPath, r)
 
+	// RSC-012: NCX fragment identifiers must exist in target documents
+	checkNCXFragmentIdentifiers(ep, data, ncxFullPath, r)
+
 	// E2-010: NCX uid must match OPF uid
 	checkNCXUIDMatchesOPF(ep, data, r)
 
-	// E2-011: NCX IDs must be unique
+	// RSC-005: NCX IDs must be unique
 	checkNCXUniqueIDs(data, r)
+
+	// RSC-005: NCX id attribute values must be syntactically valid
+	checkNCXIDSyntax(data, r)
+
+	// RSC-005: NCX pageTarget type attribute must be valid
+	checkNCXPageTargetType(data, r)
+
+	// RSC-010: NCX content src must point to an OPS document (not a foreign resource)
+	checkNCXLinkToOPS(ep, data, ncxFullPath, r)
+
+	// OPF-032: guide references to non-OPS resources
+	checkEPUB2GuideToNonOPS(ep, r)
+
+	// OPF-035: XHTML OPS document declared as text/html
+	checkManifestItemXHTMLAsHTML(ep, r)
 
 	// E2-012: guide reference type must be valid
 	checkEPUB2GuideTypeValid(ep, r)
@@ -81,11 +111,14 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	checkNCXDepthValid(data, r)
 }
 
-// E2-004: EPUB 2 spine must have toc attribute
+// RSC-005: EPUB 2 spine must have toc attribute (schema validation error)
 func checkEPUB2SpineToc(ep *epub.EPUB, r *report.Report) {
+	if !ep.HasSpine {
+		return // Don't check toc attribute when spine element is missing
+	}
 	if ep.Package.SpineToc == "" {
-		r.Add(report.Error, "E2-004",
-			"EPUB 2 spine element is missing required attribute 'toc'")
+		r.Add(report.Error, "RSC-005",
+			`missing required attribute "toc"`)
 	}
 }
 
@@ -107,7 +140,7 @@ func checkEPUB2NoDCTermsModified(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// E2-009: guide references must resolve
+// OPF-031: guide references must resolve
 func checkEPUB2GuideRefs(ep *epub.EPUB, r *report.Report) {
 	manifestHrefs := make(map[string]bool)
 	for _, item := range ep.Package.Manifest {
@@ -126,10 +159,84 @@ func checkEPUB2GuideRefs(ep *epub.EPUB, r *report.Report) {
 		}
 		target := ep.ResolveHref(u.Path)
 		if !manifestHrefs[target] {
-			r.Add(report.Error, "E2-009",
+			r.Add(report.Error, "OPF-031",
 				fmt.Sprintf("Guide reference '%s' is not declared in OPF manifest", ref.Href))
 		}
+		// Also check if the file exists in the container
+		if _, exists := ep.Files[target]; !exists {
+			r.Add(report.Error, "RSC-007",
+				fmt.Sprintf("Referenced resource '%s' could not be found in the container", ref.Href))
+		}
 	}
+}
+
+
+// OPF-032: guide references must not point to non-OPS resources (e.g., images)
+var guideOPSTypes = map[string]bool{
+	"application/xhtml+xml": true,
+	"application/x-dtbook+xml": true,
+}
+
+func checkEPUB2GuideToNonOPS(ep *epub.EPUB, r *report.Report) {
+	// Build map of manifest items by resolved path and their media types
+	manifestByPath := make(map[string]string) // resolved path → media-type
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" && item.Href != "" {
+			manifestByPath[ep.ResolveHref(item.Href)] = item.MediaType
+		}
+	}
+
+	for _, ref := range ep.Package.Guide {
+		if ref.Href == "" {
+			continue
+		}
+		u, err := url.Parse(ref.Href)
+		if err != nil {
+			continue
+		}
+		target := ep.ResolveHref(u.Path)
+		mediaType, exists := manifestByPath[target]
+		if !exists {
+			continue // already reported by OPF-031
+		}
+		if !guideOPSTypes[mediaType] {
+			r.Add(report.Error, "OPF-032",
+				fmt.Sprintf("Guide reference '%s' points to a non-OPS resource of type '%s'", ref.Href, mediaType))
+		}
+	}
+}
+
+// OPF-035: EPUB 2 manifest item with media-type text/html should be application/xhtml+xml
+func checkManifestItemXHTMLAsHTML(ep *epub.EPUB, r *report.Report) {
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType == "text/html" {
+			r.Add(report.Warning, "OPF-035",
+				fmt.Sprintf("Manifest item '%s' is declared as text/html but EPUB 2 OPS documents must use application/xhtml+xml", item.Href))
+		}
+	}
+}
+
+// OPF-050: EPUB 2 spine toc attribute must point to an NCX document.
+// Returns true if toc points to a valid NCX document (or is absent).
+func checkSpineTocToNCX(ep *epub.EPUB, r *report.Report) bool {
+	if ep.Package.SpineToc == "" {
+		return false // RSC-005 already covers missing toc attribute
+	}
+	// Find the manifest item referenced by the toc attribute
+	for _, item := range ep.Package.Manifest {
+		if item.ID == ep.Package.SpineToc {
+			if item.MediaType != "application/x-dtbncx+xml" {
+				r.Add(report.Error, "OPF-050",
+					fmt.Sprintf("The 'toc' attribute value '%s' must reference the NCX document", ep.Package.SpineToc))
+				r.Add(report.Error, "CHK-008",
+					fmt.Sprintf("Skipping checks for item '%s' (not a valid NCX document)", ep.Package.SpineToc))
+				return false // Not NCX, skip NCX validation
+			}
+			return true // Valid NCX reference
+		}
+	}
+	// Not found in manifest - already caught by other checks
+	return false
 }
 
 // findNCXPath finds the NCX file path from the manifest.
@@ -229,7 +336,68 @@ func checkNCXNavPointContent(data []byte, r *report.Report) {
 	}
 }
 
-// E2-008: navPoint content src must point to an existing resource
+
+// RSC-012: NCX content src fragment identifiers must exist in target documents
+func checkNCXFragmentIdentifiers(ep *epub.EPUB, data []byte, ncxFullPath string, r *report.Report) {
+	ncxDir := path.Dir(ncxFullPath)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "content" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local != "src" || attr.Value == "" {
+				continue
+			}
+			u, err := url.Parse(attr.Value)
+			if err != nil || u.Scheme != "" || u.Fragment == "" {
+				continue
+			}
+			// We have a fragment reference - check if the target file has that ID
+			targetPath := resolvePath(ncxDir, u.Path)
+			if u.Path == "" {
+				targetPath = ncxFullPath
+			}
+			targetData, readErr := ep.ReadFile(targetPath)
+			if readErr != nil {
+				continue // File missing handled by RSC-007
+			}
+			if !documentHasID(targetData, u.Fragment) {
+				r.Add(report.Error, "RSC-012",
+					fmt.Sprintf("Fragment identifier is not defined in '%s'", attr.Value))
+			}
+		}
+	}
+}
+
+// documentHasID returns true if the XML/HTML document has an element with the given id attribute.
+func documentHasID(data []byte, id string) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// RSC-007: navPoint content src must point to an existing resource
 func checkNCXContentSrcResolves(ep *epub.EPUB, data []byte, ncxFullPath string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	ncxDir := path.Dir(ncxFullPath)
@@ -252,7 +420,7 @@ func checkNCXContentSrcResolves(ep *epub.EPUB, data []byte, ncxFullPath string, 
 					}
 					target := resolvePath(ncxDir, u.Path)
 					if _, exists := ep.Files[target]; !exists {
-						r.Add(report.Error, "E2-008",
+						r.Add(report.Error, "RSC-007",
 							fmt.Sprintf("Referenced resource '%s' could not be found in the container", attr.Value))
 					}
 				}
@@ -261,7 +429,7 @@ func checkNCXContentSrcResolves(ep *epub.EPUB, data []byte, ncxFullPath string, 
 	}
 }
 
-// E2-010: NCX dtb:uid must match the OPF dc:identifier
+// NCX-001: NCX dtb:uid must match the OPF dc:identifier
 func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 	// Find OPF unique-identifier value
 	opfUID := ""
@@ -307,12 +475,12 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 	}
 
 	if ncxUID != "" && strings.TrimSpace(ncxUID) != strings.TrimSpace(opfUID) {
-		r.Add(report.Error, "E2-010",
+		r.Add(report.Error, "NCX-001",
 			fmt.Sprintf("NCX identifier '%s' does not match OPF identifier '%s'", ncxUID, opfUID))
 	}
 }
 
-// E2-011: NCX id attributes must be unique
+// RSC-005: NCX id attributes must be unique (schema validation)
 func checkNCXUniqueIDs(data []byte, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	seen := make(map[string]bool)
@@ -329,10 +497,123 @@ func checkNCXUniqueIDs(data []byte, r *report.Report) {
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "id" {
 				if seen[attr.Value] {
-					r.Add(report.Error, "E2-011",
-						fmt.Sprintf("The id attribute '%s' does not have a unique value", attr.Value))
+					r.Add(report.Error, "RSC-005",
+						`The "id" attribute does not have a unique value`)
 				}
 				seen[attr.Value] = true
+			}
+		}
+	}
+}
+
+// isValidNCXID checks whether an NCX id attribute value is syntactically valid.
+// NCX ids must be valid XML NCNames (no colons, starts with letter or underscore).
+func isValidNCXID(id string) bool {
+	if id == "" {
+		return false
+	}
+	for i, c := range id {
+		if i == 0 {
+			if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c > 0x7F) {
+				return false
+			}
+		} else {
+			if !(c == '_' || c == '-' || c == '.' || (c >= '0' && c <= '9') ||
+				(c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c > 0x7F) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// RSC-005: NCX id attribute values must be syntactically valid XML NCNames
+func checkNCXIDSyntax(data []byte, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && !isValidNCXID(attr.Value) {
+				r.Add(report.Error, "RSC-005",
+					`value of attribute "id" is invalid`)
+				break
+			}
+		}
+	}
+}
+
+// RSC-005: NCX pageTarget type attribute must be "front", "normal", or "special"
+func checkNCXPageTargetType(data []byte, r *report.Report) {
+	validTypes := map[string]bool{"front": true, "normal": true, "special": true}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "pageTarget" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Value != "" && !validTypes[attr.Value] {
+				r.Add(report.Error, "RSC-005",
+					`value of attribute "type" is invalid`)
+			}
+		}
+	}
+}
+
+// OPS content document media types
+var opsMediaTypes = map[string]bool{
+	"application/xhtml+xml": true,
+	"application/x-dtbncx+xml": true,
+}
+
+// RSC-010: NCX navPoint content src must point to an OPS content document, not a foreign resource
+func checkNCXLinkToOPS(ep *epub.EPUB, data []byte, ncxFullPath string, r *report.Report) {
+	// Build map of OPS document paths from manifest
+	opsPaths := make(map[string]bool)
+	for _, item := range ep.Package.Manifest {
+		if item.MediaType == "application/xhtml+xml" || item.MediaType == "application/x-dtbook+xml" {
+			opsPaths[ep.ResolveHref(item.Href)] = true
+		}
+	}
+
+	ncxDir := path.Dir(ncxFullPath)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "content" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "src" && attr.Value != "" {
+				u, err := url.Parse(attr.Value)
+				if err != nil || u.Scheme != "" {
+					continue
+				}
+				target := resolvePath(ncxDir, u.Path)
+				// Only check if target exists (missing resources caught by RSC-007)
+				if _, exists := ep.Files[target]; !exists {
+					continue
+				}
+				// Check if the target is an OPS document
+				if !opsPaths[target] {
+					r.Add(report.Error, "RSC-010",
+						fmt.Sprintf("The media type of '%s' is not an OPS Core Media Type", attr.Value))
+				}
 			}
 		}
 	}
@@ -498,3 +779,31 @@ func checkNCXDepthValid(data []byte, r *report.Report) {
 			fmt.Sprintf("NCX declared depth '%s' does not match actual navigation depth '%d'", declaredDepth, actualDepth))
 	}
 }
+
+// checkLegacyNCXForAll runs NCX fragment validation for any EPUB (2 or 3) that has an NCX.
+// This is separate from checkEPUB2 which skips for EPUB 3 publications.
+func checkLegacyNCXForAll(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	// Skip EPUB 2 - already handled by checkEPUB2
+	if ep.Package.Version < "3.0" {
+		return
+	}
+	// Find the NCX document in the manifest
+	ncxPath := findNCXPath(ep)
+	if ncxPath == "" {
+		return
+	}
+	ncxFullPath := ep.ResolveHref(ncxPath)
+	if _, exists := ep.Files[ncxFullPath]; !exists {
+		return
+	}
+	data, err := ep.ReadFile(ncxFullPath)
+	if err != nil {
+		return
+	}
+	// RSC-012: NCX fragment identifiers must exist in target documents
+	checkNCXFragmentIdentifiers(ep, data, ncxFullPath, r)
+}
+
