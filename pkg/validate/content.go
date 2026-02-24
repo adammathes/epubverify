@@ -161,8 +161,11 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		}
 
 		// RSC-003: fragment identifiers must resolve (skip nav - handled by NAV checks)
+		// Skip when external base URL is set (all relative hrefs become remote)
 		if !isNav {
-			checkFragmentIdentifiers(ep, data, fullPath, r)
+			if extBase, _ := detectExternalBaseURL(data); extBase == "" {
+				checkFragmentIdentifiers(ep, data, fullPath, r)
+			}
 		}
 
 		// RSC-004: no remote resources (img src with http://)
@@ -1346,6 +1349,9 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 		}
 	}
 
+	// Detect external base URL (from <base href="..."> or xml:base="...") for RSC-006
+	_, isHTMLBase := detectExternalBaseURL(data)
+
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	// Match href="..." in processing instruction data
 	piHrefRe := regexp.MustCompile(`href\s*=\s*["']([^"']+)["']`)
@@ -1460,10 +1466,17 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 					rel = attr.Value
 				}
 			}
-			if rel == "stylesheet" && isRemoteURL(href) {
-				r.AddWithLocation(report.Error, "RSC-006",
-					fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
-					location)
+			if rel == "stylesheet" {
+				if isRemoteURL(href) {
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
+						location)
+				} else if href != "" && isHTMLBase {
+					// RSC-006: relative stylesheet becomes remote via HTML <base> element
+					r.AddWithLocation(report.Error, "RSC-006",
+						fmt.Sprintf("Remote resource reference is not allowed: '%s'", href),
+						location)
+				}
 			}
 		}
 
@@ -1572,6 +1585,9 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
+	// Detect external base URL for RSC-006 (relative paths become remote)
+	externalBase, _ := detectExternalBaseURL(data)
+
 	// Build map of remote manifest URLs (http/https hrefs) for RSC-006 checks on <a> links.
 	remoteManifestItems := make(map[string]epub.ManifestItem)
 	// Build manifest path → media type map for RSC-011
@@ -1613,6 +1629,15 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 									fullPath)
 							}
 						}
+					} else if externalBase != "" {
+						// RSC-006: relative href becomes remote via external base URL
+						u, err := url.Parse(attr.Value)
+						if err == nil && u.Scheme == "" && u.Path != "" {
+							r.AddWithLocation(report.Error, "RSC-006",
+								fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+								fullPath)
+						}
+						// Skip checkHyperlink since local lookup would give wrong RSC-007
 					} else {
 						// RSC-011: hyperlinks to XHTML/SVG docs must point to spine items
 						u, err := url.Parse(attr.Value)
@@ -1627,8 +1652,8 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 								}
 							}
 						}
+						checkHyperlink(ep, attr.Value, itemDir, fullPath, r)
 					}
-					checkHyperlink(ep, attr.Value, itemDir, fullPath, r)
 				}
 			}
 		}
@@ -2028,6 +2053,45 @@ func checkNoBaseElement(data []byte, location string, r *report.Report) {
 			}
 		}
 	}
+}
+
+// detectExternalBaseURL scans an XHTML document for an external base URL set via
+// <base href="http://..."> or xml:base="http://..." on the root element.
+// Returns (baseURL, isHTMLBase) where isHTMLBase is true if found via <base> element.
+// Returns ("", false) if no external base URL is set.
+func detectExternalBaseURL(data []byte) (string, bool) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	first := true
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		// Check for xml:base on the first element (root element)
+		if first {
+			first = false
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "base" && attr.Name.Space == "http://www.w3.org/XML/1998/namespace" {
+					if isRemoteURL(attr.Value) {
+						return attr.Value, false // xml:base
+					}
+				}
+			}
+		}
+		// Check for <base href="..."> element
+		if se.Name.Local == "base" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" && isRemoteURL(attr.Value) {
+					return attr.Value, true // HTML <base> element
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // HTM-010: EPUB 3 content documents must use HTML5 DOCTYPE or no DOCTYPE.
