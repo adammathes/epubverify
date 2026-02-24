@@ -23,6 +23,7 @@ type EPUB struct {
 	HasMetadata   bool
 	HasManifest   bool
 	HasSpine      bool
+	PackageXMLLang string // xml:lang attribute on <package> element
 }
 
 // Rootfile represents a rootfile element from container.xml.
@@ -55,13 +56,28 @@ type Package struct {
 	ElementOrder     []string       // order of top-level OPF elements (metadata, manifest, spine, guide)
 	HasMediaActiveClass bool        // true if media:active-class or media:playback-active-class is defined
 	MetadataLinks    []MetadataLink // <link> elements in the metadata section
+	MetaSchemes      []MetaScheme   // scheme attributes on meta elements
+	AllXMLLangs      []string       // all xml:lang attribute values found in the OPF
+	PrimaryMetas     []MetaPrimary  // meta elements without refines (primary metadata)
+	MetaEmptyProps   int            // count of meta elements with empty property attribute
+	MetaListProps    []string       // meta property attributes that contain spaces (multiple values)
+	MetaEmptyValues  int            // count of meta elements with empty text content
+}
+
+// MetaPrimary represents a non-refining meta element (primary metadata).
+type MetaPrimary struct {
+	Property string
+	Value    string
 }
 
 // MetadataLink represents a <link> element in the OPF metadata section.
 type MetadataLink struct {
-	Href      string
-	Rel       string
-	MediaType string
+	Href       string
+	Rel        string
+	MediaType  string
+	Hreflang   string
+	Refines    string // refines attribute
+	Properties string // properties attribute
 }
 
 // Metadata holds the OPF metadata section.
@@ -74,7 +90,8 @@ type Metadata struct {
 	Sources      []string
 	Creators     []DCCreator
 	Contributors []DCCreator  // dc:contributor elements (same structure as dc:creator)
-	DCElementIDs []string     // id attributes from all dc:* elements (publisher, subject, description, etc.)
+	DCElementIDs []string            // id attributes from all dc:* elements (publisher, subject, description, etc.)
+	IDToElement  map[string]string   // maps element id → element local name (e.g., "creator", "title", "subject")
 }
 
 // DCTitle represents a dc:title element with optional id attribute.
@@ -98,21 +115,29 @@ type MetaRefines struct {
 	Value    string
 }
 
-// DCIdentifier is a dc:identifier element with optional id attribute.
+// DCIdentifier is a dc:identifier element with optional id and scheme attributes.
 type DCIdentifier struct {
-	ID    string
-	Value string
+	ID     string
+	Value  string
+	Scheme string // opf:scheme attribute (EPUB 2)
+}
+
+// MetaScheme represents a scheme attribute on a meta element.
+type MetaScheme struct {
+	Scheme   string // the scheme attribute value
+	Property string // the property attribute value
 }
 
 // ManifestItem represents a single item in the OPF manifest.
 type ManifestItem struct {
-	ID           string
-	Href         string
-	MediaType    string
-	Properties   string
-	Fallback     string
-	HasID        bool   // false when id attribute is missing
-	MediaOverlay string // media-overlay attribute
+	ID            string
+	Href          string
+	MediaType     string
+	Properties    string
+	Fallback      string
+	FallbackStyle string // fallback-style attribute (EPUB 2, deprecated in EPUB 3)
+	HasID         bool   // false when id attribute is missing
+	MediaOverlay  string // media-overlay attribute
 }
 
 // SpineItemref represents a single itemref in the OPF spine.

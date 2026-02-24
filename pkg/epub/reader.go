@@ -148,6 +148,7 @@ func (ep *EPUB) ParseOPF() error {
 	ep.HasManifest = structInfo.hasManifest
 	ep.HasSpine = structInfo.hasSpine
 	ep.IsLegacyOEBPS12 = structInfo.isLegacyOEBPS12
+	ep.PackageXMLLang = structInfo.xmlLang
 
 	p := &Package{
 		UniqueIdentifier:         structInfo.uniqueIdentifier,
@@ -189,6 +190,31 @@ func (ep *EPUB) ParseOPF() error {
 	}
 	p.ModifiedCount = modifiedCount
 	p.MetadataLinks = structInfo.metadataLinks
+	p.MetaSchemes = structInfo.metaSchemes
+	p.AllXMLLangs = structInfo.allXMLLangs
+	p.MetaEmptyProps = structInfo.metaEmptyProps
+	p.MetaListProps = structInfo.metaListProps
+	p.MetaEmptyValues = structInfo.metaEmptyValues
+
+	// Map meta element IDs to their property names for refines validation
+	if p.Metadata.IDToElement == nil {
+		p.Metadata.IDToElement = make(map[string]string)
+	}
+	for id, prop := range structInfo.metaIDToProperty {
+		p.Metadata.IDToElement[id] = prop
+	}
+
+	// Build primary metas (non-refining meta elements)
+	// MetaRefines only contains metas WITH refines; derive primary from metas that aren't refining
+	refiningProps := make(map[string]bool) // track properties that appear as refining
+	for _, mr := range structInfo.metaRefines {
+		refiningProps[mr.Property+"|"+mr.Value] = true
+	}
+	for _, m := range structInfo.metas {
+		if !refiningProps[m.property+"|"+m.value] {
+			p.PrimaryMetas = append(p.PrimaryMetas, MetaPrimary{Property: m.property, Value: m.value})
+		}
+	}
 
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
@@ -213,6 +239,7 @@ type opfStructInfo struct {
 	uniqueIdentifier         string
 	dir                      string
 	prefix                   string
+	xmlLang                  string
 	hasMetadata              bool
 	hasManifest              bool
 	hasSpine                 bool
@@ -227,6 +254,12 @@ type opfStructInfo struct {
 	guideRefs                []GuideReference
 	elementOrder             []string
 	metadataLinks            []MetadataLink
+	allXMLLangs              []string // all xml:lang attribute values found in the OPF
+	metaSchemes              []MetaScheme // scheme attributes on meta elements
+	metaIDToProperty         map[string]string // meta element ID → property name
+	metaEmptyProps           int      // count of meta elements with empty property attribute
+	metaListProps            []string // meta property attributes containing spaces
+	metaEmptyValues          int      // count of meta elements with empty text content
 }
 
 type metaInfo struct {
@@ -237,7 +270,9 @@ type metaInfo struct {
 // scanOPFStructure does a raw XML scan of the OPF to detect structural elements.
 func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	info := &opfStructInfo{}
+	info := &opfStructInfo{
+		metaIDToProperty: make(map[string]string),
+	}
 
 	for {
 		tok, err := decoder.Token()
@@ -251,6 +286,13 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
+		}
+
+		// Collect xml:lang attributes from any element
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "lang" && (attr.Name.Space == "http://www.w3.org/XML/1998/namespace" || attr.Name.Space == "xml") {
+				info.allXMLLangs = append(info.allXMLLangs, attr.Value)
+			}
 		}
 
 		switch se.Name.Local {
@@ -269,6 +311,11 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					info.dir = attr.Value
 				case "prefix":
 					info.prefix = attr.Value
+				case "lang":
+					// xml:lang on the package element
+					if attr.Name.Space == "http://www.w3.org/XML/1998/namespace" || attr.Name.Space == "xml" {
+						info.xmlLang = attr.Value
+					}
 				}
 			}
 		case "metadata":
@@ -322,7 +369,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				Type: refType, Title: refTitle, Href: refHref,
 			})
 		case "meta":
-			var prop, refines, val, metaID string
+			var prop, refines, val, metaID, scheme string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
@@ -331,17 +378,33 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					refines = attr.Value
 				case "id":
 					metaID = attr.Value
+				case "scheme":
+					scheme = attr.Value
 				}
 			}
-			if prop != "" {
+			if scheme != "" {
+				info.metaSchemes = append(info.metaSchemes, MetaScheme{Scheme: scheme, Property: prop})
+			}
+			// Track empty/invalid property attributes
+			trimmedProp := strings.TrimSpace(prop)
+			if trimmedProp == "" {
+				info.metaEmptyProps++
+			} else if strings.Contains(trimmedProp, " ") {
+				info.metaListProps = append(info.metaListProps, prop)
+			}
+			if trimmedProp != "" {
 				// Read the text content
 				inner, _ := decoder.Token()
 				if cd, ok := inner.(xml.CharData); ok {
 					val = strings.TrimSpace(string(cd))
 				}
+				if val == "" {
+					info.metaEmptyValues++
+				}
 				info.metas = append(info.metas, metaInfo{property: prop, value: val})
 				if metaID != "" {
 					info.metaIDs = append(info.metaIDs, metaID)
+					info.metaIDToProperty[metaID] = prop
 				}
 				if refines != "" {
 					info.metaRefines = append(info.metaRefines, MetaRefines{
@@ -353,7 +416,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				}
 			}
 		case "link":
-			var href, rel, mediaType string
+			var href, rel, mediaType, hreflang, linkRefines, linkProps string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "href":
@@ -362,13 +425,22 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					rel = attr.Value
 				case "media-type":
 					mediaType = attr.Value
+				case "hreflang":
+					hreflang = attr.Value
+				case "refines":
+					linkRefines = attr.Value
+				case "properties":
+					linkProps = attr.Value
 				}
 			}
-			if href != "" {
+			if href != "" || rel != "" {
 				info.metadataLinks = append(info.metadataLinks, MetadataLink{
-					Href:      href,
-					Rel:       rel,
-					MediaType: mediaType,
+					Href:       href,
+					Rel:        rel,
+					MediaType:  mediaType,
+					Hreflang:   hreflang,
+					Refines:    linkRefines,
+					Properties: linkProps,
 				})
 			}
 		}
@@ -381,6 +453,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 func parseMetadata(data []byte) Metadata {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	var md Metadata
+	md.IDToElement = make(map[string]string)
 	inMetadata := false
 
 	for {
@@ -409,6 +482,7 @@ func parseMetadata(data []byte) Metadata {
 			}
 			if dcID != "" {
 				md.DCElementIDs = append(md.DCElementIDs, dcID)
+				md.IDToElement[dcID] = t.Name.Local
 			}
 
 			switch t.Name.Local {
@@ -418,16 +492,20 @@ func parseMetadata(data []byte) Metadata {
 				md.Titles = append(md.Titles, DCTitle{ID: id, Value: text})
 			case "identifier":
 				id := dcID
+				scheme := ""
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "scheme" {
+						scheme = attr.Value
+					}
+				}
 				val := readElementText(decoder)
-				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val})
+				md.Identifiers = append(md.Identifiers, DCIdentifier{ID: id, Value: val, Scheme: scheme})
 			case "language":
-				if text := readElementText(decoder); text != "" {
-					md.Languages = append(md.Languages, text)
-				}
+				text := readElementText(decoder)
+				md.Languages = append(md.Languages, text)
 			case "date":
-				if text := readElementText(decoder); text != "" {
-					md.Dates = append(md.Dates, text)
-				}
+				text := readElementText(decoder)
+				md.Dates = append(md.Dates, text)
 			case "source":
 				if text := readElementText(decoder); text != "" {
 					md.Sources = append(md.Sources, text)
@@ -518,6 +596,8 @@ func parseManifestRaw(data []byte) ([]ManifestItem, error) {
 						item.Properties = attr.Value
 					case "fallback":
 						item.Fallback = attr.Value
+					case "fallback-style":
+						item.FallbackStyle = attr.Value
 					case "media-overlay":
 						item.MediaOverlay = attr.Value
 					}

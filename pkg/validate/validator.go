@@ -104,6 +104,15 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		if opts.Accessibility {
 			checkAccessibility(ep, r)
 		}
+	} else {
+		// Single-file mode: run targeted content checks on XHTML/SVG content
+		checkSingleFileContent(ep, r)
+	}
+
+	// Post-processing: in single-file mode, remap specific check IDs to RSC-005
+	// to match EPUBCheck's schema validation behavior.
+	if opts.SingleFileMode {
+		r.RemapToRSC005(rsc005Mapping)
 	}
 
 	// Post-processing: when not in Strict mode, downgrade certain warnings
@@ -114,13 +123,108 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		r.DowngradeToInfo(divergenceChecks)
 	}
 
-	// Post-downgrade: emit OEBPS 1.2 legacy media type warnings AFTER DowngradeToInfo
+	// Post-downgrade: emit legacy media type warnings AFTER DowngradeToInfo
 	// so they are not downgraded to INFO. These are real EPUBCheck warnings.
-	if ep.IsLegacyOEBPS12 && ep.Package != nil && ep.Package.Version != "" {
-		checkLegacyOEBPS12MediaTypes(ep.Package, r)
+	if ep.Package != nil && ep.Package.Version != "" {
+		if ep.IsLegacyOEBPS12 || ep.Package.Version < "3.0" {
+			checkLegacyOEBPS12MediaTypes(ep, r)
+		}
 	}
 
 	return r, nil
+}
+
+// rsc005Mapping maps specific check IDs to RSC-005 with EPUBCheck-compatible
+// messages. Each entry transforms the original message text into the format
+// expected by EPUBCheck's schema validation (RelaxNG).
+var rsc005Mapping = map[string]func(string) string{
+	"OPF-001": func(msg string) string {
+		if strings.Contains(msg, "dc:title") {
+			return `missing required element "dc:title"`
+		}
+		if strings.Contains(msg, "version") {
+			return `missing required attribute "version"`
+		}
+		return msg
+	},
+	"OPF-002": func(msg string) string {
+		return `missing required element "dc:identifier"`
+	},
+	"OPF-003": func(msg string) string {
+		return `missing required element "dc:language"`
+	},
+	"OPF-004": func(msg string) string {
+		return `missing required element "dcterms:modified"`
+	},
+	"OPF-007": func(msg string) string {
+		if strings.Contains(msg, "media-type") {
+			return `missing required attribute "media-type"`
+		}
+		return "" // don't remap prefix override warnings
+	},
+	"OPF-010": func(msg string) string {
+		return `missing required element "itemref"`
+	},
+	"OPF-019": func(msg string) string {
+		return `value of property "dcterms:modified" must be of the form "CCYY-MM-DDThh:mm:ssZ"`
+	},
+	"OPF-030": func(msg string) string {
+		return `"unique-identifier" attribute does not resolve to a dc:identifier element`
+	},
+	"OPF-031": func(msg string) string {
+		return `must be a string with length at least 1`
+	},
+	"OPF-032": func(msg string) string {
+		return `must be a string with length at least 1`
+	},
+	"OPF-034": func(msg string) string {
+		return `Itemref refers to the same manifest entry as a previous itemref`
+	},
+	"OPF-008": func(msg string) string {
+		return `missing required attribute "unique-identifier"`
+	},
+	"OPF-037": func(msg string) string {
+		if strings.Contains(msg, "must be a relative URL") {
+			return `@refines must be a relative URL`
+		}
+		if strings.Contains(msg, "refines missing target") {
+			return `@refines missing target id`
+		}
+		return "" // don't remap other OPF-037 messages (e.g., deprecated media types)
+	},
+	"OPF-044": func(msg string) string {
+		return `The media-overlay attribute must refer to an item with media type "application/smil+xml"; must be of the "application/smil+xml" type`
+	},
+	"OPF-012": func(msg string) string {
+		if strings.Contains(msg, "at most once") {
+			return `The 'cover-image' property must not occur more than one time`
+		}
+		return "" // don't remap other OPF-012 messages
+	},
+	"OPF-050": func(msg string) string {
+		if strings.Contains(msg, "toc attribute must be set") {
+			return `When an NCX document is included in the EPUB, the toc attribute must be set on the spine element`
+		}
+		return "" // don't remap other OPF-050 messages
+	},
+	"OPF-025a": func(msg string) string {
+		return `value of attribute "scheme" is invalid; must be an NMTOKEN`
+	},
+	"OPF-053b": func(msg string) string {
+		return `element "dc:date" not allowed here`
+	},
+	"OPF-086b": func(msg string) string {
+		return `attribute "fallback-style" not allowed here`
+	},
+	"OPF-039b": func(msg string) string {
+		return `element "guide" incomplete; missing required element "reference"`
+	},
+	"OPF-025b": func(msg string) string {
+		return `value of attribute "property" is invalid; must be a string with length at least 1`
+	},
+	"OPF-088": func(msg string) string {
+		return msg // pass through the message as-is for RSC-005
+	},
 }
 
 // divergenceChecks lists check IDs where epubverify flags issues that
@@ -196,6 +300,18 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
 		mediaType = "image/svg+xml"
 	}
 
+	// For SVG files, add a separate nav item (XHTML) to satisfy nav requirements
+	navItem := ""
+	navSpine := ""
+	contentProps := ` properties="nav"`
+	if mediaType != "application/xhtml+xml" {
+		contentProps = ""
+		navItem = `
+  <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`
+		navSpine = `
+  <itemref idref="nav"/>`
+	}
+
 	opf := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="en" unique-identifier="uid">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -205,12 +321,18 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
   <meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>
 </metadata>
 <manifest>
-  <item id="content" href="%s" media-type="%s" properties="nav"/>
+  <item id="content" href="%s" media-type="%s"%s/>%s
 </manifest>
 <spine>
-  <itemref idref="content"/>
+  <itemref idref="content"/>%s
 </spine>
-</package>`, name, mediaType)
+</package>`, name, mediaType, contentProps, navItem, navSpine)
+
+	nav := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Nav</title></head>
+<body><nav epub:type="toc"><ol><li><a href="#">Start</a></li></ol></nav></body>
+</html>`
 
 	container := `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -224,6 +346,9 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
 		"META-INF/container.xml": []byte(container),
 		"EPUB/package.opf":       []byte(opf),
 		"EPUB/" + name:           data,
+	}
+	if mediaType != "application/xhtml+xml" {
+		files["EPUB/nav.xhtml"] = []byte(nav)
 	}
 
 	tmpPath, err := createTempEPUB(files)

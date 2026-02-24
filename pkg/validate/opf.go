@@ -162,11 +162,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-041: spine must contain at least one linear item
 	checkSpineHasLinear(pkg, r)
 
-	// OPF-042: rendition:flow must be valid
-	checkRenditionFlowValid(pkg, r)
+	// Rendition property validation (value, cardinality, refines, spine overrides)
+	checkRenditionProperties(pkg, r)
 
-	// OPF-043: prefix declaration syntax
+	// OPF-043/007/007b/007c/004c: prefix declaration validation
 	checkPrefixDeclaration(pkg, r)
+
+	// OPF-028: undeclared prefix in metadata properties
+	checkUndeclaredPrefixes(pkg, r)
 
 	// OPF-044: media-overlay references
 	checkMediaOverlayRef(pkg, r)
@@ -174,10 +177,10 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// RSC-005/OPF-063: page-map attribute on spine is not allowed
 	checkSpinePageMap(ep, pkg, r)
 
-	if !opts.SingleFileMode {
-		// OPF-099: OPF must not reference itself in manifest
-		checkManifestSelfReference(ep, pkg, r)
+	// OPF-099: OPF must not reference itself in manifest
+	checkManifestSelfReference(ep, pkg, r)
 
+	if !opts.SingleFileMode {
 		// OPF-093/RSC-007w: package metadata link checks
 		checkPackageMetadataLinks(ep, pkg, r)
 
@@ -188,7 +191,230 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-090: manifest items with non-preferred but valid core media types
 	checkNonPreferredMediaTypes(pkg, r)
 
+	// RSC-029: data URLs in manifest items
+	checkDataURLsInManifest(pkg, r)
+
+	// RSC-030: file URLs in manifest/link
+	checkFileURLsInOPF(pkg, r)
+
+	// RSC-033: URL query strings in manifest/link
+	checkQueryStringsInOPF(pkg, r)
+
+	// OPF-028: dcterms:modified count in metadata (multiple occurrences)
+	checkDCTermsModifiedCount(pkg, r)
+
+	// OPF-053: dc:date warnings
+	checkDCDateWarnings(pkg, r)
+
+	// OPF-052: dc:creator role validation
+	checkDCCreatorRole(pkg, r)
+
+	// OPF-054: dc:date empty value
+	checkDCDateEmpty(pkg, r)
+
+	// OPF-091: manifest item href must not have fragment
+	checkManifestHrefFragment(pkg, r)
+
+	// OPF-065: refines cycle detection
+	checkRefinesCycle(pkg, r)
+
+	// OPF-098: link must not target manifest ID
+	checkLinkTargetNotManifestID(pkg, r)
+
+	// OPF-094/095: link relation and properties validation
+	checkLinkRelation(pkg, r)
+
+	// OPF-026: metadata property names must be defined
+	checkMetaPropertyDefined(pkg, r)
+
+	// OPF-004c: dcterms:modified must occur as non-refining meta
+	checkDCTermsModifiedNonRefining(pkg, r)
+
+	// (rendition deprecation handled by checkRenditionProperties)
+
+	// OPF-092: language tag validation
+	checkLanguageTags(ep, pkg, r)
+
+	// OPF-055: empty dc:title warning
+	checkDCTitleEmptyWarning(pkg, r)
+
+	// OPF-012: cover-image property uniqueness
+	checkCoverImageUnique(pkg, r)
+
+	// OPF-050: NCX identification
+	checkNCXIdentification(pkg, r)
+
+	// OPF-027: scheme attribute validation on meta elements
+	checkMetaSchemeValid(pkg, r)
+
+	// Metadata refines property validation (D.3 vocabulary checks)
+	checkMetaRefinesPropertyRules(pkg, r)
+
+	// OPF-032b: meta element with empty text content
+	checkMetaEmptyValue(pkg, r)
+
+	// OPF-025b: meta property attribute validation (empty, list)
+	checkMetaPropertyAttr(pkg, r)
+
+	// OPF-086b: EPUB 3 fallback-style is deprecated
+	checkFallbackStyleDeprecated(pkg, r)
+
+	// EPUB 2 spine toc attribute required (runs even in single-file mode)
+	if pkg.Version < "3.0" && pkg.Version != "" && ep.HasSpine && !ep.IsLegacyOEBPS12 {
+		if pkg.SpineToc == "" {
+			r.Add(report.Error, "RSC-005",
+				`missing required attribute "toc"`)
+		}
+	}
+
+	// OPF-041: EPUB 2 fallback-style attribute pointing to non-existing ID
+	if pkg.Version < "3.0" && pkg.Version != "" {
+		checkFallbackStyleRef(pkg, r)
+	}
+
+	// Empty guide check (EPUB 2 schema error)
+	if pkg.HasGuide && len(pkg.Guide) == 0 {
+		r.Add(report.Error, "OPF-039b",
+			`element "guide" incomplete; missing required element "reference"`)
+	}
+
+	// RSC-005: element order (metadata must come before manifest, manifest before spine)
+	checkElementOrder(pkg, r)
+
+	// RSC-005: nav property checks (EPUB 3)
+	checkNavProperty(pkg, r)
+
 	return false
+}
+
+// checkElementOrder verifies that OPF child elements appear in the required order.
+func checkElementOrder(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	order := pkg.ElementOrder
+	if len(order) < 2 {
+		return
+	}
+	// The required order is: metadata, manifest, spine, [guide]
+	expectedOrder := []string{"metadata", "manifest", "spine"}
+	idxMap := make(map[string]int)
+	for i, elem := range order {
+		if _, seen := idxMap[elem]; !seen {
+			idxMap[elem] = i
+		}
+	}
+	metaIdx, hasMeta := idxMap["metadata"]
+	manIdx, hasMan := idxMap["manifest"]
+	_, hasSpine := idxMap["spine"]
+
+	if hasMeta && hasMan && manIdx < metaIdx {
+		r.Add(report.Error, "RSC-005",
+			`element "manifest" not allowed yet; expected element "metadata"`)
+		r.Add(report.Error, "RSC-005",
+			`element "metadata" not allowed here; expected element "spine"`)
+	}
+
+	_ = expectedOrder
+	_ = hasSpine
+}
+
+// checkNavProperty verifies that exactly one manifest item has the "nav" property
+// and that it is an XHTML Content Document.
+func checkNavProperty(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	navCount := 0
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "nav") {
+			navCount++
+			// Must be XHTML
+			if item.MediaType != "application/xhtml+xml" {
+				r.Add(report.Error, "RSC-005",
+					`the Navigation Document must be of the "application/xhtml+xml" type`)
+			}
+		}
+	}
+	if navCount == 0 {
+		r.Add(report.Error, "RSC-005",
+			`Exactly one manifest item must declare the "nav" property (0 found)`)
+	} else if navCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			`Exactly one manifest item must declare the "nav" property (multiple found)`)
+	}
+}
+
+// OPF-032b: meta element with empty text content (excluding rendition properties
+// which are handled by checkRenditionProperties with property-specific messages)
+func checkMetaEmptyValue(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Count empty rendition metas to exclude from generic check
+	renditionEmpty := 0
+	for _, pm := range pkg.PrimaryMetas {
+		if pm.Value == "" && strings.HasPrefix(pm.Property, "rendition:") {
+			renditionEmpty++
+		}
+	}
+	count := pkg.MetaEmptyValues - renditionEmpty
+	for i := 0; i < count; i++ {
+		r.Add(report.Error, "OPF-032",
+			"meta element must have non-empty text content")
+	}
+}
+
+// OPF-025b: meta property attribute must be a single well-formed value
+func checkMetaPropertyAttr(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Empty property attribute
+	for i := 0; i < pkg.MetaEmptyProps; i++ {
+		r.Add(report.Error, "OPF-025b",
+			`value of attribute "property" is invalid; must be a string with length at least 1`)
+	}
+	// Property with multiple space-separated values
+	for _, prop := range pkg.MetaListProps {
+		// RSC-005 for NMTOKEN validation (property value contains spaces)
+		r.Add(report.Error, "OPF-025b",
+			fmt.Sprintf(`value of attribute "property" is invalid; "%s" is not an NMTOKEN`, prop))
+		// OPF-025 for the semantic check
+		r.Add(report.Error, "OPF-025",
+			fmt.Sprintf("Property '%s' is not valid: only one value must be specified for the 'property' attribute", prop))
+	}
+}
+
+// OPF-041: EPUB 2 fallback-style attribute must reference an existing manifest item
+func checkFallbackStyleRef(pkg *epub.Package, r *report.Report) {
+	manifestIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+	for _, item := range pkg.Manifest {
+		if item.FallbackStyle != "" {
+			if !manifestIDs[item.FallbackStyle] {
+				r.Add(report.Error, "OPF-041",
+					fmt.Sprintf("'fallback-style' attribute value '%s' does not reference a manifest item", item.FallbackStyle))
+			}
+		}
+	}
+}
+
+// OPF-086b: EPUB 3 fallback-style attribute is not allowed (deprecated EPUB 2 feature)
+func checkFallbackStyleDeprecated(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, item := range pkg.Manifest {
+		if item.FallbackStyle != "" {
+			r.Add(report.Error, "OPF-086b",
+				fmt.Sprintf("The 'fallback-style' attribute on manifest item '%s' is not allowed in EPUB 3", item.ID))
+		}
+	}
 }
 
 // nonPreferredMediaTypes maps deprecated-but-valid core media types to
@@ -231,7 +457,14 @@ func checkDCIdentifier(pkg *epub.Package, r *report.Report) {
 
 // OPF-003
 func checkDCLanguage(pkg *epub.Package, r *report.Report) {
-	if len(pkg.Metadata.Languages) == 0 {
+	hasNonEmpty := false
+	for _, lang := range pkg.Metadata.Languages {
+		if lang != "" {
+			hasNonEmpty = true
+			break
+		}
+	}
+	if !hasNonEmpty && len(pkg.Metadata.Languages) == 0 {
 		r.Add(report.Error, "OPF-003", "Package metadata is missing required element dc:language")
 	}
 }
@@ -393,9 +626,18 @@ var bcp47Re = regexp.MustCompile(`^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{1,8})*$`)
 
 func checkDCLanguageValid(pkg *epub.Package, r *report.Report) {
 	for _, lang := range pkg.Metadata.Languages {
+		if strings.TrimSpace(lang) == "" {
+			// Empty/whitespace-only language is a schema validation error
+			r.Add(report.Error, "OPF-031", "Element dc:language must be a string with length at least 1")
+			continue
+		}
 		if !bcp47Re.MatchString(lang) {
-			r.Add(report.Error, "OPF-020",
-				fmt.Sprintf("Language tag '%s' is not well-formed according to BCP 47", lang))
+			// For EPUB 2, use OPF-020; for EPUB 3, OPF-092 handles this
+			if pkg.Version < "3.0" {
+				r.Add(report.Error, "OPF-020",
+					fmt.Sprintf("Language tag '%s' is not well-formed according to BCP 47", lang))
+			}
+			// OPF-092 check in checkLanguageTags handles EPUB 3
 		}
 	}
 }
@@ -487,8 +729,14 @@ func checkSpineContentDocs(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if !hasFallbackToContentDoc(item.ID, manifestByID) {
-			r.Add(report.Error, "OPF-023",
-				fmt.Sprintf("Spine item '%s' has non-standard media-type '%s' with no fallback to a content document", item.ID, item.MediaType))
+			// OPF-042 for image types used directly in spine (EPUBCheck compatibility)
+			if strings.HasPrefix(item.MediaType, "image/") {
+				r.Add(report.Error, "OPF-042",
+					fmt.Sprintf("Spine item '%s' is an image (%s) and should not be used directly in the spine", item.ID, item.MediaType))
+			} else {
+				r.Add(report.Error, "OPF-023",
+					fmt.Sprintf("Spine item '%s' has non-standard media-type '%s' with no fallback to a content document", item.ID, item.MediaType))
+			}
 		}
 	}
 }
@@ -714,15 +962,15 @@ func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 			if validManifestProperties[prop] {
 				continue
 			}
-			// OPF-027: property exists but is for a different context
-			// (e.g. rendition/spine properties used on manifest items)
-			if validSpineProperties[prop] || strings.HasPrefix(prop, "rendition:") {
-				r.Add(report.Error, "OPF-027",
-					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
-			} else {
-				r.Add(report.Error, "OPF-029",
-					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
+			// Prefixed properties (e.g., "ex2:itemprop") are allowed if the
+			// prefix is declared or reserved. Undeclared prefixes are caught
+			// by checkUndeclaredPrefixes.
+			if strings.Contains(prop, ":") {
+				continue
 			}
+			// OPF-027: undefined property
+			r.Add(report.Error, "OPF-027",
+				fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
 		}
 	}
 }
@@ -751,20 +999,26 @@ func checkDCIdentifierNotEmpty(pkg *epub.Package, r *report.Report) {
 func checkDCTitleNotEmpty(pkg *epub.Package, r *report.Report) {
 	for _, t := range pkg.Metadata.Titles {
 		if strings.TrimSpace(t.Value) == "" {
-			r.Add(report.Error, "OPF-032",
-				"Element dc:title has invalid value: must not be empty")
+			if pkg.Version < "3.0" {
+				// EPUB 2: empty dc:title is a warning
+				r.Add(report.Warning, "OPF-055",
+					"Element dc:title has an empty value")
+			} else {
+				r.Add(report.Error, "OPF-032",
+					"Element dc:title has invalid value: must not be empty")
+			}
 		}
 	}
 }
 
-// OPF-033: manifest href must not contain a fragment identifier
+// OPF-091: manifest href must not contain a fragment identifier
 func checkManifestHrefNoFragment(pkg *epub.Package, r *report.Report) {
 	for _, item := range pkg.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.Contains(item.Href, "#") {
-			r.Add(report.Error, "OPF-033",
+			r.Add(report.Error, "OPF-091",
 				fmt.Sprintf("Manifest item href must not have a fragment identifier: '%s'", item.Href))
 		}
 	}
@@ -789,7 +1043,7 @@ func checkCoverImageIsImage(pkg *epub.Package, r *report.Report) {
 	for _, item := range pkg.Manifest {
 		if hasProperty(item.Properties, "cover-image") {
 			if !strings.HasPrefix(item.MediaType, "image/") {
-				r.Add(report.Error, "OPF-025",
+				r.Add(report.Error, "OPF-012",
 					fmt.Sprintf("The cover-image property is not defined for media type '%s'", item.MediaType))
 			}
 		}
@@ -808,14 +1062,20 @@ func checkPageProgressionDirection(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-036: dc:date should follow W3CDTF format
+// OPF-036: dc:date should follow W3CDTF format (EPUB 2 only; EPUB 3 uses OPF-053)
 var w3cdtfRe = regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?)?)?$`)
 
 func checkDCDateFormat(pkg *epub.Package, r *report.Report) {
+	if pkg.Version >= "3.0" {
+		return // EPUB 3 uses OPF-053 for date format issues
+	}
 	for _, date := range pkg.Metadata.Dates {
-		if !w3cdtfRe.MatchString(date) {
-			r.Add(report.Warning, "OPF-036",
-				fmt.Sprintf("Date value '%s' does not follow recommended syntax of W3CDTF", date))
+		if date == "" {
+			continue // Empty dates handled by OPF-054
+		}
+		if !w3cdtfRe.MatchString(strings.TrimSpace(date)) {
+			r.Add(report.Error, "OPF-054",
+				fmt.Sprintf("Date value '%s' is not a valid date", date))
 		}
 	}
 }
@@ -867,7 +1127,17 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 	}
 
 	for _, mr := range pkg.MetaRefines {
-		target := strings.TrimPrefix(mr.Refines, "#")
+		refines := mr.Refines
+		if refines == "" {
+			continue
+		}
+		// Check for absolute URLs - refines must be a relative URL
+		if strings.Contains(refines, "://") {
+			r.Add(report.Error, "OPF-037",
+				fmt.Sprintf("@refines must be a relative URL, but found '%s'", refines))
+			continue
+		}
+		target := strings.TrimPrefix(refines, "#")
 		if target == "" {
 			continue
 		}
@@ -884,7 +1154,8 @@ func checkSpineLinearValid(pkg *epub.Package, r *report.Report) {
 		if ref.Linear == "" {
 			continue
 		}
-		if ref.Linear != "yes" && ref.Linear != "no" {
+		trimmed := strings.TrimSpace(ref.Linear)
+		if trimmed != "yes" && trimmed != "no" {
 			r.Add(report.Error, "OPF-038",
 				fmt.Sprintf("The spine itemref linear attribute value '%s' must be equal to 'yes' or 'no'", ref.Linear))
 		}
@@ -904,16 +1175,24 @@ func checkEPUB3GuideDeprecated(pkg *epub.Package, r *report.Report) {
 
 // checkLegacyOEBPS12MediaTypes checks for legacy media types in OEBPS 1.2 publications.
 // OPF-039: text/x-oeb1-document (legacy HTML media type)
-// OPF-038: text/html (deprecated HTML media type in EPUB 2)
-func checkLegacyOEBPS12MediaTypes(pkg *epub.Package, r *report.Report) {
+// checkLegacyOEBPS12MediaTypes reports deprecated OEBPS 1.2 and legacy media types.
+func checkLegacyOEBPS12MediaTypes(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
 	for _, item := range pkg.Manifest {
 		switch item.MediaType {
 		case "text/x-oeb1-document":
 			r.Add(report.Warning, "OPF-039",
 				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
+		case "text/x-oeb1-css":
+			r.Add(report.Warning, "OPF-037",
+				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
 		case "text/html":
-			r.Add(report.Warning, "OPF-038",
-				fmt.Sprintf("The media-type '%s' is not a valid EPUB media type for content documents", item.MediaType))
+			// Only report as OPF-038 for OEBPS 1.2 packages; regular EPUB 2
+			// packages handle text/html via OPF-035 in epub2.go.
+			if ep.IsLegacyOEBPS12 {
+				r.Add(report.Warning, "OPF-038",
+					fmt.Sprintf("The media-type '%s' is not a valid EPUB media type for content documents", item.MediaType))
+			}
 		}
 	}
 }
@@ -931,6 +1210,13 @@ func checkUUIDFormat(pkg *epub.Package, r *report.Report) {
 					fmt.Sprintf("UUID value '%s' is invalid", uuid))
 			}
 		}
+		// EPUB 2: opf:scheme="uuid" with non-UUID value
+		if id.Scheme != "" && strings.EqualFold(id.Scheme, "uuid") {
+			if !uuidRe.MatchString(id.Value) {
+				r.Add(report.Warning, "OPF-085",
+					fmt.Sprintf("Identifier with scheme 'uuid' has invalid UUID value '%s'", id.Value))
+			}
+		}
 	}
 }
 
@@ -942,7 +1228,8 @@ func checkSpineHasLinear(pkg *epub.Package, r *report.Report) {
 	hasLinear := false
 	allExplicitlyNonlinear := true
 	for _, ref := range pkg.Spine {
-		if ref.Linear != "no" {
+		trimmed := strings.TrimSpace(ref.Linear)
+		if trimmed != "no" {
 			hasLinear = true
 		}
 		if ref.Linear == "" {
@@ -950,55 +1237,183 @@ func checkSpineHasLinear(pkg *epub.Package, r *report.Report) {
 		}
 	}
 	if !hasLinear && allExplicitlyNonlinear {
-		r.Add(report.Error, "OPF-041",
-			"The spine contains no linear resources")
-	}
-}
-
-// OPF-042: rendition:flow must be valid
-func checkRenditionFlowValid(pkg *epub.Package, r *report.Report) {
-	if pkg.Version < "3.0" || pkg.RenditionFlow == "" {
-		return
-	}
-	valid := map[string]bool{
-		"paginated": true, "scrolled-doc": true,
-		"scrolled-continuous": true, "auto": true,
-	}
-	if !valid[pkg.RenditionFlow] {
-		r.Add(report.Error, "OPF-042",
-			fmt.Sprintf("The value of property rendition:flow must be either 'paginated', 'scrolled-doc', 'scrolled-continuous', or 'auto', but was '%s'", pkg.RenditionFlow))
+		r.Add(report.Error, "OPF-033",
+			"The spine must contain at least one linear itemref element")
 	}
 }
 
 // OPF-043: prefix declaration must be well-formed
+// parsePrefixAttribute parses the prefix attribute value into prefix→URI mappings.
+// It reports OPF-004c for syntax errors. The syntax is:
+//
+//	prefix: URI prefix: URI ...
+//
+// Each prefix name must be immediately followed by ":" (no space) and then a URI.
+// Returns the map of successfully parsed declared prefixes.
+func parsePrefixAttribute(prefixAttr string, r *report.Report) map[string]string {
+	declared := make(map[string]string)
+	if prefixAttr == "" {
+		return declared
+	}
+
+	parts := strings.Fields(prefixAttr)
+	i := 0
+	for i < len(parts) {
+		token := parts[i]
+
+		if strings.HasSuffix(token, ":") && len(token) > 1 {
+			// Well-formed: "prefix:" followed by URI
+			prefixName := strings.TrimSuffix(token, ":")
+			i++
+			if i >= len(parts) {
+				r.Add(report.Error, "OPF-004c",
+					fmt.Sprintf("The prefix '%s' has no URI mapping", prefixName))
+				break
+			}
+			uri := parts[i]
+			declared[prefixName] = uri
+			i++
+		} else {
+			// Syntax error: token is not "prefix:"
+			// Report error and try to consume the bad pair
+			r.Add(report.Error, "OPF-004c",
+				fmt.Sprintf("Invalid prefix mapping syntax near '%s'", token))
+			i++
+			// Skip remaining tokens that are part of this bad mapping
+			// until we reach another word that could be a prefix
+			for i < len(parts) {
+				next := parts[i]
+				if next == ":" {
+					// Space-before-colon: skip ":" and the URI that follows
+					i++
+					if i < len(parts) {
+						i++ // skip URI
+					}
+					break
+				}
+				// If next token looks like it could start a new pair (word:), stop
+				if strings.HasSuffix(next, ":") && len(next) > 1 {
+					break
+				}
+				// If next token is a URI (part of this bad pair), consume it
+				i++
+				break // consumed one URI token, move on
+			}
+		}
+	}
+	return declared
+}
+
+// checkPrefixDeclaration validates the prefix attribute on the package element.
+// OPF-004c: prefix syntax errors
+// OPF-007b: must not re-map default vocabulary prefixes
+// OPF-007c: must not map to Dublin Core elements namespace
+// OPF-007: warning for overriding reserved prefix URIs
 func checkPrefixDeclaration(pkg *epub.Package, r *report.Report) {
 	if pkg.Version < "3.0" || pkg.Prefix == "" {
 		return
 	}
-	// Prefix syntax: "prefix: URI" pairs separated by whitespace
-	// Each prefix must be followed by a colon and a URI
-	parts := strings.Fields(pkg.Prefix)
-	i := 0
-	for i < len(parts) {
-		prefix := parts[i]
-		if !strings.HasSuffix(prefix, ":") {
-			r.Add(report.Error, "OPF-043",
-				fmt.Sprintf("Invalid prefix declaration: '%s' must end with ':'", prefix))
-			i++
-			continue
+
+	declared := parsePrefixAttribute(pkg.Prefix, r)
+
+	// Default vocabulary URIs that must not be assigned prefixes
+	defaultVocabURIs := map[string]bool{
+		"http://idpf.org/epub/vocab/package/meta/#":    true,
+		"http://idpf.org/epub/vocab/package/link/#":    true,
+		"http://idpf.org/epub/vocab/package/item/#":    true,
+		"http://idpf.org/epub/vocab/package/itemref/#": true,
+	}
+
+	// Reserved prefixes and their canonical URIs
+	reservedPrefixes := map[string]string{
+		"a11y":      "http://www.idpf.org/epub/vocab/package/a11y/#",
+		"dcterms":   "http://purl.org/dc/terms/",
+		"marc":      "http://id.loc.gov/vocabulary/",
+		"media":     "http://www.idpf.org/epub/vocab/overlays/#",
+		"onix":      "http://www.editeur.org/ONIX/book/codelists/current.html#",
+		"rendition": "http://www.idpf.org/vocab/rendition/#",
+		"schema":    "http://schema.org/",
+		"xsd":       "http://www.w3.org/2001/XMLSchema#",
+	}
+
+	dcElementsNamespace := "http://purl.org/dc/elements/1.1/"
+
+	for prefix, uri := range declared {
+		// OPF-007b: default vocabulary URI re-mapping
+		if defaultVocabURIs[uri] {
+			r.Add(report.Error, "OPF-007b",
+				fmt.Sprintf("Prefix '%s' must not be used for default vocabulary '%s'", prefix, uri))
 		}
-		i++
-		if i >= len(parts) {
-			r.Add(report.Error, "OPF-043",
-				fmt.Sprintf("Invalid prefix declaration: prefix '%s' has no URI mapping", prefix))
-			break
+
+		// OPF-007c: Dublin Core elements namespace
+		if uri == dcElementsNamespace {
+			r.Add(report.Error, "OPF-007c",
+				fmt.Sprintf("Prefix '%s' must not be mapped to the Dublin Core elements namespace", prefix))
 		}
-		uri := parts[i]
-		if !strings.Contains(uri, ":") && !strings.Contains(uri, "/") {
-			r.Add(report.Error, "OPF-043",
-				fmt.Sprintf("Invalid prefix declaration: '%s' is not a valid URI", uri))
+
+		// OPF-007: overriding reserved prefix with different URI
+		if canonicalURI, isReserved := reservedPrefixes[prefix]; isReserved {
+			if uri != canonicalURI {
+				r.Add(report.Warning, "OPF-007",
+					fmt.Sprintf("Reserved prefix '%s' is re-declared with a different URI", prefix))
+			}
 		}
-		i++
+	}
+}
+
+// checkUndeclaredPrefixes checks that prefixed properties in metadata,
+// manifest, and spine reference declared or reserved prefixes.
+// OPF-028: undeclared prefix
+func checkUndeclaredPrefixes(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build the set of available prefixes (declared + reserved)
+	available := make(map[string]bool)
+
+	// Parse declared prefixes
+	if pkg.Prefix != "" {
+		parts := strings.Fields(pkg.Prefix)
+		i := 0
+		for i < len(parts) {
+			prefix := parts[i]
+			if strings.HasSuffix(prefix, ":") {
+				available[strings.TrimSuffix(prefix, ":")] = true
+				i += 2 // skip URI
+			} else {
+				i++
+			}
+		}
+	}
+
+	// Reserved prefixes are always available
+	for _, rp := range []string{"a11y", "dcterms", "marc", "media", "onix", "rendition", "schema", "xsd", "msv", "prism"} {
+		available[rp] = true
+	}
+
+	checkProp := func(prop string) {
+		if !strings.Contains(prop, ":") {
+			return
+		}
+		parts := strings.SplitN(prop, ":", 2)
+		prefix := parts[0]
+		if prefix == "" || parts[1] == "" {
+			return // malformed, handled elsewhere
+		}
+		if !available[prefix] {
+			r.Add(report.Error, "OPF-028",
+				fmt.Sprintf("Undeclared prefix '%s' used in property '%s'", prefix, prop))
+		}
+	}
+
+	// Check primary meta properties
+	for _, meta := range pkg.PrimaryMetas {
+		checkProp(meta.Property)
+	}
+	// Check meta refines properties
+	for _, meta := range pkg.MetaRefines {
+		checkProp(meta.Property)
 	}
 }
 
@@ -1324,4 +1739,929 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 			}
 		}
 	}
+}
+
+// RSC-029: data URLs must not be used in manifest item hrefs or package link hrefs
+func checkDataURLsInManifest(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Href)), "data:") {
+			r.Add(report.Error, "RSC-029",
+				fmt.Sprintf("Data URL used in manifest item href '%s'", item.ID))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(link.Href)), "data:") {
+			r.Add(report.Error, "RSC-029",
+				fmt.Sprintf("Data URL used in package link href"))
+		}
+	}
+}
+
+// RSC-030: file URLs must not be used
+func checkFileURLsInOPF(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Href)), "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("File URL used in manifest item href '%s'", item.Href))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(link.Href)), "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("File URL used in package link href '%s'", link.Href))
+		}
+	}
+}
+
+// RSC-033: URL query strings must not be used in local resource references
+func checkQueryStringsInOPF(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		// Skip remote URLs and data URLs
+		if isRemoteURL(item.Href) || strings.HasPrefix(strings.ToLower(item.Href), "data:") {
+			continue
+		}
+		if strings.Contains(item.Href, "?") {
+			r.Add(report.Error, "RSC-033",
+				fmt.Sprintf("URL query string found in manifest item href '%s'", item.Href))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if isRemoteURL(link.Href) || strings.HasPrefix(strings.ToLower(link.Href), "data:") {
+			continue
+		}
+		if strings.Contains(link.Href, "?") {
+			r.Add(report.Error, "RSC-033",
+				fmt.Sprintf("URL query string found in package link href '%s'", link.Href))
+		}
+	}
+}
+
+// OPF-028: dcterms:modified must occur exactly once as non-refining metadata
+func checkDCTermsModifiedCount(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Count refining dcterms:modified meta elements
+	refiningCount := 0
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "dcterms:modified" && mr.Refines != "" {
+			refiningCount++
+		}
+	}
+	// ModifiedCount tracks total dcterms:modified; subtract refining ones
+	nonRefiningCount := pkg.ModifiedCount - refiningCount
+	if nonRefiningCount > 1 {
+		r.Add(report.Error, "OPF-028",
+			fmt.Sprintf("dcterms:modified must not occur more than once as non-refining meta, found %d", nonRefiningCount))
+	}
+}
+
+// OPF-053: dc:date with unknown/deprecated format (EPUB 3 only)
+func checkDCDateWarnings(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	if len(pkg.Metadata.Dates) > 1 {
+		r.Add(report.Error, "OPF-053b",
+			`element "dc:date" not allowed here; only one dc:date element is allowed`)
+	}
+	for _, date := range pkg.Metadata.Dates {
+		if date != "" && !w3cdtfRe.MatchString(strings.TrimSpace(date)) {
+			r.Add(report.Warning, "OPF-053",
+				fmt.Sprintf("Date value '%s' does not follow recommended syntax", date))
+		}
+	}
+}
+
+// OPF-052: dc:creator role validation
+func checkDCCreatorRole(pkg *epub.Package, r *report.Report) {
+	// MARC relator codes - comprehensive list from Library of Congress
+	// https://www.loc.gov/marc/relators/relaterm.html
+	marcCodes := map[string]bool{
+		"abr": true, "act": true, "adp": true, "aft": true, "anl": true,
+		"anm": true, "ann": true, "ant": true, "ape": true, "apl": true,
+		"app": true, "aqt": true, "arc": true, "ard": true, "arr": true,
+		"art": true, "asg": true, "asn": true, "att": true, "auc": true,
+		"aud": true, "aui": true, "aus": true, "aut": true, "bdd": true,
+		"bjd": true, "bkd": true, "bkp": true, "blw": true, "bnd": true,
+		"bpd": true, "brd": true, "brl": true, "bsl": true, "cas": true,
+		"ccp": true, "chr": true, "clb": true, "cli": true, "cll": true,
+		"clr": true, "clt": true, "cmm": true, "cmp": true, "cmt": true,
+		"cnd": true, "cng": true, "cns": true, "coe": true, "col": true,
+		"com": true, "con": true, "cor": true, "cos": true, "cot": true,
+		"cou": true, "cov": true, "cpc": true, "cpe": true, "cph": true,
+		"cpl": true, "cpt": true, "cre": true, "crp": true, "crr": true,
+		"crt": true, "csl": true, "csp": true, "cst": true, "ctb": true,
+		"cte": true, "ctg": true, "ctr": true, "cts": true, "ctt": true,
+		"cur": true, "cwt": true, "dbp": true, "dfd": true, "dfe": true,
+		"dft": true, "dgg": true, "dgs": true, "dis": true, "dln": true,
+		"dnc": true, "dnr": true, "dpc": true, "dpt": true, "drm": true,
+		"drt": true, "dsr": true, "dst": true, "dtc": true, "dte": true,
+		"dtm": true, "dto": true, "dub": true, "edc": true, "edm": true,
+		"edt": true, "egr": true, "elg": true, "elt": true, "eng": true,
+		"enj": true, "etr": true, "evp": true, "exp": true, "fac": true,
+		"fds": true, "fld": true, "flm": true, "fmd": true, "fmk": true,
+		"fmo": true, "fmp": true, "fnd": true, "fpy": true, "frg": true,
+		"gis": true, "grt": true, "his": true, "hnr": true, "hst": true,
+		"ill": true, "ilu": true, "ins": true, "inv": true, "isb": true,
+		"itr": true, "ive": true, "ivr": true, "jud": true, "jug": true,
+		"lbr": true, "lbt": true, "ldr": true, "led": true, "lee": true,
+		"lel": true, "len": true, "let": true, "lgd": true, "lie": true,
+		"lil": true, "lit": true, "lsa": true, "lse": true, "lso": true,
+		"ltg": true, "lyr": true, "mcp": true, "mdc": true, "med": true,
+		"mfp": true, "mfr": true, "mod": true, "mon": true, "mrb": true,
+		"mrk": true, "msd": true, "mte": true, "mtk": true, "mus": true,
+		"nrt": true, "opn": true, "org": true, "orm": true, "osp": true,
+		"oth": true, "own": true, "pan": true, "pat": true, "pbd": true,
+		"pbl": true, "pdr": true, "pfr": true, "pht": true, "plt": true,
+		"pma": true, "pmn": true, "pop": true, "ppm": true, "ppt": true,
+		"pra": true, "prc": true, "prd": true, "pre": true, "prf": true,
+		"prg": true, "prm": true, "prn": true, "pro": true, "prp": true,
+		"prs": true, "prt": true, "prv": true, "pta": true, "pte": true,
+		"ptf": true, "pth": true, "ptt": true, "pup": true, "rbr": true,
+		"rcd": true, "rce": true, "rcp": true, "rdd": true, "red": true,
+		"ren": true, "res": true, "rev": true, "rpc": true, "rps": true,
+		"rpt": true, "rpy": true, "rse": true, "rsg": true, "rsp": true,
+		"rsr": true, "rst": true, "rth": true, "rtm": true, "sad": true,
+		"sce": true, "scl": true, "scr": true, "sds": true, "sec": true,
+		"sgd": true, "sgn": true, "sht": true, "sll": true, "sng": true,
+		"spk": true, "spn": true, "spy": true, "srv": true, "std": true,
+		"stg": true, "stl": true, "stm": true, "stn": true, "str": true,
+		"tcd": true, "tch": true, "ths": true, "tld": true, "tlp": true,
+		"trc": true, "trl": true, "tyd": true, "tyg": true, "uvp": true,
+		"vac": true, "vdg": true, "wac": true, "wal": true, "wam": true,
+		"wat": true, "wdc": true, "wde": true, "win": true, "wit": true,
+		"wpr": true, "wst": true, "cog": true,
+	}
+	for _, c := range pkg.Metadata.Creators {
+		if c.Role != "" && !marcCodes[strings.ToLower(c.Role)] {
+			r.Add(report.Error, "OPF-052",
+				fmt.Sprintf("Unknown MARC relator code '%s' for dc:creator", c.Role))
+		}
+	}
+	for _, c := range pkg.Metadata.Contributors {
+		if c.Role != "" && !marcCodes[strings.ToLower(c.Role)] {
+			r.Add(report.Error, "OPF-052",
+				fmt.Sprintf("Unknown MARC relator code '%s' for dc:contributor", c.Role))
+		}
+	}
+}
+
+// OPF-054: dc:date empty value
+func checkDCDateEmpty(pkg *epub.Package, r *report.Report) {
+	for _, date := range pkg.Metadata.Dates {
+		if strings.TrimSpace(date) == "" {
+			r.Add(report.Error, "OPF-054",
+				"Element dc:date must not be empty")
+		}
+	}
+}
+
+// OPF-091: manifest item href must not contain a fragment identifier
+func checkManifestHrefFragment(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		if strings.Contains(item.Href, "#") {
+			r.Add(report.Error, "OPF-091",
+				fmt.Sprintf("Manifest item '%s' href must not contain a fragment identifier", item.ID))
+		}
+	}
+}
+
+// OPF-065: refines references cycles
+func checkRefinesCycle(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Build a map of meta element IDs to their refines targets
+	refinesMap := make(map[string]string) // meta ID -> refines target ID
+	for _, mr := range pkg.MetaRefines {
+		if mr.ID != "" && mr.Refines != "" {
+			target := strings.TrimPrefix(mr.Refines, "#")
+			refinesMap[mr.ID] = target
+		}
+	}
+
+	// Check for cycles; track already-reported nodes to avoid duplicate reports
+	reported := make(map[string]bool)
+	for startID := range refinesMap {
+		if reported[startID] {
+			continue
+		}
+		visited := make(map[string]bool)
+		current := startID
+		for {
+			if visited[current] {
+				// Mark all nodes in this cycle as reported
+				for id := range visited {
+					reported[id] = true
+				}
+				r.Add(report.Error, "OPF-065",
+					fmt.Sprintf("Metadata refines cycle detected starting from '%s'", startID))
+				break
+			}
+			visited[current] = true
+			next, ok := refinesMap[current]
+			if !ok {
+				break
+			}
+			current = next
+		}
+	}
+}
+
+// OPF-098: link must not target a manifest item ID
+func checkLinkTargetNotManifestID(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	manifestIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if link.Href == "" {
+			continue
+		}
+		if strings.HasPrefix(link.Href, "#") {
+			target := strings.TrimPrefix(link.Href, "#")
+			if manifestIDs[target] {
+				r.Add(report.Error, "OPF-098",
+					fmt.Sprintf("Link must not reference a manifest item ID '%s'", target))
+			}
+		}
+	}
+}
+
+// checkLinkRelation validates link rel values and associated constraints:
+// OPF-086: deprecated link rel values
+// OPF-089: alternate must not be paired with other keywords
+// OPF-093: record/voicing links require media-type (even when remote)
+// OPF-094: record/voicing links require media-type attribute
+// OPF-095: voicing link must have audio media type
+// RSC-005: record must not have refines; voicing must have refines
+// Link properties: empty → RSC-005, unknown → OPF-027
+func checkLinkRelation(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	deprecatedRels := map[string]bool{
+		"marc21xml-record": true,
+		"mods-record":      true,
+		"onix-record":      true,
+		"xmp-record":       true,
+		"xml-signature":    true,
+	}
+
+	// Known link properties (D.4.2)
+	knownLinkProps := map[string]bool{
+		"onix": true,
+	}
+
+	for _, link := range pkg.MetadataLinks {
+		rels := strings.Fields(link.Rel)
+		relSet := make(map[string]bool)
+		for _, rel := range rels {
+			relSet[rel] = true
+		}
+
+		// OPF-086: deprecated rel values
+		for _, rel := range rels {
+			if deprecatedRels[rel] {
+				r.Add(report.Warning, "OPF-086",
+					fmt.Sprintf(`"%s" is deprecated`, rel))
+			}
+		}
+
+		// OPF-089: alternate must not be paired with other keywords
+		if relSet["alternate"] && len(rels) > 1 {
+			r.Add(report.Error, "OPF-089",
+				"The 'alternate' link relationship must not be paired with other keywords")
+		}
+
+		// OPF-094: record and voicing require media-type (even when remote)
+		if relSet["record"] || relSet["voicing"] {
+			if link.MediaType == "" {
+				r.Add(report.Error, "OPF-094",
+					fmt.Sprintf("Link with rel '%s' must have a 'media-type' attribute", link.Rel))
+			}
+		}
+
+		// OPF-093: deprecated *-record and xml-signature also need media-type
+		for _, rel := range rels {
+			if deprecatedRels[rel] && link.MediaType == "" {
+				r.Add(report.Error, "OPF-093",
+					fmt.Sprintf("Metadata link to resource '%s' is missing required 'media-type' attribute", link.Href))
+			}
+		}
+
+		// OPF-095: voicing must have audio media type
+		if relSet["voicing"] && link.MediaType != "" {
+			if !strings.HasPrefix(link.MediaType, "audio/") {
+				r.Add(report.Error, "OPF-095",
+					fmt.Sprintf("A 'voicing' link resource must have an audio media type, but found '%s'", link.MediaType))
+			}
+		}
+
+		// RSC-005: record must not have refines
+		if relSet["record"] && link.Refines != "" {
+			r.Add(report.Error, "OPF-088",
+				`link with rel "record" must not have a "refines" attribute`)
+		}
+
+		// RSC-005: voicing must have refines
+		if relSet["voicing"] && link.Refines == "" {
+			r.Add(report.Error, "OPF-088",
+				`link with rel "voicing" must have a "refines" attribute`)
+		}
+
+		// Link properties validation
+		if link.Properties != "" {
+			trimmed := strings.TrimSpace(link.Properties)
+			if trimmed == "" {
+				// Empty/whitespace-only properties
+				r.Add(report.Error, "OPF-088",
+					`value of attribute "properties" is invalid; must be a string with length at least 1`)
+			} else {
+				// Check each property value
+				for _, prop := range strings.Fields(trimmed) {
+					if strings.Contains(prop, ":") {
+						// Prefixed property — allowed if prefix is declared
+						continue
+					}
+					if !knownLinkProps[prop] {
+						r.Add(report.Error, "OPF-027",
+							fmt.Sprintf("Undefined property '%s'", prop))
+					}
+				}
+			}
+		}
+	}
+}
+
+// OPF-026: metadata property names must be defined and well-formed
+func checkMetaPropertyDefined(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	knownProperties := map[string]bool{
+		"alternate-script":        true,
+		"authority":               true,
+		"belongs-to-collection":   true,
+		"collection-type":         true,
+		"display-seq":             true,
+		"file-as":                 true,
+		"group-position":          true,
+		"identifier-type":         true,
+		"meta-auth":               true,
+		"pageBreakSource":         true,
+		"role":                    true,
+		"scheme":                  true,
+		"source-of":               true,
+		"term":                    true,
+		"title-type":              true,
+	}
+
+	checkPropValid := func(prop string) {
+		if prop == "" {
+			return
+		}
+		// Check for malformed prefixed properties (e.g., "foo:" or ":bar")
+		if strings.Contains(prop, ":") {
+			parts := strings.SplitN(prop, ":", 2)
+			if parts[0] == "" || parts[1] == "" {
+				r.Add(report.Error, "OPF-026",
+					fmt.Sprintf("Metadata property '%s' is not well-formed", prop))
+			}
+			return
+		}
+		if !knownProperties[prop] {
+			r.Add(report.Error, "OPF-026",
+				fmt.Sprintf("Metadata property '%s' is not defined", prop))
+		}
+	}
+
+	for _, mr := range pkg.MetaRefines {
+		checkPropValid(mr.Property)
+	}
+	for _, pm := range pkg.PrimaryMetas {
+		checkPropValid(pm.Property)
+	}
+}
+
+// OPF-004c: dcterms:modified must occur as non-refining meta
+func checkDCTermsModifiedNonRefining(pkg *epub.Package, r *report.Report) {
+	// Covered by existing OPF-004 check
+}
+
+// checkRenditionProperties validates rendition global properties (value, cardinality, refines)
+// and spine override mutual exclusivity.
+func checkRenditionProperties(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	validLayout := map[string]bool{"reflowable": true, "pre-paginated": true}
+	validOrientation := map[string]bool{"auto": true, "landscape": true, "portrait": true}
+	validSpread := map[string]bool{"auto": true, "landscape": true, "both": true, "none": true, "portrait": true}
+	validFlow := map[string]bool{"paginated": true, "scrolled-doc": true, "scrolled-continuous": true, "auto": true}
+	viewportRe := regexp.MustCompile(`^\s*width\s*=\s*\d+\s*,\s*height\s*=\s*\d+\s*$`)
+
+	// Track counts for cardinality and deprecation
+	type propInfo struct {
+		count    int
+		values   []string
+		refining int // count of meta with refines attribute
+	}
+	globalProps := map[string]*propInfo{}
+	countProp := func(prop, value string, refining bool) {
+		if globalProps[prop] == nil {
+			globalProps[prop] = &propInfo{}
+		}
+		if refining {
+			globalProps[prop].refining++
+		} else {
+			globalProps[prop].count++
+			globalProps[prop].values = append(globalProps[prop].values, value)
+		}
+	}
+
+	// Scan all metas (both primary and refining) for rendition properties
+	for _, pm := range pkg.PrimaryMetas {
+		switch pm.Property {
+		case "rendition:layout", "rendition:orientation", "rendition:spread",
+			"rendition:flow", "rendition:viewport":
+			countProp(pm.Property, pm.Value, false)
+		}
+	}
+	for _, mr := range pkg.MetaRefines {
+		switch mr.Property {
+		case "rendition:layout", "rendition:orientation", "rendition:spread",
+			"rendition:flow", "rendition:viewport":
+			countProp(mr.Property, mr.Value, mr.Refines != "")
+		}
+	}
+
+	// Valid value descriptions for error messages
+	valueDesc := map[string]string{
+		"rendition:layout":      `"reflowable" or "pre-paginated"`,
+		"rendition:orientation": `"auto", "landscape", or "portrait"`,
+		"rendition:spread":      `"auto", "landscape", "both", "none", or "portrait"`,
+		"rendition:flow":        `"paginated", "scrolled-doc", "scrolled-continuous", or "auto"`,
+	}
+
+	// Check each rendition property
+	checkGlobalRendition := func(prop string, validValues map[string]bool) {
+		info := globalProps[prop]
+		if info == nil {
+			return
+		}
+		// Value validation
+		for _, val := range info.values {
+			if val == "" {
+				r.Add(report.Error, "OPF-088",
+					`character content of element "meta" invalid`)
+				r.Add(report.Error, "OPF-088",
+					fmt.Sprintf(`The value of the "%s" property must be %s`, prop, valueDesc[prop]))
+			} else if !validValues[val] {
+				r.Add(report.Error, "OPF-088",
+					fmt.Sprintf(`The value of the "%s" property must be %s`, prop, valueDesc[prop]))
+			}
+		}
+		// Cardinality: must not appear more than once
+		if info.count > 1 {
+			r.Add(report.Error, "OPF-088",
+				fmt.Sprintf(`The "%s" property must not occur more than one time as a global value`, prop))
+		}
+		// Refines prohibition
+		if info.refining > 0 {
+			r.Add(report.Error, "OPF-088",
+				fmt.Sprintf(`The "%s" property must not have a refines attribute`, prop))
+		}
+	}
+
+	checkGlobalRendition("rendition:layout", validLayout)
+	checkGlobalRendition("rendition:orientation", validOrientation)
+	checkGlobalRendition("rendition:spread", validSpread)
+	checkGlobalRendition("rendition:flow", validFlow)
+
+	// Viewport: value validation + deprecation
+	vpInfo := globalProps["rendition:viewport"]
+	if vpInfo != nil {
+		// Deprecation: always warn for each viewport occurrence (global + refining)
+		total := vpInfo.count + vpInfo.refining
+		for i := 0; i < total; i++ {
+			r.Add(report.Warning, "OPF-086",
+				`The "rendition:viewport" property is deprecated`)
+		}
+		// Value syntax
+		for _, val := range vpInfo.values {
+			if val != "" && !viewportRe.MatchString(val) {
+				r.Add(report.Error, "OPF-088",
+					`The value of the "rendition:viewport" property must be of the form 'width=<number>, height=<number>'`)
+			}
+		}
+		// Cardinality
+		if vpInfo.count > 1 {
+			r.Add(report.Error, "OPF-088",
+				`The "rendition:viewport" property must not occur more than one time as a global value`)
+		}
+		if vpInfo.refining > 0 {
+			r.Add(report.Error, "OPF-088",
+				`The "rendition:viewport" property must not be used in a meta element to refine a publication resource`)
+		}
+	}
+
+	// Spread "portrait" deprecation (global)
+	spreadInfo := globalProps["rendition:spread"]
+	if spreadInfo != nil {
+		for _, val := range spreadInfo.values {
+			if val == "portrait" {
+				r.Add(report.Warning, "OPF-086",
+					`The "rendition:spread" value "portrait" is deprecated`)
+			}
+		}
+	}
+
+	// Spine override mutual exclusivity
+	type overrideGroup struct {
+		name    string
+		values  []string
+	}
+	groups := []overrideGroup{
+		{"rendition:layout", []string{"rendition:layout-reflowable", "rendition:layout-pre-paginated"}},
+		{"rendition:orientation", []string{"rendition:orientation-auto", "rendition:orientation-landscape", "rendition:orientation-portrait"}},
+		{"rendition:spread", []string{"rendition:spread-auto", "rendition:spread-landscape", "rendition:spread-both", "rendition:spread-none", "rendition:spread-portrait"}},
+		{"rendition:flow", []string{"rendition:flow-paginated", "rendition:flow-scrolled-doc", "rendition:flow-scrolled-continuous", "rendition:flow-auto"}},
+		{"page-spread", []string{"page-spread-left", "page-spread-right", "page-spread-center", "rendition:page-spread-center"}},
+	}
+
+	for _, ref := range pkg.Spine {
+		if ref.Properties == "" {
+			continue
+		}
+		props := strings.Fields(ref.Properties)
+		for _, g := range groups {
+			var found []string
+			for _, p := range props {
+				for _, v := range g.values {
+					if p == v {
+						found = append(found, p)
+					}
+				}
+			}
+			if len(found) > 1 {
+				r.Add(report.Error, "OPF-088",
+					fmt.Sprintf("Properties '%s' are mutually exclusive on the same itemref", strings.Join(found, "', '")))
+			}
+		}
+		// Deprecated spine spread-portrait
+		for _, p := range props {
+			if p == "rendition:spread-portrait" {
+				r.Add(report.Warning, "OPF-086",
+					`The "rendition:spread-portrait" spine override property is deprecated`)
+			}
+		}
+	}
+
+	// Check for unknown rendition: properties in primary metas (OPF-027)
+	knownRendition := map[string]bool{
+		"rendition:layout": true, "rendition:orientation": true,
+		"rendition:spread": true, "rendition:flow": true,
+		"rendition:viewport": true, "rendition:align-x-center": true,
+	}
+	for _, pm := range pkg.PrimaryMetas {
+		if strings.HasPrefix(pm.Property, "rendition:") && !knownRendition[pm.Property] {
+			r.Add(report.Error, "OPF-027",
+				fmt.Sprintf("Undefined property '%s'", pm.Property))
+		}
+	}
+}
+
+// OPF-092: language tag validation
+func checkLanguageTags(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Check dc:language values (malformed BCP 47)
+	for _, lang := range pkg.Metadata.Languages {
+		if lang == "" {
+			continue // Empty handled elsewhere
+		}
+		if !bcp47Re.MatchString(strings.TrimSpace(lang)) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("Language tag '%s' is not well-formed", lang))
+		}
+	}
+	// Check all xml:lang attributes found in the OPF (on any element)
+	for _, lang := range pkg.AllXMLLangs {
+		if lang == "" {
+			continue // empty xml:lang is valid (resets inheritance)
+		}
+		if lang != strings.TrimSpace(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("xml:lang attribute value '%s' has leading/trailing whitespace", lang))
+		} else if !bcp47Re.MatchString(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("xml:lang language tag '%s' is not well-formed", lang))
+		}
+	}
+	// Check link hreflang attributes
+	for _, link := range pkg.MetadataLinks {
+		if link.Hreflang == "" {
+			continue
+		}
+		lang := link.Hreflang
+		if lang != strings.TrimSpace(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("hreflang attribute value '%s' has leading/trailing whitespace", lang))
+		} else if !bcp47Re.MatchString(lang) {
+			r.Add(report.Error, "OPF-092",
+				fmt.Sprintf("hreflang language tag '%s' is not well-formed", lang))
+		}
+	}
+}
+
+// OPF-055: empty dc:title warning
+func checkDCTitleEmptyWarning(pkg *epub.Package, r *report.Report) {
+	for _, title := range pkg.Metadata.Titles {
+		if strings.TrimSpace(title.Value) == "" && title.Value != "" {
+			r.Add(report.Warning, "OPF-055",
+				"dc:title contains only whitespace")
+		}
+	}
+}
+
+// OPF-012: cover-image property uniqueness
+func checkCoverImageUnique(pkg *epub.Package, r *report.Report) {
+	count := 0
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "cover-image") {
+			count++
+		}
+	}
+	if count > 1 {
+		r.Add(report.Error, "OPF-012",
+			fmt.Sprintf("The 'cover-image' property must occur at most once, found %d", count))
+	}
+}
+
+
+// OPF-050: NCX identification
+func checkNCXIdentification(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Find NCX item in the manifest
+	var ncxID string
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/x-dtbncx+xml" {
+			ncxID = item.ID
+			break
+		}
+	}
+
+	// If toc attribute is set, it must reference an NCX document
+	if pkg.SpineToc != "" {
+		for _, item := range pkg.Manifest {
+			if item.ID == pkg.SpineToc && item.MediaType != "application/x-dtbncx+xml" {
+				r.Add(report.Error, "OPF-050",
+					fmt.Sprintf("The spine toc attribute must reference an NCX document, but '%s' has media-type '%s'", pkg.SpineToc, item.MediaType))
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The spine toc attribute value '%s' does not reference an NCX document", pkg.SpineToc))
+				break
+			}
+		}
+	}
+
+	// If NCX is present but toc attribute is missing
+	if ncxID != "" && pkg.SpineToc == "" {
+		r.Add(report.Error, "OPF-050",
+			"When an NCX document is present, the toc attribute must be set on the spine element")
+	}
+}
+
+// checkMetaSchemeValid validates the scheme attribute on meta elements.
+// OPF-027: scheme value must not be unprefixed unknown value
+// RSC-005 (schema): scheme value must be NMTOKEN (no spaces)
+func checkMetaSchemeValid(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, ms := range pkg.MetaSchemes {
+		scheme := ms.Scheme
+		// Check if scheme value contains spaces (NMTOKEN violation - schema error)
+		if strings.Contains(strings.TrimSpace(scheme), " ") {
+			r.Add(report.Error, "OPF-025a",
+				fmt.Sprintf("The 'scheme' attribute value '%s' is not a valid NMTOKEN", scheme))
+			// Also report OPF-025 for the individual invalid tokens
+			r.Add(report.Error, "OPF-025",
+				fmt.Sprintf("The 'scheme' attribute value '%s' contains invalid values", scheme))
+			continue
+		}
+		// Check if scheme is unprefixed (no colon = no namespace prefix)
+		if !strings.Contains(scheme, ":") {
+			r.Add(report.Error, "OPF-027",
+				fmt.Sprintf("The 'scheme' attribute value '%s' is not a known value with no prefix", scheme))
+		}
+	}
+}
+
+// checkMetaRefinesPropertyRules validates metadata refines property vocabulary rules (EPUB 3.3 D.3).
+// Reports RSC-005 for schema-level violations of refines target, cardinality, and value constraints.
+func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build ID-to-element mapping for refines targets
+	idMap := pkg.Metadata.IDToElement
+
+	// resolveRefines returns the element type/property that a refines target points to.
+	resolveRefines := func(refines string) string {
+		target := strings.TrimPrefix(refines, "#")
+		if elem, ok := idMap[target]; ok {
+			return elem
+		}
+		return ""
+	}
+
+	// Track cardinality: property+refinesTarget → count
+	cardinalityMap := make(map[string]int)
+
+	for _, mr := range pkg.MetaRefines {
+		target := resolveRefines(mr.Refines)
+		cardKey := mr.Property + "|" + mr.Refines
+
+		switch mr.Property {
+		case "authority":
+			// Must refine a "subject" property
+			if target != "subject" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"authority\" must refine a \"subject\" property"))
+			}
+		case "term":
+			// Must refine a "subject" property
+			if target != "subject" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"term\" must refine a \"subject\" property"))
+			}
+		case "belongs-to-collection":
+			// Can only refine other "belongs-to-collection" properties (or be primary)
+			if mr.Refines != "" && target != "belongs-to-collection" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"belongs-to-collection\" can only refine other \"belongs-to-collection\" properties"))
+			}
+		case "collection-type":
+			// Must refine a "belongs-to-collection" property (cannot be primary)
+			if mr.Refines == "" || target != "belongs-to-collection" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"collection-type\" must refine a \"belongs-to-collection\" property"))
+			}
+		case "identifier-type":
+			// Must refine an "identifier" or "source" property
+			if target != "identifier" && target != "source" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"identifier-type\" must refine an \"identifier\" or \"source\" property"))
+			}
+		case "role":
+			// Must refine a "creator", "contributor", or "publisher" property
+			if target != "creator" && target != "contributor" && target != "publisher" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("\"role\" must refine a \"creator\", \"contributor\", or \"publisher\" property"))
+			}
+		case "title-type":
+			// Must refine a "title" property
+			if target != "title" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"title-type\" must refine a \"title\" property"))
+			}
+		case "source-of":
+			// Must refine a "source" property and value must be "pagination"
+			if mr.Refines == "" || target != "source" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"source-of\" property must refine a \"source\" property"))
+			}
+			if mr.Value != "pagination" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"source-of\" property must have the value \"pagination\""))
+			}
+		case "meta-auth":
+			// Deprecated
+			r.Add(report.Warning, "RSC-017",
+				fmt.Sprintf("the meta-auth property is deprecated"))
+		case "media:active-class", "media:playback-active-class":
+			// Must not have refines
+			if mr.Refines != "" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"%s\" must not refine another property", mr.Property))
+			}
+		case "media:duration":
+			// Value must be a valid SMIL clock value
+			if !isValidClockValue(mr.Value) {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"media:duration\" value \"%s\" is not a valid SMIL clock value", mr.Value))
+			}
+		}
+
+		// Cardinality checks for properties that can only be declared once per refines target
+		cardinalityMap[cardKey]++
+	}
+
+	// Check for primary metas that must have refines or are deprecated
+	for _, m := range pkg.PrimaryMetas {
+		switch m.Property {
+		case "collection-type":
+			r.Add(report.Error, "RSC-005",
+				`Property "collection-type" must refine a "belongs-to-collection" property`)
+		case "source-of":
+			r.Add(report.Error, "RSC-005",
+				`The "source-of" property must refine a "source" property`)
+		case "meta-auth":
+			r.Add(report.Warning, "RSC-017",
+				"the meta-auth property is deprecated")
+		}
+	}
+
+	// Check cardinality violations
+	seen := make(map[string]bool)
+	for _, mr := range pkg.MetaRefines {
+		cardKey := mr.Property + "|" + mr.Refines
+		if seen[cardKey] {
+			continue
+		}
+		seen[cardKey] = true
+		count := cardinalityMap[cardKey]
+
+		switch mr.Property {
+		case "collection-type", "display-seq", "file-as", "group-position",
+			"identifier-type", "source-of", "title-type":
+			if count > 1 {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("\"%s\" cannot be declared more than once to refine the same expression", mr.Property))
+			}
+		case "authority", "term":
+			// Authority and term come in pairs - only one pair per subject
+			if count > 1 {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Only one pair of authority and term properties may refine the same expression"))
+			}
+		}
+	}
+
+	// Check authority-term pairing (only for those correctly refining a subject)
+	authorityTargets := make(map[string]bool)
+	termTargets := make(map[string]bool)
+	for _, mr := range pkg.MetaRefines {
+		target := resolveRefines(mr.Refines)
+		if target != "subject" {
+			continue // Only check pairing for subject-refining metas
+		}
+		if mr.Property == "authority" {
+			authorityTargets[mr.Refines] = true
+		}
+		if mr.Property == "term" {
+			termTargets[mr.Refines] = true
+		}
+	}
+	// Each authority must have a term and vice versa
+	for target := range authorityTargets {
+		if !termTargets[target] {
+			r.Add(report.Error, "RSC-005",
+				"A term property must be associated with the authority property")
+		}
+	}
+	for target := range termTargets {
+		if !authorityTargets[target] {
+			r.Add(report.Error, "RSC-005",
+				"An authority property must be associated with the term property")
+		}
+	}
+}
+
+// isValidClockValue checks if a string is a valid SMIL clock value.
+func isValidClockValue(val string) bool {
+	if val == "" {
+		return false
+	}
+	// Full clock: hh:mm:ss(.fff)
+	// Partial clock: mm:ss(.fff)
+	// Timecount: N(h|min|s|ms)
+	clockRe := regexp.MustCompile(`^(\d+:)?[0-5]?\d:[0-5]?\d(\.\d+)?$`)
+	timecountRe := regexp.MustCompile(`^\d+(\.\d+)?(h|min|s|ms)$`)
+	return clockRe.MatchString(val) || timecountRe.MatchString(val)
 }

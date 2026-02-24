@@ -22,8 +22,7 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 		return
 	}
 
-	// E2-004: spine must have toc attribute
-	checkEPUB2SpineToc(ep, r)
+	// E2-004: spine toc attribute now checked in checkOPF (runs in both modes)
 
 	// E2-005: EPUB 2 must not have nav property
 	checkEPUB2NoNavProperty(ep, r)
