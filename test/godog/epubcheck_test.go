@@ -274,7 +274,7 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			rpt, err := validate.ValidateFile(path)
+			rpt, err := validate.ValidateFileWithMode(path, s.checkMode)
 			if err != nil {
 				return fmt.Errorf("single-file validation failed: %w", err)
 			}
@@ -302,7 +302,7 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			rpt, err := validate.ValidateFile(path)
+			rpt, err := validate.ValidateFileWithMode(path, s.checkMode)
 			if err != nil {
 				return fmt.Errorf("single-file validation failed: %w", err)
 			}

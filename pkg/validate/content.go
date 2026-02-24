@@ -2903,7 +2903,7 @@ func checkNestedDFN(data []byte, location string, r *report.Report) {
 
 // checkSingleFileContent runs targeted content checks for single-file XHTML/SVG validation.
 // This checks for data URLs, file URLs, and query strings in href attributes.
-func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
+func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 	if ep.Package == nil {
 		return
 	}
@@ -2976,6 +2976,11 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
 			checkDatetimeFormat(data, fullPath, r)
 			checkURLConformance(data, fullPath, r)
 			checkEntityReferences(data, fullPath, r)
+
+			// Nav document checks - use content-based detection OR explicit checkMode
+			if opts.CheckMode == "nav" || isNavDocument(data) {
+				checkNavContentModel(data, fullPath, r)
+			}
 
 			// Usage-level checks
 			checkHTM055Discouraged(data, fullPath, r)
@@ -5307,5 +5312,362 @@ func checkURLConformance(data []byte, location string, r *report.Report) {
 				}
 			}
 		}
+	}
+}
+
+// isNavDocument detects whether the XHTML content is actually a navigation document
+// by checking for the presence of a <nav> element with epub:type="toc".
+func isNavDocument(data []byte) bool {
+	content := string(data)
+	// Quick pre-check: must contain both "nav" element and "toc" type
+	if !strings.Contains(content, "<nav") || !strings.Contains(content, "toc") {
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	opsNS := "http://www.idpf.org/2007/ops"
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if se.Name.Local == "nav" {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "type" && (attr.Name.Space == opsNS || attr.Name.Space == "epub") {
+						for _, t := range strings.Fields(attr.Value) {
+							if t == "toc" {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// checkNavContentModel validates EPUB navigation document content model (RSC-005, RSC-017).
+func checkNavContentModel(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	opsNS := "http://www.idpf.org/2007/ops"
+
+	hasTocNav := false
+	pageListCount := 0
+	landmarksCount := 0
+
+	type landmarkEntry struct {
+		epubType string
+		href     string
+	}
+	var landmarkEntries []landmarkEntry
+
+	// Use element stack to track nesting
+	type elemState struct {
+		name       string
+		epubType   string // for nav elements
+		hasLabel   bool   // for li: has a/span before ol
+		labelIsA   bool   // for li: label is anchor (not span)
+		hasOl      bool   // for li: has nested ol
+		hasLi      bool   // for ol: has li child
+		hasText    bool   // for a, span, h1-h6: has text or image content
+		hasHeading bool   // for nav: has heading element
+	}
+	var stack []elemState
+
+	// Helper to find the innermost element of a given name
+	findParent := func(name string) int {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// Count ol nesting depth within current nav
+	olDepth := func() int {
+		count := 0
+		for _, s := range stack {
+			if s.name == "ol" {
+				count++
+			}
+		}
+		return count
+	}
+
+	// Get current nav type
+	navType := func() string {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == "nav" {
+				return stack[i].epubType
+			}
+		}
+		return ""
+	}
+
+	inNav := func() bool {
+		return findParent("nav") >= 0
+	}
+
+	// inTypedNav checks if we're inside a nav with a known epub:type
+	inTypedNav := func() bool {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == "nav" {
+				return stack[i].epubType != ""
+			}
+		}
+		return false
+	}
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			state := elemState{name: name}
+
+			if name == "nav" {
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+						state.epubType = attr.Value
+					}
+				}
+				if state.epubType == "toc" {
+					hasTocNav = true
+				}
+				if state.epubType == "page-list" {
+					pageListCount++
+					if pageListCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Multiple occurrences of the "page-list" nav element`,
+							location)
+					}
+				}
+				if state.epubType == "landmarks" {
+					landmarksCount++
+					if landmarksCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Multiple occurrences of the "landmarks" nav element`,
+							location)
+					}
+					landmarkEntries = nil
+				}
+			}
+
+			if inNav() {
+				nt := navType()
+				isHeading := name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6"
+
+				// Mark parent nav as having a heading
+				if isHeading {
+					if ni := findParent("nav"); ni >= 0 {
+						stack[ni].hasHeading = true
+					}
+				}
+
+				// p element before ol in nav (should be heading)
+				if name == "p" && findParent("li") < 0 && findParent("a") < 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "p" not allowed here`,
+						location)
+				}
+
+				// ol inside nav
+				if name == "ol" {
+					// Mark parent li as having an ol
+					if li := findParent("li"); li >= 0 {
+						stack[li].hasOl = true
+					}
+					// Check for nested ol in page-list or landmarks
+					if olDepth() > 0 {
+						if nt == "page-list" {
+							r.AddWithLocation(report.Warning, "RSC-017",
+								`The "page-list" nav should have no nested sublists`,
+								location)
+						}
+						if nt == "landmarks" {
+							r.AddWithLocation(report.Warning, "RSC-017",
+								`The "landmarks" nav should have no nested sublists`,
+								location)
+						}
+					}
+				}
+
+				// li inside ol
+				if name == "li" {
+					if oi := findParent("ol"); oi >= 0 {
+						stack[oi].hasLi = true
+					}
+				}
+
+				// a inside li
+				if name == "a" {
+					if li := findParent("li"); li >= 0 {
+						stack[li].hasLabel = true
+						stack[li].labelIsA = true
+					}
+					// Landmarks checks
+					if nt == "landmarks" {
+						hasType := false
+						epubTypeVal := ""
+						href := ""
+						for _, attr := range t.Attr {
+							if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+								hasType = true
+								epubTypeVal = attr.Value
+							}
+							if attr.Name.Local == "href" {
+								href = attr.Value
+							}
+						}
+						if !hasType {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`Missing epub:type attribute on anchor inside "landmarks" nav`,
+								location)
+						}
+						if epubTypeVal != "" {
+							// Split epub:type by spaces for multi-value
+							types := strings.Fields(epubTypeVal)
+							for _, et := range types {
+								matched := false
+								for _, prev := range landmarkEntries {
+									if prev.epubType == et && prev.href == href {
+										matched = true
+									}
+								}
+								if matched {
+									// Report for both the original and the duplicate
+									r.AddWithLocation(report.Error, "RSC-005",
+										`Another landmark was found with the same epub:type and same reference`,
+										location)
+									r.AddWithLocation(report.Error, "RSC-005",
+										`Another landmark was found with the same epub:type and same reference`,
+										location)
+								}
+								landmarkEntries = append(landmarkEntries, landmarkEntry{epubType: et, href: href})
+							}
+						}
+					}
+				}
+
+				// span inside li (as label)
+				if name == "span" {
+					if li := findParent("li"); li >= 0 && findParent("a") < 0 {
+						stack[li].hasLabel = true
+					}
+				}
+
+				// img counts as text content for a, span, h1-h6
+				if name == "img" {
+					for i := len(stack) - 1; i >= 0; i-- {
+						n := stack[i].name
+						if n == "a" || n == "span" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" {
+							stack[i].hasText = true
+							break
+						}
+					}
+				}
+			}
+
+			stack = append(stack, state)
+
+		case xml.EndElement:
+			name := t.Name.Local
+			// Find the matching element in the stack
+			idx := -1
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].name == name {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				continue
+			}
+			state := stack[idx]
+
+			if inNav() {
+				isHeading := name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6"
+
+				if isHeading && !state.hasText {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`Heading elements must contain text`,
+						location)
+				}
+
+				// Content model checks only apply to typed navs (toc, page-list, landmarks, etc.)
+				// Navs without epub:type are not restricted
+				if inTypedNav() {
+					if name == "a" && !state.hasText {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Anchors within nav elements must contain text`,
+							location)
+					}
+
+					if name == "span" && findParent("li") >= 0 && !state.hasText {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Spans within nav elements must contain text`,
+							location)
+					}
+
+					if name == "ol" && !state.hasLi {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "ol" incomplete`,
+							location)
+					}
+
+					if name == "li" {
+						if !state.hasLabel {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`element "ol" not allowed yet; expected element "a" or "span"`,
+								location)
+						} else if !state.labelIsA && !state.hasOl {
+							// Span label with no nested ol
+							r.AddWithLocation(report.Error, "RSC-005",
+								`element "li" incomplete; missing required element "ol"`,
+								location)
+						}
+					}
+				}
+
+				if name == "nav" {
+					nt := state.epubType
+					if nt != "" && nt != "toc" && nt != "page-list" && nt != "landmarks" {
+						if !state.hasHeading {
+							r.AddWithLocation(report.Error, "RSC-005",
+								fmt.Sprintf(`nav element with epub:type "%s" must have a heading`, nt),
+								location)
+						}
+					}
+				}
+			}
+
+			// Pop stack
+			stack = stack[:idx]
+
+		case xml.CharData:
+			text := strings.TrimSpace(string(t))
+			if text != "" && inNav() {
+				// Mark text content on parent elements
+				for i := len(stack) - 1; i >= 0; i-- {
+					n := stack[i].name
+					if n == "a" || n == "span" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" {
+						stack[i].hasText = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Check for missing toc nav
+	if !hasTocNav {
+		r.AddWithLocation(report.Error, "RSC-005",
+			`missing required nav element with epub:type="toc"`,
+			location)
 	}
 }

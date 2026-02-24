@@ -26,6 +26,9 @@ type Options struct {
 	// standalone .opf wrapped in a minimal EPUB). Suppresses cross-reference
 	// and content checks that don't apply to single-file validation.
 	SingleFileMode bool
+
+	// CheckMode specifies the type of single-file check: "nav", "svg", etc.
+	CheckMode string
 }
 
 // Validate runs all validation checks on an EPUB file and returns a report.
@@ -106,7 +109,7 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		}
 	} else {
 		// Single-file mode: run targeted content checks on XHTML/SVG content
-		checkSingleFileContent(ep, r)
+		checkSingleFileContent(ep, r, opts)
 	}
 
 	// Post-processing: in single-file mode, remap specific check IDs to RSC-005
@@ -261,6 +264,12 @@ var divergenceChecks = map[string]bool{
 // ValidateFile validates a single file (.opf, .xhtml, .svg, .smil) by wrapping
 // it in a minimal EPUB container. Returns a validation report.
 func ValidateFile(filePath string) (*report.Report, error) {
+	return ValidateFileWithMode(filePath, "")
+}
+
+// ValidateFileWithMode validates a single file with an explicit check mode.
+// checkMode can be "nav" to check as a navigation document, or empty for default.
+func ValidateFileWithMode(filePath string, checkMode string) (*report.Report, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
@@ -273,9 +282,9 @@ func ValidateFile(filePath string) (*report.Report, error) {
 	case ".opf":
 		return validateSingleOPF(name, data)
 	case ".xhtml":
-		return validateSingleXHTML(name, data)
+		return validateSingleXHTML(name, data, checkMode)
 	case ".svg":
-		return validateSingleXHTML(name, data) // SVG uses same wrapper
+		return validateSingleXHTML(name, data, "") // SVG uses same wrapper
 	case ".smil":
 		return validateSingleSMIL(name, data)
 	default:
@@ -308,7 +317,7 @@ func validateSingleOPF(name string, data []byte) (*report.Report, error) {
 }
 
 // validateSingleXHTML wraps an XHTML/SVG file in a minimal EPUB for content validation.
-func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
+func validateSingleXHTML(name string, data []byte, checkMode string) (*report.Report, error) {
 	// Determine media type from extension
 	mediaType := "application/xhtml+xml"
 	if strings.HasSuffix(strings.ToLower(name), ".svg") {
@@ -372,7 +381,7 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
 	}
 	defer os.Remove(tmpPath)
 
-	return ValidateWithOptions(tmpPath, Options{SingleFileMode: true})
+	return ValidateWithOptions(tmpPath, Options{SingleFileMode: true, CheckMode: checkMode})
 }
 
 // validateSingleSMIL wraps a SMIL file in a minimal EPUB for media overlay validation.
