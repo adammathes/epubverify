@@ -2960,6 +2960,13 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
 			checkTableBorderAttr(data, fullPath, r)
 			checkHttpEquivCharset(data, fullPath, r)
 			checkImageMapValid(data, fullPath, r)
+			checkCSS008StyleType(data, fullPath, r)
+			checkStyleInBody(data, fullPath, r)
+			checkStyleAttrCSS(data, fullPath, r)
+			checkMicrodataAttrs(data, fullPath, r)
+			checkHTM054ReservedNS(data, fullPath, r)
+			checkARIADescribedAt(data, fullPath, r)
+			checkTitleElement(data, fullPath, r)
 
 			// Usage-level checks
 			checkHTM055Discouraged(data, fullPath, r)
@@ -4659,7 +4666,7 @@ func checkEpubTypeOnHead(data []byte, location string, r *report.Report) {
 	// Elements where epub:type is not allowed
 	disallowed := map[string]bool{
 		"head": true, "title": true, "meta": true, "link": true,
-		"style": true, "base": true, "script": true,
+		"style": true, "base": true, "script": true, "noscript": true,
 	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
@@ -4705,6 +4712,171 @@ func checkTableBorderAttr(data []byte, location string, r *report.Report) {
 							location)
 					}
 				}
+			}
+		}
+	}
+}
+
+// checkCSS008StyleType detects style elements in <head> without a type declaration (CSS-008).
+func checkCSS008StyleType(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inHead := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "head" {
+				inHead = true
+			}
+			if t.Name.Local == "style" && inHead {
+				hasType := false
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "type" {
+						hasType = true
+					}
+				}
+				if !hasType {
+					r.AddWithLocation(report.Error, "CSS-008",
+						`style element missing required "type" attribute`,
+						location)
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "head" {
+				inHead = false
+			}
+		}
+	}
+}
+
+// checkStyleInBody detects style elements in the body (RSC-005).
+func checkStyleInBody(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inBody := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "body" {
+				inBody = true
+			}
+			if t.Name.Local == "style" && inBody {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "style" not allowed here`,
+					location)
+				// Check for "scoped" attribute
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "scoped" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`attribute "scoped" not allowed here`,
+							location)
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "body" {
+				inBody = false
+			}
+		}
+	}
+}
+
+// checkStyleAttrCSS detects invalid CSS in style attributes (CSS-008).
+func checkStyleAttrCSS(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "style" {
+				// Check for obviously invalid CSS syntax (unbalanced braces, etc.)
+				val := attr.Value
+				if strings.Contains(val, "{") || strings.Contains(val, "}") {
+					r.AddWithLocation(report.Error, "CSS-008",
+						`invalid CSS syntax in "style" attribute; must not contain declaration blocks`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkARIADescribedAt detects non-existent ARIA describedat attribute (RSC-005).
+func checkARIADescribedAt(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "aria-describedat" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "aria-describedat" not allowed here`,
+					location)
+			}
+		}
+	}
+}
+
+// checkTitleElement checks for empty or missing title elements (RSC-005).
+func checkTitleElement(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inHead := false
+	hasTitle := false
+	inTitle := false
+	titleContent := ""
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "head" {
+				inHead = true
+			}
+			if t.Name.Local == "title" && inHead {
+				inTitle = true
+				hasTitle = true
+				titleContent = ""
+			}
+		case xml.EndElement:
+			if t.Name.Local == "title" && inTitle {
+				inTitle = false
+				if strings.TrimSpace(titleContent) == "" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "title" must not be empty`,
+						location)
+				}
+			}
+			if t.Name.Local == "head" {
+				if !hasTitle {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "head" is missing a required instance of child element "title"`,
+						location)
+				}
+				inHead = false
+			}
+		case xml.CharData:
+			if inTitle {
+				titleContent += string(t)
 			}
 		}
 	}

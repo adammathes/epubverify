@@ -417,6 +417,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Error && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -436,6 +439,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -474,6 +480,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Warning && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -549,6 +558,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Usage && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
