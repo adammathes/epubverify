@@ -231,7 +231,11 @@ func checkNavHasToc(ep *epub.EPUB, r *report.Report) {
 	}
 
 	if !navDocHasToc(data) {
-		r.Add(report.Error, "NAV-002", "Required toc nav element (epub:type='toc') not found in navigation document")
+		// EPUBCheck reports this as a schema validation error (RSC-005) since the
+		// nav document schema requires a toc nav element.
+		r.AddWithLocation(report.Error, "RSC-005",
+			"Required toc nav element (epub:type='toc') not found in navigation document",
+			fullPath)
 	}
 }
 

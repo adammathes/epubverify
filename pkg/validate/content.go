@@ -240,6 +240,13 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		if ep.Package.Version >= "3.0" && !isNav {
 			checkForeignResourceFallbacks(ep, data, fullPath, r)
 		}
+
+		// RSC-005: invalid HTML elements (elements not in valid HTML5 set)
+		if ep.Package.Version >= "3.0" {
+			checkInvalidHTMLElements(data, fullPath, r)
+			// RSC-005: Schematron-like checks (e.g., nested dfn)
+			checkNestedDFN(data, fullPath, r)
+		}
 	}
 }
 
@@ -2708,6 +2715,134 @@ func checkDOCTYPEExternalIdentifiers(ep *epub.EPUB, r *report.Report) {
 			// Stop after first element (DOCTYPE appears before root element)
 			if _, ok := tok.(xml.StartElement); ok {
 				break
+			}
+		}
+	}
+}
+
+// validHTMLElements contains all valid HTML5 element names (lowercase).
+var validHTMLElements = map[string]bool{
+	"a": true, "abbr": true, "address": true, "area": true, "article": true,
+	"aside": true, "audio": true, "b": true, "base": true, "bdi": true,
+	"bdo": true, "blockquote": true, "body": true, "br": true, "button": true,
+	"canvas": true, "caption": true, "cite": true, "code": true, "col": true,
+	"colgroup": true, "data": true, "datalist": true, "dd": true, "del": true,
+	"details": true, "dfn": true, "dialog": true, "div": true, "dl": true,
+	"dt": true, "em": true, "embed": true, "fieldset": true, "figcaption": true,
+	"figure": true, "footer": true, "form": true, "h1": true, "h2": true,
+	"h3": true, "h4": true, "h5": true, "h6": true, "head": true, "header": true,
+	"hgroup": true, "hr": true, "html": true, "i": true, "iframe": true,
+	"img": true, "input": true, "ins": true, "kbd": true, "label": true,
+	"legend": true, "li": true, "link": true, "main": true, "map": true,
+	"mark": true, "math": true, "menu": true, "meta": true, "meter": true,
+	"nav": true, "noscript": true, "object": true, "ol": true, "optgroup": true,
+	"option": true, "output": true, "p": true, "picture": true, "pre": true,
+	"progress": true, "q": true, "rp": true, "rt": true, "ruby": true,
+	"s": true, "samp": true, "script": true, "search": true, "section": true,
+	"select": true, "slot": true, "small": true, "source": true, "span": true,
+	"strong": true, "style": true, "sub": true, "summary": true, "sup": true,
+	"svg": true, "table": true, "tbody": true, "td": true, "template": true,
+	"textarea": true, "tfoot": true, "th": true, "thead": true, "time": true,
+	"title": true, "tr": true, "track": true, "u": true, "ul": true,
+	"var": true, "video": true, "wbr": true,
+	// Obsolete/legacy elements that are still commonly used
+	"acronym": true, "applet": true, "basefont": true, "bgsound": true,
+	"big": true, "blink": true, "center": true, "dir": true, "font": true,
+	"frame": true, "frameset": true, "isindex": true, "keygen": true,
+	"listing": true, "marquee": true, "menuitem": true,
+	"multicol": true, "nextid": true, "nobr": true, "noembed": true,
+	"noframes": true, "param": true, "plaintext": true, "rb": true,
+	"rtc": true, "spacer": true, "strike": true, "tt": true, "xmp": true,
+	// EPUB extensions in XHTML namespace
+	"epub:switch": true, "epub:case": true, "epub:default": true,
+	// Experimental/proposed elements
+	"portal": true,
+}
+
+// checkInvalidHTMLElements reports RSC-005 for elements not in the valid HTML5 element set.
+// Only checks elements in the XHTML namespace; skips content inside <svg> or <math> subtrees.
+func checkInvalidHTMLElements(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+	const svgNS = "http://www.w3.org/2000/svg"
+	const mathNS = "http://www.w3.org/1998/Math/MathML"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0 // non-zero when inside svg/math/foreignObject
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			// Skip non-XHTML namespace elements (includes SVG, MathML inline)
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			// Custom elements (contain '-') are always valid
+			if strings.Contains(name, "-") {
+				continue
+			}
+			// Enter foreign content for svg and math
+			if name == "svg" || name == "math" || name == "foreignobject" {
+				foreignDepth = 1
+				continue
+			}
+			if !validHTMLElements[name] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf("element \"%s\" not allowed here", name),
+					location)
+				return // report only first error
+			}
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+			}
+		}
+	}
+}
+
+// checkNestedDFN reports RSC-005 when a <dfn> element contains a descendant <dfn>.
+func checkNestedDFN(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	dfnDepth := 0
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				continue
+			}
+			if strings.ToLower(t.Name.Local) == "dfn" {
+				if dfnDepth > 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						"dfn must not have a dfn descendant",
+						location)
+					return
+				}
+				dfnDepth++
+			}
+		case xml.EndElement:
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				continue
+			}
+			if strings.ToLower(t.Name.Local) == "dfn" && dfnDepth > 0 {
+				dfnDepth--
 			}
 		}
 	}
