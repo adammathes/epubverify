@@ -1571,13 +1571,20 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 
 	// Build map of remote manifest URLs (http/https hrefs) for RSC-006 checks on <a> links.
 	remoteManifestItems := make(map[string]epub.ManifestItem)
+	// Build manifest path → media type map for RSC-011
+	manifestByPath := make(map[string]epub.ManifestItem)
 	if ep.Package != nil {
 		for _, mItem := range ep.Package.Manifest {
 			if isRemoteURL(mItem.Href) {
 				remoteManifestItems[mItem.Href] = mItem
 			}
+			if mItem.Href != "\x00MISSING" {
+				manifestByPath[ep.ResolveHref(mItem.Href)] = mItem
+			}
 		}
 	}
+	// Build spine set for RSC-011: content doc hyperlinks must point to spine docs
+	spinePathSet := buildSpinePathSet(ep)
 
 	for {
 		tok, err := decoder.Token()
@@ -1601,6 +1608,20 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 								r.AddWithLocation(report.Error, "RSC-006",
 									fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
 									fullPath)
+							}
+						}
+					} else {
+						// RSC-011: hyperlinks to XHTML/SVG docs must point to spine items
+						u, err := url.Parse(attr.Value)
+						if err == nil && u.Scheme == "" && u.Path != "" {
+							target := resolvePath(itemDir, u.Path)
+							if mItem, ok2 := manifestByPath[target]; ok2 {
+								isContentDoc := mItem.MediaType == "application/xhtml+xml" || mItem.MediaType == "image/svg+xml"
+								if isContentDoc && !spinePathSet[target] {
+									r.AddWithLocation(report.Error, "RSC-011",
+										fmt.Sprintf("Content document '%s' is hyperlinked but not listed in the spine", attr.Value),
+										fullPath)
+								}
 							}
 						}
 					}
