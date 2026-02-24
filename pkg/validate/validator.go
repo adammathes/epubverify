@@ -234,9 +234,6 @@ var rsc005Mapping = map[string]func(string) string{
 		}
 		return msg // pass through OPF-level messages for RSC-005
 	},
-	"HTM-004": func(msg string) string {
-		return msg // pass through for RSC-005 schema validation
-	},
 	"HTM-009": func(msg string) string {
 		return "" // don't remap HTM-009 (base element warnings or DOCTYPE)
 	},

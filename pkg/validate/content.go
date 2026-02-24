@@ -2944,7 +2944,24 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkDuplicateIDs(data, fullPath, r)
 			checkIDReferences(data, fullPath, r)
 			checkObsoleteAttrs(data, fullPath, r)
-			checkHTM004SingleFile(data, fullPath, r)
+
+			// DOCTYPE check: mode-specific
+			if opts.CheckMode == "xhtml" {
+				// EPUB2 OPS XHTML mode
+				checkHTM004EPUB2Mode(data, fullPath, r)
+			} else {
+				// EPUB3 mode
+				checkHTM004SingleFile(data, fullPath, r)
+			}
+
+			// Unknown entity reference check (RSC-016) - catches &foo; style undeclared entities
+			checkUnknownEntityRefs(data, fullPath, r)
+
+			// EPUB2-specific checks
+			if opts.CheckMode == "xhtml" {
+				checkHTML5ElementsEPUB2(data, fullPath, r)
+				checkCustomNamespacedAttrs(data, fullPath, r)
+			}
 
 			// Specific content checks
 			checkExternalEntities(data, fullPath, r)
@@ -2996,7 +3013,7 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 
 			// Embedded SVG checks (for XHTML with inline SVG)
 			checkSVGForeignObject(data, fullPath, r)
-			checkSVGTitleContent(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r, false)
 			checkSVGInvalidElements(data, fullPath, r)
 		} else if mt == "image/svg+xml" {
 			// SVG content checks
@@ -3005,7 +3022,7 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkSVGDuplicateIDs(data, fullPath, r)
 			checkSVGInvalidIDs(data, fullPath, r)
 			checkSVGForeignObject(data, fullPath, r)
-			checkSVGTitleContent(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r, true)
 			checkSVGEpubType(data, fullPath, r)
 			checkSVGUnknownEpubAttr(data, fullPath, r)
 			checkSVGInvalidElements(data, fullPath, r)
@@ -3156,8 +3173,11 @@ func checkNestedAnchors(data []byte, location string, r *report.Report) {
 }
 
 // checkCustomNamespacedAttrs detects non-standard namespace attributes on XHTML elements (RSC-005).
+// Used for EPUB2 OPS XHTML documents where custom namespace attributes are not allowed.
 func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	// Accumulate namespace URI → prefix mappings across all elements
+	nsPrefixMap := make(map[string]string)
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -3166,6 +3186,12 @@ func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) 
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
+		}
+		// First collect namespace declarations from this element
+		for _, attr := range se.Attr {
+			if attr.Name.Space == "xmlns" {
+				nsPrefixMap[attr.Value] = attr.Name.Local
+			}
 		}
 		for _, attr := range se.Attr {
 			ns := attr.Name.Space
@@ -3176,10 +3202,14 @@ func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) 
 				ns == "http://www.w3.org/1999/xlink" {
 				continue
 			}
-			// Custom namespace found — report with local name
+			// Custom namespace found — use prefix:localname format
 			localName := attr.Name.Local
+			prefix := nsPrefixMap[ns]
+			if prefix == "" {
+				prefix = ns // fallback to URI if prefix not found
+			}
 			r.AddWithLocation(report.Error, "RSC-005",
-				fmt.Sprintf(`attribute "%s:%s" not allowed here`, ns, localName),
+				fmt.Sprintf(`attribute "%s:%s" not allowed here`, prefix, localName),
 				location)
 			return
 		}
@@ -3361,13 +3391,40 @@ func checkHTM061DataAttrs(data []byte, location string, r *report.Report) {
 }
 
 // checkHTM054ReservedNS detects custom attributes using reserved namespace strings (HTM-054).
+// Namespaces containing "w3.org" or "idpf.org" in their host are reserved.
 func checkHTM054ReservedNS(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	// Reserved prefixes/namespaces that custom attributes must not use
-	reservedNS := map[string]bool{
+	// Standard namespaces that are allowed even though they contain "w3.org"/"idpf.org"
+	allowedNS := map[string]bool{
+		"http://www.w3.org/1999/xhtml":        true,
+		"http://www.w3.org/2000/svg":          true,
+		"http://www.w3.org/1998/Math/MathML":  true,
 		"http://www.w3.org/XML/1998/namespace": true,
-		"http://www.w3.org/2000/xmlns/":        true,
+		"http://www.w3.org/2000/xmlns/":       true,
+		"http://www.w3.org/1999/xlink":        true,
+		"http://www.idpf.org/2007/ops":        true,
+		"http://www.idpf.org/2007/opf":        true,
+		"http://www.w3.org/2001/10/synthesis": true,
+		"http://www.w3.org/ns/SMIL":           true,
+		"http://www.w3.org/2001/xml-events":   true,
 	}
+	isReservedNS := func(ns string) bool {
+		if ns == "" || ns == "xmlns" || allowedNS[ns] {
+			return false
+		}
+		if idx := strings.Index(ns, "://"); idx >= 0 {
+			rest := ns[idx+3:]
+			host := rest
+			if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
+				host = rest[:slashIdx]
+			}
+			lhost := strings.ToLower(host)
+			if strings.Contains(lhost, "w3.org") || strings.Contains(lhost, "idpf.org") {
+				return true
+			}
+		}
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -3378,14 +3435,13 @@ func checkHTM054ReservedNS(data []byte, location string, r *report.Report) {
 			continue
 		}
 		for _, attr := range se.Attr {
-			if attr.Name.Space != "" && reservedNS[attr.Name.Space] {
-				// Don't flag standard xml:lang, xml:space, xmlns:*
-				if attr.Name.Local == "lang" || attr.Name.Local == "space" ||
-					attr.Name.Local == "base" || attr.Name.Local == "id" {
-					continue
-				}
+			ns := attr.Name.Space
+			if ns == "" || ns == "xmlns" {
+				continue
+			}
+			if isReservedNS(ns) {
 				r.AddWithLocation(report.Error, "HTM-054",
-					fmt.Sprintf(`Attribute "%s" in namespace "%s" uses a reserved string`, attr.Name.Local, attr.Name.Space),
+					fmt.Sprintf(`Attribute "%s" in namespace "%s" uses a reserved string`, attr.Name.Local, ns),
 					location)
 			}
 		}
@@ -3846,8 +3902,8 @@ func checkOPF028UndeclaredPrefix(data []byte, location string, r *report.Report)
 	declaredPrefixes := make(map[string]bool)
 	content := string(data)
 
-	// Parse prefix attributes: prefix="prefix: URL prefix2: URL2"
-	prefixRe := regexp.MustCompile(`\bprefix\s*=\s*["']([^"']*)["']`)
+	// Parse epub:prefix attributes only (plain prefix= without namespace is not a valid declaration)
+	prefixRe := regexp.MustCompile(`epub:prefix\s*=\s*["']([^"']*)["']`)
 	for _, match := range prefixRe.FindAllStringSubmatch(content, -1) {
 		if len(match) > 1 {
 			parts := strings.Fields(match[1])
@@ -3973,22 +4029,124 @@ func checkHTM004SingleFile(data []byte, location string, r *report.Report) {
 	doctype := content[idx : idx+endIdx+1]
 	doctypeUpper := strings.ToUpper(doctype)
 
+	// In EPUB3, any PUBLIC doctype is obsolete (HTM-004)
 	if strings.Contains(doctypeUpper, "PUBLIC") {
-		publicID, _ := extractDOCTYPEIdentifiers(doctype[9:])
-		if publicID != "" {
-			// Valid public identifiers
-			validPublicIDs := map[string]bool{
-				"-//W3C//DTD XHTML 1.1//EN":                true,
-				"-//W3C//DTD XHTML 1.0 Strict//EN":         true,
-				"-//W3C//DTD XHTML 1.0 Transitional//EN":   true,
-				"-//W3C//DTD XHTML Basic 1.1//EN":           true,
-				"-//W3C//DTD XHTML+RDFa 1.0//EN":            true,
-			}
-			if !validPublicIDs[publicID] {
-				r.AddWithLocation(report.Error, "HTM-004",
-					fmt.Sprintf(`Irregular DOCTYPE: public identifier "%s" is not valid`, publicID),
+		publicID, _ := extractDOCTYPEIdentifiers(doctype[2:]) // skip "<!" to get "DOCTYPE html PUBLIC..."
+		r.AddWithLocation(report.Error, "HTM-004",
+			fmt.Sprintf(`Irregular DOCTYPE: public identifier "%s" is obsolete`, publicID),
+			location)
+	}
+}
+
+// checkHTM004EPUB2Mode checks for DOCTYPE issues in EPUB2 OPS XHTML content (HTM-004).
+// In EPUB2, the HTML5 DOCTYPE (<!DOCTYPE html>) and invalid public identifiers are errors.
+func checkHTM004EPUB2Mode(data []byte, location string, r *report.Report) {
+	content := string(data)
+	idx := strings.Index(strings.ToUpper(content), "<!DOCTYPE")
+	if idx == -1 {
+		return
+	}
+	endIdx := strings.Index(content[idx:], ">")
+	if endIdx == -1 {
+		return
+	}
+	doctype := content[idx : idx+endIdx+1]
+	doctypeUpper := strings.ToUpper(doctype)
+
+	// Valid EPUB2 public identifiers
+	validPublicIDs := map[string]bool{
+		"-//W3C//DTD XHTML 1.1//EN":              true,
+		"-//W3C//DTD XHTML 1.0 STRICT//EN":       true,
+		"-//W3C//DTD XHTML 1.0 TRANSITIONAL//EN": true,
+		"-//W3C//DTD XHTML BASIC 1.1//EN":        true,
+		"-//W3C//DTD XHTML+RDFA 1.0//EN":         true,
+	}
+
+	if !strings.Contains(doctypeUpper, "PUBLIC") {
+		// No PUBLIC identifier: HTML5 DOCTYPE or minimal DOCTYPE - not valid in EPUB2
+		r.AddWithLocation(report.Error, "HTM-004",
+			`Irregular DOCTYPE: HTML5 DOCTYPE is not allowed in EPUB 2 OPS XHTML content documents`,
+			location)
+		return
+	}
+
+	// Has PUBLIC: check that the public ID is a valid EPUB2 XHTML identifier
+	publicID, _ := extractDOCTYPEIdentifiers(doctype[2:]) // skip "<!" to get "DOCTYPE html PUBLIC..."
+	publicIDUpper := strings.ToUpper(publicID)
+	if !validPublicIDs[publicIDUpper] {
+		r.AddWithLocation(report.Error, "HTM-004",
+			fmt.Sprintf(`Irregular DOCTYPE: public identifier "%s" is not valid`, publicID),
+			location)
+	}
+}
+
+// checkHTML5ElementsEPUB2 detects HTML5 elements not allowed in EPUB2 OPS XHTML (RSC-005).
+func checkHTML5ElementsEPUB2(data []byte, location string, r *report.Report) {
+	html5Elements := map[string]bool{
+		"aside": true, "article": true, "section": true, "nav": true,
+		"header": true, "footer": true, "main": true, "figure": true,
+		"figcaption": true, "details": true, "summary": true, "dialog": true,
+		"mark": true, "time": true, "meter": true, "progress": true,
+		"output": true, "canvas": true, "video": true, "audio": true,
+		"source": true, "track": true, "embed": true, "wbr": true,
+		"datalist": true, "keygen": true, "template": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if html5Elements[se.Name.Local] {
+			r.AddWithLocation(report.Error, "RSC-005",
+				fmt.Sprintf(`element "%s" not allowed here`, se.Name.Local),
+				location)
+			return
+		}
+	}
+}
+
+// checkUnknownEntityRefs detects unknown XML entity references (RSC-016).
+// Catches &foo; style entity refs that are not declared in the DTD.
+// Handles internal DTD subsets by extracting declared entity names.
+// Note: entity-without-semicolon errors are handled by checkEntityReferences (regex-based).
+func checkUnknownEntityRefs(data []byte, location string, r *report.Report) {
+	content := string(data)
+
+	// Extract entity declarations from internal DTD subset if present.
+	// Go's XML decoder skips the DOCTYPE declaration but doesn't know about
+	// entities declared inside it. We need to pre-populate decoder.Entity.
+	declaredEntities := map[string]string{}
+	entityDeclRe := regexp.MustCompile(`<!ENTITY\s+(\w+)\s+(?:"[^"]*"|'[^']*')`)
+	for _, m := range entityDeclRe.FindAllStringSubmatch(content, -1) {
+		declaredEntities[m[1]] = m[1]
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	if len(declaredEntities) > 0 {
+		decoder.Entity = declaredEntities
+	}
+
+	for {
+		_, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			errMsg := err.Error()
+			// Go's XML decoder reports undefined entities as "invalid character entity".
+			// Entity-without-semicolon errors contain "(no semicolon)" and are handled
+			// by checkEntityReferences (regex-based); skip them here to avoid double-reporting.
+			if strings.Contains(errMsg, "invalid character entity") && !strings.Contains(errMsg, "no semicolon") {
+				r.AddWithLocation(report.Fatal, "RSC-016",
+					"Fatal Error while parsing file: entity was referenced, but not declared",
 					location)
 			}
+			break
 		}
 	}
 }
@@ -4071,9 +4229,51 @@ func checkHttpEquivCharset(data []byte, location string, r *report.Report) {
 }
 
 // checkMicrodataAttrs detects microdata attributes on non-allowed elements (RSC-005).
-// Simplified check: just detect the presence of microdata attributes.
 func checkMicrodataAttrs(data []byte, location string, r *report.Report) {
-	// Placeholder - microdata validation is complex and low priority
+	// Elements that require specific attributes when itemprop is set
+	needsHref := map[string]bool{
+		"a": true, "area": true, "link": true,
+	}
+	needsData := map[string]bool{
+		"object": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		hasItemprop := false
+		hasHref := false
+		hasData := false
+		for _, attr := range se.Attr {
+			switch attr.Name.Local {
+			case "itemprop":
+				hasItemprop = true
+			case "href":
+				hasHref = true
+			case "data":
+				hasData = true
+			}
+		}
+		if !hasItemprop {
+			continue
+		}
+		elemName := se.Name.Local
+		if needsHref[elemName] && !hasHref {
+			r.AddWithLocation(report.Error, "RSC-005",
+				fmt.Sprintf(`element "%s" missing required attribute "href"`, elemName),
+				location)
+		} else if needsData[elemName] && !hasData {
+			r.AddWithLocation(report.Error, "RSC-005",
+				fmt.Sprintf(`If the itemprop is specified on element "%s", a "data" attribute must also be specified`, elemName),
+				location)
+		}
+	}
 }
 
 // checkObsoleteAttrs detects obsolete HTML attributes and elements (RSC-005).
@@ -4336,18 +4536,35 @@ func checkSVGForeignObject(data []byte, location string, r *report.Report) {
 // checkSVGTitleContent checks SVG title elements for valid content (RSC-005).
 // SVG title elements can only contain HTML phrasing content; no custom namespace
 // elements or SVG elements are allowed. Also checks for invalid HTML attributes.
-func checkSVGTitleContent(data []byte, location string, r *report.Report) {
+// standaloneMode should be true for standalone SVG files (where non-phrasing HTML
+// elements with inline xmlns are flagged), false for XHTML-embedded SVG.
+func checkSVGTitleContent(data []byte, location string, r *report.Report, standaloneMode bool) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	svgNS := "http://www.w3.org/2000/svg"
 	htmlNS := "http://www.w3.org/1999/xhtml"
 	noHrefElements := map[string]bool{
 		"span": true, "p": true, "div": true,
 	}
+	// Non-phrasing HTML elements not allowed as direct content of SVG title.
+	// These are only flagged when they appear with an inline xmlns= declaration
+	// (i.e., <body xmlns="..."> but NOT <h:body> which uses prefix notation).
+	// Exception: <html xmlns="..."> is always valid (represents an embedded HTML doc).
+	nonPhrasingHTML := map[string]bool{
+		"body": true, "head": true, "address": true,
+		"article": true, "aside": true, "blockquote": true,
+		"fieldset": true, "figcaption": true, "figure": true, "footer": true,
+		"form": true, "header": true, "hr": true, "main": true, "nav": true,
+		"ol": true, "pre": true, "section": true, "table": true,
+		"ul": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+	}
 
-	inSVG := 0        // SVG element nesting depth
-	inSVGTitle := false // inside an SVG title element
-	titleDepth := 0    // element depth inside title (to track direct children)
+	inSVG := 0          // SVG element nesting depth
+	inSVGTitle := false  // inside an SVG title element
+	titleDepth := 0      // element depth inside title (to track direct children)
 	reportedNS := make(map[string]bool) // track reported namespaces per title
+	// Deferred non-phrasing element check: suppressed if namespace violation found.
+	pendingNonPhrasingElem := "" // set when non-phrasing HTML with xmlns is found at depth 1
+	hasNamespaceViolation := false
 
 	for {
 		tok, err := decoder.Token()
@@ -4372,6 +4589,7 @@ func checkSVGTitleContent(data []byte, location string, r *report.Report) {
 							location)
 						reportedNS[ns] = true
 					}
+					hasNamespaceViolation = true
 				} else if isSVGElem {
 					// SVG elements inside title
 					if !reportedNS[svgNS] {
@@ -4380,14 +4598,32 @@ func checkSVGTitleContent(data []byte, location string, r *report.Report) {
 							location)
 						reportedNS[svgNS] = true
 					}
+					hasNamespaceViolation = true
 				} else if titleDepth == 1 {
-					// HTML attribute validation: only check direct children
-					if isHTML && noHrefElements[t.Name.Local] {
-						for _, attr := range t.Attr {
-							if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
-								r.AddWithLocation(report.Error, "RSC-005",
-									`attribute "href" not allowed here`,
-									location)
+					// HTML element and attribute validation: only check direct children
+					if isHTML {
+						if noHrefElements[t.Name.Local] {
+							for _, attr := range t.Attr {
+								if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
+									r.AddWithLocation(report.Error, "RSC-005",
+										`attribute "href" not allowed here`,
+										location)
+								}
+							}
+						}
+						// Only flag non-phrasing elements in standalone SVG mode.
+						// In XHTML-embedded SVG, all HTML elements (even body/h1) are valid.
+						// For standalone SVG, only flag elements with INLINE xmlns= declarations
+						// (e.g., <body xmlns="...">); prefix-based elements (<h:body>) are valid.
+						// Exception: <html xmlns="..."> is always valid (embedded HTML doc).
+						// Defer the error until end of title in case SVG inside generates
+						// a namespace violation (which takes priority).
+						if standaloneMode && t.Name.Local != "html" && nonPhrasingHTML[t.Name.Local] {
+							for _, attr := range t.Attr {
+								if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
+									pendingNonPhrasingElem = t.Name.Local
+									break
+								}
 							}
 						}
 					}
@@ -4396,6 +4632,8 @@ func checkSVGTitleContent(data []byte, location string, r *report.Report) {
 				inSVGTitle = true
 				titleDepth = 0
 				reportedNS = make(map[string]bool)
+				pendingNonPhrasingElem = ""
+				hasNamespaceViolation = false
 			}
 		case xml.EndElement:
 			if t.Name.Local == "svg" && (t.Name.Space == svgNS || t.Name.Space == "") && inSVG > 0 {
@@ -4403,6 +4641,12 @@ func checkSVGTitleContent(data []byte, location string, r *report.Report) {
 			}
 			if inSVGTitle {
 				if t.Name.Local == "title" && (t.Name.Space == svgNS || t.Name.Space == "") && titleDepth == 0 {
+					// Flush deferred non-phrasing element error if no namespace violations found
+					if pendingNonPhrasingElem != "" && !hasNamespaceViolation {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`element "%s" not allowed here`, pendingNonPhrasingElem),
+							location)
+					}
 					inSVGTitle = false
 				} else {
 					titleDepth--
@@ -4446,8 +4690,10 @@ func checkSVGEpubType(data []byte, location string, r *report.Report) {
 }
 
 // checkSVGUnknownEpubAttr detects unknown epub: attributes in SVG (RSC-005).
+// epub:type is allowed on SVG elements; epub:prefix is allowed on the root SVG element.
 func checkSVGUnknownEpubAttr(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	isRoot := true
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4458,13 +4704,21 @@ func checkSVGUnknownEpubAttr(data []byte, location string, r *report.Report) {
 			continue
 		}
 		for _, attr := range se.Attr {
-			if attr.Name.Space == "http://www.idpf.org/2007/ops" && attr.Name.Local != "type" {
+			if attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				// epub:type is always allowed; epub:prefix is allowed on root element only
+				if attr.Name.Local == "type" {
+					continue
+				}
+				if attr.Name.Local == "prefix" && isRoot {
+					continue
+				}
 				r.AddWithLocation(report.Error, "RSC-005",
 					fmt.Sprintf(`"epub:%s" not allowed here`, attr.Name.Local),
 					location)
 				return
 			}
 		}
+		isRoot = false
 	}
 }
 
@@ -4639,6 +4893,12 @@ func checkSingleFileEncoding(ep *epub.EPUB, r *report.Report) {
 
 // checkSingleFileSMIL runs SMIL-specific checks for single-file validation.
 func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.Report) {
+	// Check for undeclared prefixes in epub:type attributes (OPF-028)
+	checkOPF028UndeclaredPrefix(data, location, r)
+
+	// Check for plain prefix attribute (no epub: namespace) which is not valid
+	checkSMILPlainPrefixAttr(data, location, r)
+
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 
 	// Stack tracking for parent elements
@@ -4797,6 +5057,30 @@ func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.
 					delete(parStates, depth)
 				}
 				parentStack = parentStack[:depth]
+			}
+		}
+	}
+}
+
+// checkSMILPlainPrefixAttr detects plain prefix attribute (without epub: namespace) in SMIL (RSC-005).
+// In SMIL, the prefix attribute must use the epub: namespace; plain prefix= is not allowed.
+func checkSMILPlainPrefixAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "prefix" && attr.Name.Space == "" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "prefix" not allowed here`,
+					location)
+				return
 			}
 		}
 	}
@@ -4975,6 +5259,29 @@ func checkEmptySrcAttr(data []byte, location string, r *report.Report) {
 // checkEpubSwitchTrigger detects epub:switch and epub:trigger elements (RSC-017 deprecated).
 func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
 	opsNS := "http://www.idpf.org/2007/ops"
+	evNS := "http://www.w3.org/2001/xml-events"
+
+	// First pass: collect all element IDs for trigger ref validation
+	docIDs := make(map[string]bool)
+	{
+		idDecoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := idDecoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "id" && attr.Name.Space == "" {
+					docIDs[attr.Value] = true
+				}
+			}
+		}
+	}
+
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 
 	type switchState struct {
@@ -5002,11 +5309,35 @@ func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
 				r.AddWithLocation(report.Warning, "RSC-017",
 					`The "epub:trigger" element is deprecated`,
 					location)
+				// Validate ref and ev:observer attributes
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "ref" && attr.Name.Space == "" {
+						if attr.Value != "" && !docIDs[attr.Value] {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`The ref attribute must refer to an element in the same document`,
+								location)
+						}
+					}
+					if attr.Name.Local == "observer" && attr.Name.Space == evNS {
+						if attr.Value != "" && !docIDs[attr.Value] {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`The ev:observer attribute must refer to an element in the same document`,
+								location)
+						}
+					}
+				}
 			}
 			if t.Name.Local == "case" && t.Name.Space == opsNS && len(switchStack) > 0 {
 				cur := switchStack[len(switchStack)-1]
 				cur.caseCount++
-				cur.hasCaseBefore = true
+				if cur.hasDefault {
+					// epub:case after epub:default is not allowed
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:case" not allowed here`,
+						location)
+				} else {
+					cur.hasCaseBefore = true
+				}
 				// Check for required-namespace attribute
 				hasReqNS := false
 				for _, attr := range t.Attr {
@@ -5308,8 +5639,8 @@ func checkPrefixAttrLocation(data []byte, location string, r *report.Report) {
 		if !ok {
 			continue
 		}
-		if se.Name.Local == "html" || se.Name.Local == "svg" {
-			continue // prefix is allowed on html and svg root elements
+		if se.Name.Local == "html" {
+			continue // prefix is allowed on html root element only
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
@@ -5331,7 +5662,9 @@ func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
 		"dcterms":   "http://purl.org/dc/terms/",
 		"marc":      "http://id.loc.gov/vocabulary/",
 		"media":     "http://www.idpf.org/epub/vocab/overlays/#",
+		"msv":       "http://www.idpf.org/epub/vocab/structure/magazine/#",
 		"onix":      "http://www.editeur.org/ONIX/book/codelists/current.html#",
+		"prism":     "http://www.prismstandard.org/specifications/3.0/PRISM_CV_Spec_3.0.htm#",
 		"rendition": "http://www.idpf.org/vocab/rendition/#",
 		"schema":    "http://schema.org/",
 		"xsd":       "http://www.w3.org/2001/XMLSchema#",
@@ -5419,6 +5752,7 @@ func checkNestedTime(data []byte, location string, r *report.Report) {
 
 // checkMathMLContentOnly detects Content MathML elements used directly
 // inside <math> (not inside <semantics>/<annotation-xml>) (RSC-005).
+// Also detects nested <math> elements, except inside annotation-xml which allows them.
 func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 	mathNS := "http://www.w3.org/1998/Math/MathML"
 	contentMathMLElements := map[string]bool{
@@ -5430,6 +5764,7 @@ func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 	mathDepth := 0  // depth inside a math element
 	inMath := false
 	reported := map[string]bool{}
+	insideAnnotation := 0 // depth of annotation-xml nesting (allows nested <math>)
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5438,10 +5773,21 @@ func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			isMathNS := t.Name.Space == mathNS
+			if isMathNS && t.Name.Local == "annotation-xml" {
+				insideAnnotation++
+			}
 			if t.Name.Local == "math" {
-				inMath = true
-				mathDepth = 0
-				reported = map[string]bool{}
+				if inMath && insideAnnotation == 0 {
+					// Nested <math> inside <math> (outside annotation-xml) is not allowed
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "math" not allowed here`,
+						location)
+				}
+				if !inMath {
+					inMath = true
+					mathDepth = 0
+					reported = map[string]bool{}
+				}
 			} else if inMath {
 				mathDepth++
 			}
@@ -5453,6 +5799,9 @@ func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 				reported[t.Name.Local] = true
 			}
 		case xml.EndElement:
+			if t.Name.Local == "annotation-xml" && t.Name.Space == mathNS && insideAnnotation > 0 {
+				insideAnnotation--
+			}
 			if t.Name.Local == "math" {
 				inMath = false
 				mathDepth = 0
@@ -5466,45 +5815,70 @@ func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 // checkMathMLAnnotation validates MathML annotation-xml attributes (RSC-005).
 func checkMathMLAnnotation(data []byte, location string, r *report.Report) {
 	mathNS := "http://www.w3.org/1998/Math/MathML"
+	// Content MathML elements not allowed inside MathML-Presentation annotations
+	contentMathMLElements := map[string]bool{
+		"apply": true, "cn": true, "ci": true, "csymbol": true,
+		"cerror": true, "cbytes": true, "cs": true, "share": true,
+		"piecewise": true, "bind": true,
+	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inPresAnnotation := false
+	annotationDepth := 0
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
 			break
 		}
-		se, ok := tok.(xml.StartElement)
-		if !ok || se.Name.Local != "annotation-xml" {
-			continue
-		}
-		if se.Name.Space != mathNS {
-			continue
-		}
-		encoding := ""
-		name := ""
-		for _, attr := range se.Attr {
-			if attr.Name.Local == "encoding" {
-				encoding = attr.Value
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "annotation-xml" && t.Name.Space == mathNS {
+				encoding := ""
+				name := ""
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "encoding" {
+						encoding = attr.Value
+					}
+					if attr.Name.Local == "name" {
+						name = attr.Value
+					}
+				}
+				encLower := strings.ToLower(encoding)
+				if encLower == "mathml-content" {
+					if name == "" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "annotation-xml" missing required attribute "name"`,
+							location)
+					} else if name != "contentequiv" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`value of attribute "name" is invalid`,
+							location)
+					}
+				}
+				if encLower == "application/xml+xhtml" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`value of attribute "encoding" is invalid; must be equal to "application/xhtml+xml"`,
+						location)
+				}
+				if encLower == "mathml-presentation" {
+					inPresAnnotation = true
+					annotationDepth = 0
+				}
+			} else if inPresAnnotation {
+				annotationDepth++
+				if annotationDepth == 1 && contentMathMLElements[t.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+						location)
+				}
 			}
-			if attr.Name.Local == "name" {
-				name = attr.Value
+		case xml.EndElement:
+			if inPresAnnotation {
+				if t.Name.Local == "annotation-xml" && annotationDepth == 0 {
+					inPresAnnotation = false
+				} else {
+					annotationDepth--
+				}
 			}
-		}
-		encLower := strings.ToLower(encoding)
-		if encLower == "mathml-content" {
-			if name == "" {
-				r.AddWithLocation(report.Error, "RSC-005",
-					`element "annotation-xml" missing required attribute "name"`,
-					location)
-			} else if name != "contentequiv" {
-				r.AddWithLocation(report.Error, "RSC-005",
-					`value of attribute "name" is invalid`,
-					location)
-			}
-		}
-		if encLower == "application/xml+xhtml" {
-			r.AddWithLocation(report.Error, "RSC-005",
-				`value of attribute "encoding" is invalid; must be equal to "application/xhtml+xml"`,
-				location)
 		}
 	}
 }
@@ -5677,6 +6051,13 @@ func checkURLConformance(data []byte, location string, r *report.Report) {
 			if attr.Name.Local == "href" || attr.Name.Local == "src" || attr.Name.Local == "poster" {
 				val := strings.TrimSpace(attr.Value)
 				if val == "" || strings.HasPrefix(val, "#") || strings.HasPrefix(val, "mailto:") {
+					continue
+				}
+				// Detect single-slash URLs (e.g. https:/host instead of https://host)
+				if strings.Contains(val, ":/") && !strings.Contains(val, "://") {
+					r.AddWithLocation(report.Error, "RSC-020",
+						fmt.Sprintf(`Invalid URL "%s"`, val),
+						location)
 					continue
 				}
 				if !strings.Contains(val, "://") {

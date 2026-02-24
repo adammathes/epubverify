@@ -63,6 +63,7 @@ type Package struct {
 	MetaListProps    []string       // meta property attributes that contain spaces (multiple values)
 	MetaEmptyValues  int            // count of meta elements with empty text content
 	HasBindings      bool           // whether a <bindings> element was present
+	Collections      []Collection   // <collection> elements in the package document
 	UnknownElements  []string       // unknown child elements of <package>
 	XMLIDCounts      map[string]int // counts of all id attributes in the OPF
 	PackageNamespace string         // namespace of the <package> element
@@ -156,4 +157,10 @@ type GuideReference struct {
 	Type  string
 	Title string
 	Href  string
+}
+
+// Collection represents a <collection> element in the OPF package document.
+type Collection struct {
+	Role     string
+	TopLevel bool // true if this is a direct child of <package>
 }

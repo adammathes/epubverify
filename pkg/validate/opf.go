@@ -84,11 +84,11 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// RSC-005: required elements present (schema validation)
 	if !ep.HasMetadata {
-		r.Add(report.Error, "RSC-005", "Package document is missing required element: metadata")
+		r.Add(report.Error, "RSC-005", `missing required element "metadata"`)
 	}
 
 	if !ep.HasManifest {
-		r.Add(report.Error, "RSC-005", "Package document is missing required element: manifest")
+		r.Add(report.Error, "RSC-005", `missing required element "manifest"`)
 	}
 
 	if !ep.HasSpine {
@@ -98,23 +98,25 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-015: version must be valid (2.0 or 3.0)
 	checkPackageVersion(pkg, r)
 
-	// OPF-001: dc:title must be present
-	checkDCTitle(pkg, r)
+	if ep.HasMetadata {
+		// OPF-001: dc:title must be present
+		checkDCTitle(pkg, r)
 
-	// OPF-002: dc:identifier must be present
-	checkDCIdentifier(pkg, r)
+		// OPF-002: dc:identifier must be present
+		checkDCIdentifier(pkg, r)
 
-	// OPF-003: dc:language must be present
-	checkDCLanguage(pkg, r)
+		// OPF-003: dc:language must be present
+		checkDCLanguage(pkg, r)
 
-	// OPF-004: dcterms:modified must be present (EPUB 3)
-	checkDCTermsModified(pkg, r)
+		// OPF-004: dcterms:modified must be present (EPUB 3)
+		checkDCTermsModified(pkg, r)
 
-	// OPF-019: dcterms:modified must be valid format
-	checkDCTermsModifiedFormat(pkg, r)
+		// OPF-019: dcterms:modified must be valid format
+		checkDCTermsModifiedFormat(pkg, r)
 
-	// OPF-020: dc:language must be valid BCP 47
-	checkDCLanguageValid(pkg, r)
+		// OPF-020: dc:language must be valid BCP 47
+		checkDCLanguageValid(pkg, r)
+	}
 
 	// OPF-005: manifest item IDs must be unique
 	checkManifestUniqueIDs(pkg, r)
@@ -131,8 +133,8 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-007: manifest items must have media-type
 	checkManifestMediaTypeRequired(pkg, r)
 
-	// OPF-008: unique-identifier must resolve
-	checkUniqueIdentifierResolves(pkg, r)
+	// OPF-008: unique-identifier must resolve (OPF-030 skipped in single-file mode)
+	checkUniqueIdentifierResolves(pkg, r, opts.SingleFileMode)
 
 	// OPF-009: spine itemrefs must reference valid manifest items
 	checkSpineIdrefResolves(pkg, r)
@@ -260,9 +262,6 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-054: dc:date empty value
 	checkDCDateEmpty(pkg, r)
 
-	// OPF-091: manifest item href must not have fragment
-	checkManifestHrefFragment(pkg, r)
-
 	// OPF-065: refines cycle detection
 	checkRefinesCycle(pkg, r)
 
@@ -330,6 +329,18 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 		r.Add(report.Error, "OPF-039b",
 			`element "guide" incomplete; missing required element "reference"`)
 	}
+
+	// RSC-020 / PKG-009/010/012: manifest item href checks
+	checkManifestHrefEncoding(pkg, r)
+	if opts.SingleFileMode {
+		checkManifestHrefFilenames(pkg, r)
+	}
+
+	// RSC-017: guide duplicate entries
+	checkGuideDuplicates(pkg, r)
+
+	// OPF-070/RSC-005: collection role validation
+	checkCollections(pkg, r)
 
 	// RSC-005: element order (metadata must come before manifest, manifest before spine)
 	checkElementOrder(pkg, r)
@@ -408,6 +419,8 @@ func checkNavProperty(pkg *epub.Package, r *report.Report) {
 			if item.MediaType != "application/xhtml+xml" {
 				r.Add(report.Error, "RSC-005",
 					`the Navigation Document must be of the "application/xhtml+xml" type`)
+				r.Add(report.Error, "OPF-012",
+					fmt.Sprintf(`the "nav" property is not defined for items of type "%s"`, item.MediaType))
 			}
 		}
 	}
@@ -590,10 +603,15 @@ func checkManifestMediaTypeRequired(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-008
-func checkUniqueIdentifierResolves(pkg *epub.Package, r *report.Report) {
+// OPF-008 / OPF-030: unique-identifier attribute must exist and resolve.
+// In EPUB2 single-file mode, OPF-030 is skipped (epubcheck FIXME behavior).
+func checkUniqueIdentifierResolves(pkg *epub.Package, r *report.Report, singleFileMode bool) {
 	if pkg.UniqueIdentifier == "" {
 		r.Add(report.Error, "OPF-008", "Package element is missing unique-identifier attribute")
+		return
+	}
+	// EPUB2 single-file mode: epubcheck doesn't report OPF-030 (FIXME in epubcheck)
+	if singleFileMode && pkg.Version < "3.0" {
 		return
 	}
 	for _, id := range pkg.Metadata.Identifiers {
@@ -815,7 +833,7 @@ func checkSpineContentDocs(pkg *epub.Package, r *report.Report) {
 				r.Add(report.Error, "OPF-042",
 					fmt.Sprintf("Spine item '%s' is an image (%s) and should not be used directly in the spine", item.ID, item.MediaType))
 			} else {
-				r.Add(report.Error, "OPF-023",
+				r.Add(report.Error, "OPF-043",
 					fmt.Sprintf("Spine item '%s' has non-standard media-type '%s' with no fallback to a content document", item.ID, item.MediaType))
 			}
 		}
@@ -982,6 +1000,13 @@ func extensionToMediaType(ext string) string {
 	}
 }
 
+// Reserved property prefixes that do not define manifest item properties.
+// Properties using these prefixes on manifest items are invalid (OPF-027).
+var reservedPropertyPrefixes = map[string]bool{
+	"a11y": true, "dcterms": true, "marc": true, "media": true,
+	"onix": true, "rendition": true, "schema": true, "xsd": true,
+}
+
 // Valid manifest item properties (EPUB 3)
 var validManifestProperties = map[string]bool{
 	"cover-image":      true,
@@ -1043,10 +1068,14 @@ func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 			if validManifestProperties[prop] {
 				continue
 			}
-			// Prefixed properties (e.g., "ex2:itemprop") are allowed if the
-			// prefix is declared or reserved. Undeclared prefixes are caught
-			// by checkUndeclaredPrefixes.
 			if strings.Contains(prop, ":") {
+				// Reserved prefixes do not define manifest item properties; report OPF-027.
+				// User-declared prefixes might have custom vocabularies, so allow them.
+				prefix := strings.SplitN(prop, ":", 2)[0]
+				if reservedPropertyPrefixes[prefix] {
+					r.Add(report.Error, "OPF-027",
+						fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
+				}
 				continue
 			}
 			// OPF-027: undefined property
@@ -1217,6 +1246,16 @@ func checkMetaRefinesTarget(ep *epub.EPUB, r *report.Report) {
 			r.Add(report.Error, "OPF-037",
 				fmt.Sprintf("@refines must be a relative URL, but found '%s'", refines))
 			continue
+		}
+		// Refines should use a fragment identifier when referring to a Publication Resource.
+		// If it looks like a file path (contains '.' or '/'), report RSC-017 and skip.
+		// If it's a bare ID (no '#' prefix), still do the target lookup.
+		if !strings.HasPrefix(refines, "#") {
+			if strings.Contains(refines, ".") || strings.Contains(refines, "/") {
+				r.Add(report.Warning, "RSC-017",
+					fmt.Sprintf("@refines attribute is not using a fragment identifier pointing to its manifest item: '%s'", refines))
+				continue
+			}
 		}
 		target := strings.TrimPrefix(refines, "#")
 		if target == "" {
@@ -1836,17 +1875,8 @@ func checkDataURLsInManifest(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// RSC-030: file URLs must not be used
+// RSC-030: file URLs must not be used in metadata links (manifest items checked in references.go)
 func checkFileURLsInOPF(pkg *epub.Package, r *report.Report) {
-	for _, item := range pkg.Manifest {
-		if item.Href == "\x00MISSING" {
-			continue
-		}
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Href)), "file:") {
-			r.Add(report.Error, "RSC-030",
-				fmt.Sprintf("File URL used in manifest item href '%s'", item.Href))
-		}
-	}
 	for _, link := range pkg.MetadataLinks {
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(link.Href)), "file:") {
 			r.Add(report.Error, "RSC-030",
@@ -1998,19 +2028,6 @@ func checkDCDateEmpty(pkg *epub.Package, r *report.Report) {
 		if strings.TrimSpace(date) == "" {
 			r.Add(report.Error, "OPF-054",
 				"Element dc:date must not be empty")
-		}
-	}
-}
-
-// OPF-091: manifest item href must not contain a fragment identifier
-func checkManifestHrefFragment(pkg *epub.Package, r *report.Report) {
-	for _, item := range pkg.Manifest {
-		if item.Href == "\x00MISSING" || item.Href == "" {
-			continue
-		}
-		if strings.Contains(item.Href, "#") {
-			r.Add(report.Error, "OPF-091",
-				fmt.Sprintf("Manifest item '%s' href must not contain a fragment identifier", item.ID))
 		}
 	}
 }
@@ -2929,13 +2946,28 @@ func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
 		}
 	}
 
-	// Find per-item media:duration (refines an overlay item)
+	// Build a reverse map from SMIL item href to its ID for non-fragment refines lookups
+	smilHrefToID := make(map[string]string)
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/smil+xml" {
+			smilHrefToID[item.Href] = item.ID
+		}
+	}
+
+	// Find per-item media:duration (refines an overlay item by ID or href)
 	itemDurations := make(map[string]string)
 	for _, mr := range pkg.MetaRefines {
 		if mr.Property == "media:duration" && mr.Refines != "" {
 			ref := strings.TrimPrefix(mr.Refines, "#")
-			if smilItems[ref] {
-				itemDurations[ref] = mr.Value
+			id := ref
+			if !smilItems[id] {
+				// Try matching by href (when refines is a path, not a fragment)
+				if hrefID, ok := smilHrefToID[ref]; ok {
+					id = hrefID
+				}
+			}
+			if smilItems[id] {
+				itemDurations[id] = mr.Value
 			}
 		}
 	}
@@ -2946,11 +2978,14 @@ func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
 			"global media:duration meta element not set")
 	}
 
-	// Check each overlay item has a duration
-	for id := range smilItems {
-		if _, ok := itemDurations[id]; !ok {
-			r.Add(report.Error, "RSC-005",
-				fmt.Sprintf("item media:duration meta element not set for Media Overlay \"%s\"", id))
+	// Check each overlay item has a duration only when media-overlay attributes are used
+	// (When no media-overlay attrs exist, SMIL items may not be actual overlay documents)
+	if hasMediaOverlayAttr {
+		for id := range smilItems {
+			if _, ok := itemDurations[id]; !ok {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("item media:duration meta element not set for Media Overlay \"%s\"", id))
+			}
 		}
 	}
 
@@ -3153,4 +3188,167 @@ func hasUndeclaredNamespacePrefix(data []byte) bool {
 		}
 	}
 	return false
+}
+
+// checkManifestHrefEncoding checks manifest item hrefs for unencoded literal spaces (RSC-020).
+func checkManifestHrefEncoding(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "" || item.Href == "\x00MISSING" {
+			continue
+		}
+		// Skip data URLs and remote URLs (they may legitimately contain spaces or are handled elsewhere)
+		lower := strings.ToLower(strings.TrimSpace(item.Href))
+		if strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "http://") ||
+			strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "file:") {
+			continue
+		}
+		if strings.Contains(item.Href, " ") {
+			r.Add(report.Error, "RSC-020",
+				fmt.Sprintf("Manifest item href contains an unencoded space: '%s'", item.Href))
+		}
+	}
+}
+
+// checkManifestHrefFilenames checks manifest item hrefs for filename issues in single-file mode.
+// In single-file OPF mode, the ZIP file entries don't exist so we check the hrefs directly.
+// PKG-009: forbidden characters, PKG-010: spaces, PKG-012: non-ASCII characters.
+func checkManifestHrefFilenames(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "" || item.Href == "\x00MISSING" {
+			continue
+		}
+		// Skip remote URLs, data URLs, and file URLs - they're not local paths
+		lower := strings.ToLower(strings.TrimSpace(item.Href))
+		if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") ||
+			strings.HasPrefix(lower, "data:") || strings.HasPrefix(lower, "file:") {
+			continue
+		}
+		// Strip query string and fragment before filename checks
+		href := item.Href
+		if idx := strings.IndexAny(href, "?#"); idx >= 0 {
+			href = href[:idx]
+		}
+		if href == "" {
+			continue
+		}
+		// URL-decode the href to get the actual filename
+		decoded, err := url.PathUnescape(href)
+		if err != nil {
+			decoded = href
+		}
+		// Check each path component of the decoded href
+		parts := strings.Split(decoded, "/")
+		for _, part := range parts {
+			if part == "" {
+				continue
+			}
+			// PKG-010: warn about spaces (check before forbidden chars)
+			hasSpace := false
+			for _, c := range part {
+				if isFilenameSpaceChar(c) {
+					hasSpace = true
+					break
+				}
+			}
+			if hasSpace {
+				r.Add(report.Warning, "PKG-010",
+					fmt.Sprintf("Filename contains spaces, which is discouraged: '%s'", part))
+				continue
+			}
+			// PKG-009: forbidden characters
+			epub2 := pkg.Version < "3.0"
+			if hasForbiddenFilenameChar(part, epub2) {
+				r.Add(report.Error, "PKG-009",
+					fmt.Sprintf("File name contains characters forbidden in OCF file names in: '%s'", part))
+				continue
+			}
+			// PKG-012: non-ASCII characters
+			for _, c := range part {
+				if c > 0x7F {
+					r.Add(report.Usage, "PKG-012",
+						fmt.Sprintf("Filename contains non-ASCII characters, which may cause interoperability issues: '%s'", part))
+					break
+				}
+			}
+		}
+	}
+}
+
+// hasForbiddenFilenameChar returns true if the filename part contains any forbidden OCF characters.
+func hasForbiddenFilenameChar(name string, epub2 bool) bool {
+	for _, c := range name {
+		if isForbiddenFilenameChar(c, epub2) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkGuideDuplicates checks for duplicate guide reference entries (same type and href).
+// RSC-017: duplicate guide entries. Reports once per entry that is a duplicate.
+func checkGuideDuplicates(pkg *epub.Package, r *report.Report) {
+	if !pkg.HasGuide || len(pkg.Guide) == 0 {
+		return
+	}
+	// Count how many times each (type, href) pair appears
+	counts := make(map[string]int)
+	for _, ref := range pkg.Guide {
+		key := ref.Type + "\x00" + ref.Href
+		counts[key]++
+	}
+	// Report RSC-017 for each entry in a duplicate group
+	for _, ref := range pkg.Guide {
+		key := ref.Type + "\x00" + ref.Href
+		if counts[key] > 1 {
+			r.Add(report.Warning, "RSC-017",
+				`Duplicate "reference" elements with the same "type" and "href" attributes`)
+		}
+	}
+}
+
+// isValidPercentEncoded returns true if all % characters in the string
+// are followed by two valid hexadecimal digits.
+func isValidPercentEncoded(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' {
+			if i+2 >= len(s) {
+				return false
+			}
+			h1 := s[i+1]
+			h2 := s[i+2]
+			isHex := func(c byte) bool {
+				return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+			}
+			if !isHex(h1) || !isHex(h2) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// checkCollections validates <collection> elements in the OPF package document.
+// OPF-070: collection role must be a valid URL (only flag truly malformed IRIs).
+// RSC-005: manifest collection must be the child of another collection.
+func checkCollections(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, col := range pkg.Collections {
+		if col.Role == "" {
+			continue
+		}
+		// OPF-070: flag only truly malformed IRIs (invalid percent-encoding or parse failure)
+		_, parseErr := url.Parse(col.Role)
+		hasInvalidPercent := strings.Contains(col.Role, "%") && !isValidPercentEncoded(col.Role)
+		if parseErr != nil || hasInvalidPercent {
+			r.Add(report.Warning, "OPF-070",
+				fmt.Sprintf("Collection role '%s' is not a valid URL", col.Role))
+		}
+		// RSC-005: 'manifest' collection must be nested inside another collection
+		if col.Role == "manifest" && col.TopLevel {
+			r.Add(report.Error, "RSC-005",
+				"A manifest collection must be the child of another collection")
+		}
+	}
 }

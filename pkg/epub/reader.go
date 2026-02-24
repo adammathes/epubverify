@@ -159,6 +159,7 @@ func (ep *EPUB) ParseOPF() error {
 		SpinePageMap:             structInfo.spinePageMap,
 		PageProgressionDirection: structInfo.pageProgressionDirection,
 		HasGuide:                 structInfo.hasGuide,
+		Collections:              structInfo.collections,
 		MetaRefines:              structInfo.metaRefines,
 		MetaIDs:                  structInfo.metaIDs,
 		ElementOrder:             structInfo.elementOrder,
@@ -262,6 +263,7 @@ type opfStructInfo struct {
 	metaListProps            []string // meta property attributes containing spaces
 	metaEmptyValues          int      // count of meta elements with empty text content
 	hasBindings              bool
+	collections              []Collection
 	unknownElements          []string
 	xmlIDCounts              map[string]int
 	packageNamespace         string
@@ -372,6 +374,17 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			info.elementOrder = append(info.elementOrder, "guide")
 		case "bindings":
 			info.hasBindings = true
+		case "collection":
+			var role string
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "role" {
+					role = attr.Value
+				}
+			}
+			info.collections = append(info.collections, Collection{
+				Role:     role,
+				TopLevel: depth == 1,
+			})
 		case "itemref":
 			var idref, props, linear string
 			for _, attr := range se.Attr {

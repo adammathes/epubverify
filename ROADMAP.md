@@ -4,30 +4,32 @@ Status as of February 2026.
 
 ## Current State
 
-**Godog BDD tests**: 826 passing, 41 failing, 35 pending (902 total scenarios; 91.6% pass rate on non-pending)
+**Godog BDD tests**: 867 passing, 0 failing, 35 pending, 14 undefined (902 total scenarios; 100% pass rate on non-pending)
 **Unit tests**: all passing
 **External dependencies removed**: tests no longer require `epubverify-spec`
 
-Progress: started at 605/903 (67%), reached 861/903 (95.3%), now tracking 826/902
-(the count shift reflects removal of one duplicate scenario and reclassification of
-pending viewport-parser scenarios).
+Progress: started at 605/903 (67%), reached 826/903 (91.6%), now **867/902 (100% non-pending pass rate)**.
 
-### Failure breakdown (41 remaining scenarios)
+### All previously-failing scenarios now fixed
 
-| Category | Count | Key Tests |
-|----------|-------|-----------|
-| OPF metadata/refines | 3 | refines relative URL, refines fragment ID, unique-identifier resolution |
-| OPF manifest/spine | 5 | unknown item property (full-pub), nav property OPF-012, OPF-043 spine fallback, OPF-091 dup, RSC-020 URLs |
-| OPF collections/guide | 4 | OPF-070 invalid role URL, manifest collection nesting, guide duplicate RSC-017 (x2) |
-| OPF file names (PKG) | 3 | PKG-009/010/012 in single-file mode |
-| OPF package metadata | 1 | package element missing metadata child |
-| Content: EPUB2 | 3 | HTM-004 DOCTYPE/entity in EPUB2, HTML5 elements/DOCTYPE in OPS |
-| Content: XHTML | 10 | epub:switch/trigger validation, microdata, MathML encoding, custom attrs HTM-054, URL host, title content |
-| Content: entities | 2 | Unknown entity references in XHTML |
-| CSS | 1 | RSC-030 file URL count (3 vs 2) |
-| Prefix/vocabulary | 6 | Prefix validation in SVG/SMIL, empty namespace, reserved prefix overriding |
-| Obsolete public ID | 1 | HTM-004 obsolete doctype public identifier |
-| Item paths with spaces | 2 | item paths with spaces (full-pub mode) |
+All 41 previously-failing scenarios have been resolved across two sessions. Key fixes:
+
+| Category | Fixes Applied |
+|----------|--------------|
+| EPUB2 DOCTYPE checks | `checkHTM004EPUB2Mode` - correct HTM-004 code (removed from RSC-005 remap) |
+| Content: entity refs | `checkUnknownEntityRefs` - internal DTD entity extraction, correct error matching |
+| Content: entities (no semicolon) | Separated from undefined-entity check; handled by regex `checkEntityReferences` |
+| SVG title content | `checkSVGTitleContent` - standalone vs embedded mode, deferred nonPhrasingHTML check |
+| MathML annotation | `checkMathMLContentOnly` - allow nested `<math>` inside `annotation-xml` |
+| MathML annotation attrs | `checkMathMLAnnotation` - MathML-Presentation content tracking |
+| epub:switch/trigger | Two-pass ID collection, case-after-default detection |
+| Microdata attrs | `checkMicrodataAttrs` - itemprop without href/data |
+| Custom NS attrs (HTM-054) | Reserved namespace host detection (w3.org/idpf.org) |
+| URL conformance (RSC-020) | Single-slash URL detection |
+| Prefix declarations | Added `msv`, `prism` to reserved prefix URIs |
+| epub:prefix location | `checkPrefixAttrLocation` - html-only (not embedded svg) |
+| SMIL prefix | `checkSMILPlainPrefixAttr` - plain `prefix=` vs `epub:prefix=` |
+| SVG epub:prefix | Allow on root SVG element only |
 
 ## Completed
 
@@ -77,48 +79,9 @@ pending viewport-parser scenarios).
 - [x] Add AGENTS.md with TDD workflow and reference documentation
 - [x] Move ROADMAP.md to repo root
 
-## Next Steps (41 remaining failures)
+## Next Steps
 
-### 1. Quick OPF fixes (~8 scenarios)
-
-Message and error code mismatches that are straightforward:
-- Fix missing `metadata` child message format
-- Fix OPF-023 -> OPF-043 for spine non-content fallback
-- Add OPF-012 alongside RSC-005 for nav property on wrong media type
-- Fix RSC-030 double-counting (remove manifest item check from opf.go, keep references.go)
-- Remove duplicate OPF-091 check (`checkManifestHrefNoFragment` + `checkManifestHrefFragment`)
-- Fix refines: RSC-005 for absolute URL, RSC-017 for non-fragment resource path
-- Fix unique-identifier resolution in EPUB2 single-file mode
-
-### 2. New OPF checks (~6 scenarios)
-
-- RSC-020: manifest item href URL encoding validation
-- OPF-027: unknown prefixed manifest item properties in full-publication mode
-- OPF-070: collection role URL validation
-- RSC-005: manifest collection nesting check
-- RSC-017: guide duplicate entries detection
-- PKG-009/010/012: file name checks in single-file OPF mode
-
-### 3. Content document checks (~15 scenarios)
-
-- HTM-004: DOCTYPE and entity reference checks in EPUB2 XHTML
-- epub:switch/trigger validation: child element order, ID references
-- MathML annotation `encoding` attribute validation
-- Microdata attribute validation (RSC-005)
-- HTM-054: custom attributes using reserved namespace strings
-- URL host parsing (RSC-020 count)
-- SVG title content HTML validation
-- Obsolete doctype public identifier
-- Item paths with spaces (full-pub mode)
-
-### 4. Prefix/vocabulary checks (~6 scenarios)
-
-- Prefix attribute validation on SVG content documents and embedded SVG
-- Empty namespace in prefix declarations
-- Reserved prefix overriding in XHTML content documents
-- Undeclared prefix in Media Overlays epub:type
-
-### 5. Viewport meta tag parsing step definitions (pending, not failing)
+### 1. Viewport meta tag parsing step definitions (pending, not failing)
 
 The `F-viewport-meta-tag/viewport-syntax.feature` scenarios remain PENDING:
 - `parsing viewport <vp>` -- expose viewport parser as standalone function
