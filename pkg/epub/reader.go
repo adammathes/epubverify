@@ -424,9 +424,8 @@ func parseMetadata(data []byte) Metadata {
 				text := readElementText(decoder)
 				md.Languages = append(md.Languages, text)
 			case "date":
-				if text := readElementText(decoder); text != "" {
-					md.Dates = append(md.Dates, text)
-				}
+				text := readElementText(decoder)
+				md.Dates = append(md.Dates, text)
 			case "source":
 				if text := readElementText(decoder); text != "" {
 					md.Sources = append(md.Sources, text)

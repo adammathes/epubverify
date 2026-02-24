@@ -2900,3 +2900,108 @@ func checkNestedDFN(data []byte, location string, r *report.Report) {
 		}
 	}
 }
+
+// checkSingleFileContent runs targeted content checks for single-file XHTML/SVG validation.
+// This checks for data URLs, file URLs, and query strings in href attributes.
+func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	for _, item := range ep.Package.Manifest {
+		mt := item.MediaType
+		if mt != "application/xhtml+xml" && mt != "image/svg+xml" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		checkSingleFileURLs(data, fullPath, r)
+	}
+}
+
+// checkSingleFileURLs scans href/src attributes and inline CSS in XHTML/SVG for
+// data URLs (RSC-029), file URLs (RSC-030), and query strings (RSC-033).
+func checkSingleFileURLs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder.Strict = false
+	decoder.AutoClose = xml.HTMLAutoClose
+
+	var inStyle bool
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			elem := strings.ToLower(t.Name.Local)
+			if elem == "style" {
+				inStyle = true
+			}
+			for _, attr := range t.Attr {
+				name := strings.ToLower(attr.Name.Local)
+				if name != "href" && name != "src" {
+					continue
+				}
+				val := strings.TrimSpace(attr.Value)
+				if val == "" {
+					continue
+				}
+				lowerVal := strings.ToLower(val)
+
+				// RSC-029: data URLs in a, area elements
+				if strings.HasPrefix(lowerVal, "data:") {
+					if elem == "a" || elem == "area" {
+						r.AddWithLocation(report.Error, "RSC-029",
+							fmt.Sprintf("Data URL used in %s element href", elem), location)
+					}
+					continue
+				}
+
+				// RSC-030: file URLs
+				if strings.HasPrefix(lowerVal, "file:") {
+					r.AddWithLocation(report.Error, "RSC-030",
+						fmt.Sprintf("File URL used in %s element %s attribute", elem, name), location)
+					continue
+				}
+
+				// RSC-033: query strings in local URLs
+				if name == "href" && !isRemoteURL(val) && strings.Contains(val, "?") {
+					if elem == "a" || elem == "area" {
+						r.AddWithLocation(report.Error, "RSC-033",
+							fmt.Sprintf("URL query string found in %s element href", elem), location)
+					}
+				}
+			}
+		case xml.CharData:
+			if inStyle {
+				// Check for file: URLs in inline CSS
+				cssLower := strings.ToLower(string(t))
+				idx := 0
+				for {
+					pos := strings.Index(cssLower[idx:], "file:")
+					if pos < 0 {
+						break
+					}
+					r.AddWithLocation(report.Error, "RSC-030",
+						"File URL used in CSS", location)
+					idx += pos + 5
+				}
+			}
+		case xml.EndElement:
+			if strings.ToLower(t.Name.Local) == "style" {
+				inStyle = false
+			}
+		case xml.ProcInst:
+			// Check processing instructions like <?xml-stylesheet href="file:..."?>
+			piData := string(t.Inst)
+			if strings.Contains(strings.ToLower(piData), "file:") {
+				r.AddWithLocation(report.Error, "RSC-030",
+					"File URL used in processing instruction", location)
+			}
+		}
+	}
+}

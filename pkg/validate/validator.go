@@ -104,6 +104,9 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		if opts.Accessibility {
 			checkAccessibility(ep, r)
 		}
+	} else {
+		// Single-file mode: run targeted content checks on XHTML/SVG content
+		checkSingleFileContent(ep, r)
 	}
 
 	// Post-processing: in single-file mode, remap specific check IDs to RSC-005

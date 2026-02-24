@@ -174,10 +174,10 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// RSC-005/OPF-063: page-map attribute on spine is not allowed
 	checkSpinePageMap(ep, pkg, r)
 
-	if !opts.SingleFileMode {
-		// OPF-099: OPF must not reference itself in manifest
-		checkManifestSelfReference(ep, pkg, r)
+	// OPF-099: OPF must not reference itself in manifest
+	checkManifestSelfReference(ep, pkg, r)
 
+	if !opts.SingleFileMode {
 		// OPF-093/RSC-007w: package metadata link checks
 		checkPackageMetadataLinks(ep, pkg, r)
 
@@ -187,6 +187,45 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// OPF-090: manifest items with non-preferred but valid core media types
 	checkNonPreferredMediaTypes(pkg, r)
+
+	// RSC-029: data URLs in manifest items
+	checkDataURLsInManifest(pkg, r)
+
+	// RSC-030: file URLs in manifest/link
+	checkFileURLsInOPF(pkg, r)
+
+	// RSC-033: URL query strings in manifest/link
+	checkQueryStringsInOPF(pkg, r)
+
+	// OPF-028: dcterms:modified count in metadata (multiple occurrences)
+	checkDCTermsModifiedCount(pkg, r)
+
+	// OPF-053: dc:date warnings
+	checkDCDateWarnings(pkg, r)
+
+	// OPF-052: dc:creator role validation
+	checkDCCreatorRole(pkg, r)
+
+	// OPF-054: dc:date empty value
+	checkDCDateEmpty(pkg, r)
+
+	// OPF-091: manifest item href must not have fragment
+	checkManifestHrefFragment(pkg, r)
+
+	// OPF-065: refines cycle detection
+	checkRefinesCycle(pkg, r)
+
+	// OPF-098: link must not target manifest ID
+	checkLinkTargetNotManifestID(pkg, r)
+
+	// OPF-094/095: link relation and properties validation
+	checkLinkRelation(pkg, r)
+
+	// OPF-026: metadata property names must be defined
+	checkMetaPropertyDefined(pkg, r)
+
+	// OPF-004c: dcterms:modified must occur as non-refining meta
+	checkDCTermsModifiedNonRefining(pkg, r)
 
 	return false
 }
@@ -769,14 +808,14 @@ func checkDCTitleNotEmpty(pkg *epub.Package, r *report.Report) {
 	}
 }
 
-// OPF-033: manifest href must not contain a fragment identifier
+// OPF-091: manifest href must not contain a fragment identifier
 func checkManifestHrefNoFragment(pkg *epub.Package, r *report.Report) {
 	for _, item := range pkg.Manifest {
 		if item.Href == "\x00MISSING" || item.Href == "" {
 			continue
 		}
 		if strings.Contains(item.Href, "#") {
-			r.Add(report.Error, "OPF-033",
+			r.Add(report.Error, "OPF-091",
 				fmt.Sprintf("Manifest item href must not have a fragment identifier: '%s'", item.Href))
 		}
 	}
@@ -1346,4 +1385,275 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 			}
 		}
 	}
+}
+
+// RSC-029: data URLs must not be used in manifest item hrefs or package link hrefs
+func checkDataURLsInManifest(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Href)), "data:") {
+			r.Add(report.Error, "RSC-029",
+				fmt.Sprintf("Data URL used in manifest item href '%s'", item.ID))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(link.Href)), "data:") {
+			r.Add(report.Error, "RSC-029",
+				fmt.Sprintf("Data URL used in package link href"))
+		}
+	}
+}
+
+// RSC-030: file URLs must not be used
+func checkFileURLsInOPF(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(item.Href)), "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("File URL used in manifest item href '%s'", item.Href))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(link.Href)), "file:") {
+			r.Add(report.Error, "RSC-030",
+				fmt.Sprintf("File URL used in package link href '%s'", link.Href))
+		}
+	}
+}
+
+// RSC-033: URL query strings must not be used in local resource references
+func checkQueryStringsInOPF(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		// Skip remote URLs and data URLs
+		if isRemoteURL(item.Href) || strings.HasPrefix(strings.ToLower(item.Href), "data:") {
+			continue
+		}
+		if strings.Contains(item.Href, "?") {
+			r.Add(report.Error, "RSC-033",
+				fmt.Sprintf("URL query string found in manifest item href '%s'", item.Href))
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if isRemoteURL(link.Href) || strings.HasPrefix(strings.ToLower(link.Href), "data:") {
+			continue
+		}
+		if strings.Contains(link.Href, "?") {
+			r.Add(report.Error, "RSC-033",
+				fmt.Sprintf("URL query string found in package link href '%s'", link.Href))
+		}
+	}
+}
+
+// OPF-028: dcterms:modified must occur exactly once as non-refining metadata
+func checkDCTermsModifiedCount(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Count refining dcterms:modified meta elements
+	refiningCount := 0
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "dcterms:modified" && mr.Refines != "" {
+			refiningCount++
+		}
+	}
+	// ModifiedCount tracks total dcterms:modified; subtract refining ones
+	nonRefiningCount := pkg.ModifiedCount - refiningCount
+	if nonRefiningCount > 1 {
+		r.Add(report.Error, "OPF-028",
+			fmt.Sprintf("dcterms:modified must not occur more than once as non-refining meta, found %d", nonRefiningCount))
+	}
+}
+
+// OPF-053: dc:date with unknown/deprecated format
+func checkDCDateWarnings(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	if len(pkg.Metadata.Dates) > 1 {
+		r.Add(report.Warning, "OPF-053",
+			"Multiple dc:date elements found; only one is recommended")
+	}
+	for _, date := range pkg.Metadata.Dates {
+		if date != "" && !w3cdtfRe.MatchString(date) {
+			r.Add(report.Warning, "OPF-053",
+				fmt.Sprintf("Date value '%s' does not follow recommended syntax", date))
+		}
+	}
+}
+
+// OPF-052: dc:creator role validation
+func checkDCCreatorRole(pkg *epub.Package, r *report.Report) {
+	// MARC relator codes (selected subset)
+	marcCodes := map[string]bool{
+		"aut": true, "edt": true, "ill": true, "trl": true, "pbl": true,
+		"aui": true, "aft": true, "ann": true, "arr": true, "art": true,
+		"bkd": true, "bkp": true, "clb": true, "cmm": true, "cmp": true,
+		"cnd": true, "cns": true, "col": true, "com": true, "crp": true,
+		"cst": true, "cwt": true, "dsr": true, "dub": true, "flm": true,
+		"fnd": true, "hnr": true, "lyr": true, "mdc": true, "mus": true,
+		"nrt": true, "oth": true, "pht": true, "prf": true, "pro": true,
+		"red": true, "rev": true, "sng": true, "spn": true, "trc": true,
+		"wam": true, "wdc": true, "wde": true, "adp": true, "anl": true,
+		"ard": true, "aus": true, "bjd": true, "cll": true, "cng": true,
+		"cog": true, "cor": true, "cph": true, "cre": true, "cur": true,
+		"dnr": true, "dtc": true, "elg": true, "fmo": true, "his": true,
+		"inv": true, "isb": true, "itr": true, "ive": true, "ivr": true,
+		"led": true, "lsa": true, "ltg": true, "mfr": true, "mon": true,
+		"mrb": true, "mrk": true, "opn": true, "org": true, "orm": true,
+		"own": true, "pat": true, "pma": true, "pmn": true, "pop": true,
+		"ppt": true, "prg": true, "prm": true, "prs": true, "prt": true,
+		"prv": true, "rcd": true, "rce": true, "rcp": true, "res": true,
+		"rps": true, "rpy": true, "rsg": true, "rsp": true, "scr": true,
+		"sec": true, "sgn": true, "spk": true, "srv": true, "stl": true,
+		"ths": true, "tyg": true, "vdg": true, "wpr": true,
+	}
+	for _, c := range pkg.Metadata.Creators {
+		if c.Role != "" && !marcCodes[strings.ToLower(c.Role)] {
+			r.Add(report.Error, "OPF-052",
+				fmt.Sprintf("Unknown MARC relator code '%s' for dc:creator", c.Role))
+		}
+	}
+	for _, c := range pkg.Metadata.Contributors {
+		if c.Role != "" && !marcCodes[strings.ToLower(c.Role)] {
+			r.Add(report.Error, "OPF-052",
+				fmt.Sprintf("Unknown MARC relator code '%s' for dc:contributor", c.Role))
+		}
+	}
+}
+
+// OPF-054: dc:date empty value
+func checkDCDateEmpty(pkg *epub.Package, r *report.Report) {
+	for _, date := range pkg.Metadata.Dates {
+		if strings.TrimSpace(date) == "" {
+			r.Add(report.Error, "OPF-054",
+				"Element dc:date must not be empty")
+		}
+	}
+}
+
+// OPF-091: manifest item href must not contain a fragment identifier
+func checkManifestHrefFragment(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		if strings.Contains(item.Href, "#") {
+			r.Add(report.Error, "OPF-091",
+				fmt.Sprintf("Manifest item '%s' href must not contain a fragment identifier", item.ID))
+		}
+	}
+}
+
+// OPF-065: refines references cycles
+func checkRefinesCycle(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Build a map of meta element IDs to their refines targets
+	refinesMap := make(map[string]string) // meta ID -> refines target ID
+	for _, mr := range pkg.MetaRefines {
+		if mr.ID != "" && mr.Refines != "" {
+			target := strings.TrimPrefix(mr.Refines, "#")
+			refinesMap[mr.ID] = target
+		}
+	}
+
+	// Check for cycles using tortoise-and-hare or simple visited set
+	for startID := range refinesMap {
+		visited := make(map[string]bool)
+		current := startID
+		for {
+			if visited[current] {
+				r.Add(report.Error, "OPF-065",
+					fmt.Sprintf("Metadata refines cycle detected starting from '%s'", startID))
+				break
+			}
+			visited[current] = true
+			next, ok := refinesMap[current]
+			if !ok {
+				break
+			}
+			current = next
+		}
+	}
+}
+
+// OPF-098: link must not target a manifest item ID
+func checkLinkTargetNotManifestID(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	manifestIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestIDs[item.ID] = true
+		}
+	}
+	for _, link := range pkg.MetadataLinks {
+		if link.Href == "" {
+			continue
+		}
+		if strings.HasPrefix(link.Href, "#") {
+			target := strings.TrimPrefix(link.Href, "#")
+			if manifestIDs[target] {
+				r.Add(report.Error, "OPF-098",
+					fmt.Sprintf("Link must not reference a manifest item ID '%s'", target))
+			}
+		}
+	}
+}
+
+// OPF-094/095: link relation and properties validation
+func checkLinkRelation(pkg *epub.Package, r *report.Report) {
+	// Placeholder for link relation checks
+}
+
+// OPF-026: metadata property names must be defined
+func checkMetaPropertyDefined(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	knownProperties := map[string]bool{
+		"alternate-script":        true,
+		"authority":               true,
+		"belongs-to-collection":   true,
+		"collection-type":         true,
+		"display-seq":             true,
+		"file-as":                 true,
+		"group-position":          true,
+		"identifier-type":         true,
+		"meta-auth":               true,
+		"role":                    true,
+		"scheme":                  true,
+		"source-of":               true,
+		"term":                    true,
+		"title-type":              true,
+	}
+
+	for _, mr := range pkg.MetaRefines {
+		prop := mr.Property
+		if prop == "" {
+			continue
+		}
+		// Properties with prefixes are handled separately
+		if strings.Contains(prop, ":") {
+			continue
+		}
+		if !knownProperties[prop] {
+			r.Add(report.Error, "OPF-026",
+				fmt.Sprintf("Metadata property '%s' is not defined", prop))
+		}
+	}
+}
+
+// OPF-004c: dcterms:modified must occur as non-refining meta
+func checkDCTermsModifiedNonRefining(pkg *epub.Package, r *report.Report) {
+	// Covered by existing OPF-004 check
 }
