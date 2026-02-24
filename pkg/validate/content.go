@@ -2992,10 +2992,22 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 
 			// URL checks
 			checkSingleFileURLs(data, fullPath, r)
+
+			// Embedded SVG checks (for XHTML with inline SVG)
+			checkSVGForeignObject(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r)
+			checkSVGInvalidElements(data, fullPath, r)
 		} else if mt == "image/svg+xml" {
 			// SVG content checks
 			checkSingleFileURLs(data, fullPath, r)
 			checkSVGLinkLabel(data, fullPath, r)
+			checkSVGDuplicateIDs(data, fullPath, r)
+			checkSVGInvalidIDs(data, fullPath, r)
+			checkSVGForeignObject(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r)
+			checkSVGEpubType(data, fullPath, r)
+			checkSVGUnknownEpubAttr(data, fullPath, r)
+			checkSVGInvalidElements(data, fullPath, r)
 		} else if mt == "application/smil+xml" {
 			// SMIL media overlay checks for single-file mode
 			checkSingleFileSMIL(ep, data, fullPath, r)
@@ -4212,10 +4224,31 @@ func checkSVGInvalidIDs(data []byte, location string, r *report.Report) {
 }
 
 // checkSVGForeignObject checks foreignObject for valid content (RSC-005).
+// Checks: non-HTML content, non-flow content (title/head/etc), multiple body elements,
+// and HTML validation errors (invalid attributes).
 func checkSVGForeignObject(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	inForeignObject := 0
-	bodyCount := 0
+	svgNS := "http://www.w3.org/2000/svg"
+	htmlNS := "http://www.w3.org/1999/xhtml"
+
+	// Non-flow HTML elements (metadata content, not allowed as direct children of foreignObject)
+	nonFlowElements := map[string]bool{
+		"title": true, "base": true, "link": true, "meta": true,
+		"style": true, "head": true,
+	}
+	// HTML attributes that are NOT valid on specific elements
+	noHrefElements := map[string]bool{
+		"p": true, "div": true, "span": true, "h1": true, "h2": true,
+		"h3": true, "h4": true, "h5": true, "h6": true,
+	}
+
+	foDepth := 0    // foreignObject nesting depth
+	bodyCount := 0  // body elements in current foreignObject
+	firstChild := false // true when next element is direct child of foreignObject
+	isXHTMLDoc := false // true if the root is <html> (XHTML context)
+	isHTML5 := strings.Contains(string(data), "<!DOCTYPE html>") || strings.Contains(string(data), "<!doctype html>")
+	rootSeen := false
+
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4223,37 +4256,162 @@ func checkSVGForeignObject(data []byte, location string, r *report.Report) {
 		}
 		switch t := tok.(type) {
 		case xml.StartElement:
-			if t.Name.Local == "foreignObject" {
-				inForeignObject++
-				bodyCount = 0
+			if !rootSeen {
+				rootSeen = true
+				isXHTMLDoc = t.Name.Local == "html"
 			}
-			if inForeignObject > 0 {
-				if t.Name.Local == "body" && t.Name.Space == "http://www.w3.org/1999/xhtml" {
-					bodyCount++
-					if bodyCount > 1 {
+			if t.Name.Local == "foreignObject" && (t.Name.Space == svgNS || t.Name.Space == "") {
+				foDepth++
+				bodyCount = 0
+				firstChild = true
+				continue
+			}
+			if foDepth > 0 {
+				isHTML := t.Name.Space == htmlNS || t.Name.Space == ""
+				isSVG := t.Name.Space == svgNS
+				// Direct children of foreignObject
+				if firstChild {
+					firstChild = false
+					if !isHTML || isSVG {
+						// Non-HTML child content
 						r.AddWithLocation(report.Error, "RSC-005",
-							`foreignObject must not contain multiple HTML body elements`,
+							fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
 							location)
+						continue
+					}
+					// Non-flow content (like <title> as direct child)
+					if isHTML && nonFlowElements[t.Name.Local] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+							location)
+						continue
+					}
+					// In HTML5/EPUB 3 XHTML context, body is not allowed inside foreignObject
+					if isXHTMLDoc && isHTML5 && t.Name.Local == "body" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "body" not allowed here`,
+							location)
+						continue
+					}
+				}
+				// body element tracking (in SVG context, only second body is error)
+				if t.Name.Local == "body" && (t.Name.Space == htmlNS || t.Name.Space == "") {
+					bodyCount++
+					if !isXHTMLDoc && bodyCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "body" not allowed here`,
+							location)
+					}
+				}
+				// HTML validation: href not allowed on certain elements
+				if isHTML && noHrefElements[t.Name.Local] {
+					for _, attr := range t.Attr {
+						if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`attribute "href" not allowed here`,
+								location)
+						}
 					}
 				}
 			}
 		case xml.EndElement:
-			if t.Name.Local == "foreignObject" && inForeignObject > 0 {
-				inForeignObject--
+			if t.Name.Local == "foreignObject" && foDepth > 0 {
+				foDepth--
 			}
 		}
 	}
 }
 
-// checkSVGTitle checks SVG title element - only reports as USAGE (ACC-011).
-func checkSVGTitle(data []byte, location string, r *report.Report) {
-	// SVG title checks are not done in single-file mode to avoid regressions
-	// with tests that expect "no errors or warnings"
+// checkSVGTitleContent checks SVG title elements for valid content (RSC-005).
+// SVG title elements can only contain HTML phrasing content; no custom namespace
+// elements or SVG elements are allowed. Also checks for invalid HTML attributes.
+func checkSVGTitleContent(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	svgNS := "http://www.w3.org/2000/svg"
+	htmlNS := "http://www.w3.org/1999/xhtml"
+	noHrefElements := map[string]bool{
+		"span": true, "p": true, "div": true,
+	}
+
+	inSVG := 0        // SVG element nesting depth
+	inSVGTitle := false // inside an SVG title element
+	titleDepth := 0    // element depth inside title (to track direct children)
+	reportedNS := make(map[string]bool) // track reported namespaces per title
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			isSVGElem := t.Name.Space == svgNS
+			if t.Name.Local == "svg" && (isSVGElem || t.Name.Space == "") {
+				inSVG++
+			}
+			if inSVGTitle {
+				titleDepth++
+				isHTML := t.Name.Space == htmlNS
+				// Namespace violation checks apply at any depth
+				if !isHTML && !isSVGElem && t.Name.Space != "" {
+					ns := t.Name.Space
+					if !reportedNS[ns] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`elements from namespace "%s" are not allowed`, ns),
+							location)
+						reportedNS[ns] = true
+					}
+				} else if isSVGElem {
+					// SVG elements inside title
+					if !reportedNS[svgNS] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`elements from namespace "%s" are not allowed`, svgNS),
+							location)
+						reportedNS[svgNS] = true
+					}
+				} else if titleDepth == 1 {
+					// HTML attribute validation: only check direct children
+					if isHTML && noHrefElements[t.Name.Local] {
+						for _, attr := range t.Attr {
+							if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
+								r.AddWithLocation(report.Error, "RSC-005",
+									`attribute "href" not allowed here`,
+									location)
+							}
+						}
+					}
+				}
+			} else if inSVG > 0 && t.Name.Local == "title" && (isSVGElem || t.Name.Space == "") {
+				inSVGTitle = true
+				titleDepth = 0
+				reportedNS = make(map[string]bool)
+			}
+		case xml.EndElement:
+			if t.Name.Local == "svg" && (t.Name.Space == svgNS || t.Name.Space == "") && inSVG > 0 {
+				inSVG--
+			}
+			if inSVGTitle {
+				if t.Name.Local == "title" && (t.Name.Space == svgNS || t.Name.Space == "") && titleDepth == 0 {
+					inSVGTitle = false
+				} else {
+					titleDepth--
+				}
+			}
+		}
+	}
 }
 
 // checkSVGEpubType checks epub:type usage on SVG elements (RSC-005).
+// epub:type is allowed on structural (svg, g, use, symbol, defs),
+// shape (rect, circle, ellipse, line, polyline, polygon, path),
+// and text (text, textPath, tspan) elements.
 func checkSVGEpubType(data []byte, location string, r *report.Report) {
-	// SVG doesn't support epub:type - report if found
+	allowedEpubType := map[string]bool{
+		"svg": true, "g": true, "use": true, "symbol": true, "defs": true,
+		"rect": true, "circle": true, "ellipse": true, "line": true,
+		"polyline": true, "polygon": true, "path": true,
+		"text": true, "textPath": true, "tspan": true,
+	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
@@ -4266,10 +4424,11 @@ func checkSVGEpubType(data []byte, location string, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
-				r.AddWithLocation(report.Error, "RSC-005",
-					fmt.Sprintf(`The epub:type attribute is not allowed on SVG element "%s"`, se.Name.Local),
-					location)
-				return
+				if !allowedEpubType[se.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`"epub:type" not allowed on element "%s"`, se.Name.Local),
+						location)
+				}
 			}
 		}
 	}
@@ -4290,9 +4449,66 @@ func checkSVGUnknownEpubAttr(data []byte, location string, r *report.Report) {
 		for _, attr := range se.Attr {
 			if attr.Name.Space == "http://www.idpf.org/2007/ops" && attr.Name.Local != "type" {
 				r.AddWithLocation(report.Error, "RSC-005",
-					fmt.Sprintf(`Unknown epub:* attribute "%s" in SVG`, attr.Name.Local),
+					fmt.Sprintf(`"epub:%s" not allowed here`, attr.Name.Local),
 					location)
 				return
+			}
+		}
+	}
+}
+
+// checkSVGInvalidElements reports unknown elements in SVG as usage (RSC-025).
+func checkSVGInvalidElements(data []byte, location string, r *report.Report) {
+	svgElements := map[string]bool{
+		"svg": true, "g": true, "defs": true, "symbol": true, "use": true,
+		"image": true, "switch": true, "foreignObject": true,
+		"desc": true, "title": true, "metadata": true,
+		"rect": true, "circle": true, "ellipse": true, "line": true,
+		"polyline": true, "polygon": true, "path": true,
+		"text": true, "textPath": true, "tspan": true, "tref": true,
+		"a": true, "altGlyphDef": true, "clipPath": true, "color-profile": true,
+		"cursor": true, "filter": true, "font": true, "font-face": true,
+		"glyph": true, "glyphRef": true, "altGlyph": true, "altGlyphItem": true,
+		"linearGradient": true, "radialGradient": true, "stop": true,
+		"pattern": true, "marker": true, "mask": true,
+		"style": true, "script": true, "animate": true, "set": true,
+		"animateMotion": true, "animateTransform": true, "animateColor": true,
+		"mpath": true, "view": true, "solidColor": true,
+		"feBlend": true, "feColorMatrix": true, "feComponentTransfer": true,
+		"feComposite": true, "feConvolveMatrix": true, "feDiffuseLighting": true,
+		"feDisplacementMap": true, "feDistantLight": true, "feFlood": true,
+		"feFuncA": true, "feFuncB": true, "feFuncG": true, "feFuncR": true,
+		"feGaussianBlur": true, "feImage": true, "feMerge": true,
+		"feMergeNode": true, "feMorphology": true, "feOffset": true,
+		"fePointLight": true, "feSpecularLighting": true, "feSpotLight": true,
+		"feTile": true, "feTurbulence": true,
+		"font-face-format": true, "font-face-name": true, "font-face-src": true,
+		"font-face-uri": true, "hkern": true, "vkern": true,
+		"missing-glyph": true,
+	}
+	svgNS := "http://www.w3.org/2000/svg"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inSVG := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Space == svgNS || (t.Name.Space == "" && inSVG > 0) {
+				if t.Name.Local == "svg" {
+					inSVG++
+				}
+				if inSVG > 0 && !svgElements[t.Name.Local] && t.Name.Space != "http://www.w3.org/1999/xhtml" {
+					r.AddWithLocation(report.Usage, "RSC-025",
+						fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+						location)
+				}
+			}
+		case xml.EndElement:
+			if (t.Name.Space == svgNS || t.Name.Space == "") && t.Name.Local == "svg" && inSVG > 0 {
+				inSVG--
 			}
 		}
 	}
