@@ -18,6 +18,30 @@ import (
 func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// Pre-parse checks on raw OPF bytes
 	if opfData, err := ep.ReadFile(ep.RootfilePath); err == nil {
+		// Encoding detection (must run before XML parsing)
+		encodingIssue, encodingConflict := checkOPFEncoding(opfData)
+		if encodingIssue != "" {
+			switch encodingIssue {
+			case "utf16":
+				r.Add(report.Warning, "RSC-027", "XML documents should be encoded using UTF-8, but found UTF-16 encoding")
+				if encodingConflict {
+					// BOM says UTF-16 but declaration says something else
+					r.Add(report.Fatal, "RSC-016", "Could not parse package document: encoding conflict between BOM and declaration")
+				}
+				return false // don't try to parse UTF-16 with Go's XML decoder
+			case "utf32", "ucs4":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found UCS-4/UTF-32 encoding")
+				return false
+			case "latin1":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found ISO-8859-1 encoding")
+				return false
+			case "unknown":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found an unknown encoding")
+				r.Add(report.Fatal, "RSC-016", "Could not parse package document: unknown encoding")
+				return true
+			}
+		}
+
 		if hasUndeclaredNamespacePrefix(opfData) {
 			r.Add(report.Fatal, "RSC-016", "Could not parse package document: undeclared namespace prefix")
 			return true
@@ -2955,6 +2979,126 @@ func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
 			}
 		}
 	}
+}
+
+// checkOPFEncoding detects non-UTF-8 encoding in OPF files.
+// Returns an encoding type string or empty string if encoding is OK.
+// checkOPFEncoding detects non-UTF-8 encoding in OPF files.
+// Returns (encodingType, conflict) where encodingType is the detected encoding
+// and conflict indicates a BOM/declaration mismatch.
+func checkOPFEncoding(data []byte) (string, bool) {
+	if len(data) < 4 {
+		return "", false
+	}
+
+	hasBOM := false
+	bomEncoding := ""
+
+	// Check BOM patterns
+	if data[0] == 0xFF && data[1] == 0xFE {
+		if len(data) >= 4 && data[2] == 0x00 && data[3] == 0x00 {
+			return "utf32", false // UTF-32 LE BOM
+		}
+		hasBOM = true
+		bomEncoding = "utf16"
+	} else if data[0] == 0xFE && data[1] == 0xFF {
+		hasBOM = true
+		bomEncoding = "utf16"
+	} else if data[0] == 0x00 && data[1] == 0x00 {
+		if data[2] == 0xFE && data[3] == 0xFF {
+			return "utf32", false // UTF-32 BE BOM
+		}
+		if data[2] == 0x00 && data[3] == 0x3C {
+			return "utf32", false // UTF-32 BE (no BOM)
+		}
+	}
+
+	// Detect UTF-16 without BOM (null bytes in typical ASCII content)
+	if !hasBOM && ((data[0] == 0x00 && data[1] == 0x3C) || (data[0] == 0x3C && data[1] == 0x00)) {
+		return "utf16", false
+	}
+
+	// If we have a UTF-16 BOM, check for encoding declaration conflict
+	if hasBOM && bomEncoding == "utf16" {
+		// Try to read the encoding declaration from the UTF-16 content
+		declaredEnc := extractUTF16EncodingDecl(data)
+		if declaredEnc != "" && declaredEnc != "utf-16" {
+			return "utf16", true // BOM/declaration conflict
+		}
+		return "utf16", false
+	}
+
+	// Check XML declaration for encoding attribute (ASCII-readable files)
+	content := string(data)
+	if strings.HasPrefix(content, "<?xml") {
+		endPI := strings.Index(content, "?>")
+		if endPI > 0 {
+			xmlDecl := strings.ToLower(content[:endPI])
+			encodingIdx := strings.Index(xmlDecl, "encoding")
+			if encodingIdx > 0 {
+				rest := xmlDecl[encodingIdx+8:]
+				rest = strings.TrimLeft(rest, " \t=")
+				rest = strings.TrimLeft(rest, "\"'")
+				endQuote := strings.IndexAny(rest, "\"'")
+				if endQuote > 0 {
+					enc := strings.TrimSpace(rest[:endQuote])
+					switch {
+					case enc == "utf-8":
+						return "", false // OK
+					case enc == "utf-16":
+						return "utf16", false
+					case strings.HasPrefix(enc, "iso-8859") || enc == "latin1":
+						return "latin1", false
+					case enc == "utf-32" || enc == "ucs-4" || enc == "ucs4":
+						return "utf32", false
+					default:
+						knownEncodings := map[string]bool{
+							"utf-8": true, "utf-16": true, "us-ascii": true, "ascii": true,
+						}
+						if !knownEncodings[enc] {
+							return "unknown", false
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+// extractUTF16EncodingDecl tries to extract the encoding attribute from a UTF-16 encoded XML declaration.
+func extractUTF16EncodingDecl(data []byte) string {
+	// Convert UTF-16 to ASCII by extracting every other byte
+	var ascii []byte
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+		// UTF-16 LE: skip BOM, take even-indexed bytes
+		for i := 2; i < len(data) && i < 200; i += 2 {
+			if data[i] < 0x80 {
+				ascii = append(ascii, data[i])
+			}
+		}
+	} else if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+		// UTF-16 BE: skip BOM, take odd-indexed bytes
+		for i := 3; i < len(data) && i < 200; i += 2 {
+			if data[i] < 0x80 {
+				ascii = append(ascii, data[i])
+			}
+		}
+	}
+	content := strings.ToLower(string(ascii))
+	idx := strings.Index(content, "encoding")
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx+8:]
+	rest = strings.TrimLeft(rest, " \t=")
+	rest = strings.TrimLeft(rest, "\"'")
+	endQuote := strings.IndexAny(rest, "\"'")
+	if endQuote > 0 {
+		return strings.TrimSpace(rest[:endQuote])
+	}
+	return ""
 }
 
 // checkOPFDoctype checks for invalid DOCTYPE in OPF documents (HTM-009).
