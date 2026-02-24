@@ -11,6 +11,10 @@ import (
 	"github.com/adammathes/epubverify/pkg/report"
 )
 
+// utf16BEBom and utf16LEBom are the byte order marks for UTF-16 encodings.
+var utf16BEBom = []byte{0xFE, 0xFF}
+var utf16LEBom = []byte{0xFF, 0xFE}
+
 // checkCSS validates CSS files referenced in the manifest.
 func checkCSS(ep *epub.EPUB, r *report.Report) {
 	if ep.Package == nil {
@@ -37,31 +41,46 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 			continue // Missing file handled by RSC-005
 		}
 
+		// CSS-003: warn if CSS is UTF-16 encoded (detected by BOM)
+		if len(data) >= 2 && (data[0] == utf16BEBom[0] && data[1] == utf16BEBom[1] ||
+			data[0] == utf16LEBom[0] && data[1] == utf16LEBom[1]) {
+			r.AddWithLocation(report.Warning, "CSS-003",
+				"CSS document is encoded in UTF-16; UTF-8 encoding is recommended",
+				fullPath)
+			continue // Can't reliably parse UTF-16 as UTF-8 text
+		}
+
 		cssContent := string(data)
 
-		// CSS-001: CSS syntax errors
+		// CSS-004: @charset must be UTF-8 or UTF-16 if present
+		checkCSSCharset(cssContent, fullPath, r)
+
+		// CSS-001: forbidden CSS properties (direction, unicode-bidi)
+		checkCSSForbiddenProperties(cssContent, fullPath, r)
+
+		// CSS-008: CSS syntax errors (unclosed braces)
 		checkCSSSyntax(cssContent, fullPath, r)
 
-		// CSS-002: unknown CSS property names
-		checkCSSValidProperties(cssContent, fullPath, r)
+		// CSS-002: @font-face empty URL reference
+		checkCSSFontFaceEmptyURL(cssContent, fullPath, r)
 
-		// CSS-003: @font-face must have src descriptor
+		// CSS-011: @font-face must have src descriptor; CSS-019: empty @font-face
 		checkCSSFontFaceHasSrc(cssContent, fullPath, r)
 
-		// CSS-004: no remote font sources
+		// OPF-014 / RSC-006: remote font sources
 		checkCSSRemoteFonts(ep, cssContent, fullPath, item, r)
 
 		// CSS-005: no @import rules; RSC-001/RSC-008: imported files must exist
 		checkCSSNoImport(cssContent, fullPath, r)
 		checkCSSImportTargets(ep, cssContent, fullPath, manifestHrefs, r)
 
-		// CSS-006: font file referenced in CSS must exist
+		// RSC-007: font file referenced in CSS must exist in the container
 		checkCSSFontFileExists(ep, cssContent, fullPath, r)
 
-		// CSS-007: background-image referenced file must exist
+		// RSC-007: background-image referenced file must exist in the container
 		checkCSSBackgroundImageExists(ep, cssContent, fullPath, r)
 
-		// CSS-008: CSS-referenced resources must be in manifest
+		// RSC-008: CSS-referenced resources must be in manifest
 		checkCSSResourceInManifest(ep, cssContent, fullPath, manifestHrefs, r)
 	}
 }
@@ -189,6 +208,58 @@ var knownCSSProperties = map[string]bool{
 	"min-inline-size": true, "min-block-size": true,
 }
 
+// checkCSSCharset validates the @charset declaration if present.
+// CSS-004: if @charset is present, it must be UTF-8 or UTF-16.
+func checkCSSCharset(css string, location string, r *report.Report) {
+	charsetRe := regexp.MustCompile(`(?i)@charset\s+["']([^"']+)["']`)
+	m := charsetRe.FindStringSubmatch(css)
+	if m == nil {
+		return
+	}
+	enc := strings.ToLower(strings.TrimSpace(m[1]))
+	if enc != "utf-8" && enc != "utf-16" && enc != "utf-16be" && enc != "utf-16le" {
+		r.AddWithLocation(report.Error, "CSS-004",
+			fmt.Sprintf("The CSS @charset declaration must be 'UTF-8' or 'UTF-16', but found '%s'", m[1]),
+			location)
+	}
+}
+
+// checkCSSForbiddenProperties reports use of CSS properties that are not
+// allowed in EPUB content documents.
+// CSS-001: 'direction' and 'unicode-bidi' properties are forbidden.
+func checkCSSForbiddenProperties(css string, location string, r *report.Report) {
+	// Strip comments
+	commentRe := regexp.MustCompile(`/\*[\s\S]*?\*/`)
+	css = commentRe.ReplaceAllString(css, "")
+
+	// Match property name at start of a declaration (after whitespace or ;)
+	propRe := regexp.MustCompile(`(?m)(?:^|;)\s*(direction|unicode-bidi)\s*:`)
+	matches := propRe.FindAllStringSubmatch(css, -1)
+	for _, m := range matches {
+		prop := strings.TrimSpace(m[1])
+		r.AddWithLocation(report.Error, "CSS-001",
+			fmt.Sprintf("CSS property '%s' is not allowed in EPUB content documents", prop),
+			location)
+	}
+}
+
+// checkCSSFontFaceEmptyURL reports @font-face rules with empty URL references.
+// CSS-002: @font-face src URL must not be empty.
+func checkCSSFontFaceEmptyURL(css string, location string, r *report.Report) {
+	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
+	emptyURLRe := regexp.MustCompile(`url\(\s*['"]{0,1}\s*['"]{0,1}\s*\)`)
+
+	matches := fontFaceRe.FindAllStringSubmatch(css, -1)
+	for _, match := range matches {
+		body := match[1]
+		if emptyURLRe.MatchString(body) {
+			r.AddWithLocation(report.Error, "CSS-002",
+				"@font-face 'src' has an empty URL reference",
+				location)
+		}
+	}
+}
+
 // CSS-002: CSS stylesheets should use valid CSS property names
 func checkCSSValidProperties(css string, location string, r *report.Report) {
 	// Remove comments
@@ -229,7 +300,7 @@ func checkCSSValidProperties(css string, location string, r *report.Report) {
 	}
 }
 
-// CSS-003: @font-face rules must include a src descriptor
+// CSS-011: @font-face rules must include a src descriptor
 // CSS-019: @font-face rules must not be empty
 func checkCSSFontFaceHasSrc(css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
@@ -243,7 +314,7 @@ func checkCSSFontFaceHasSrc(css string, location string, r *report.Report) {
 				"@font-face rule is empty",
 				location)
 		} else if !strings.Contains(body, "src") {
-			r.AddWithLocation(report.Warning, "CSS-003",
+			r.AddWithLocation(report.Warning, "CSS-011",
 				"@font-face rule is missing required 'src' descriptor",
 				location)
 		}
@@ -302,22 +373,31 @@ func checkCSSImportTargets(ep *epub.EPUB, css string, location string, manifestH
 	}
 }
 
-// CSS-001: basic CSS syntax validation
-var cssSyntaxErrorPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`:\s*;`),          // empty value like "color: ;"
-	regexp.MustCompile(`[^:}\s]\s*\}`),   // missing colon before }
-}
-
+// CSS-008: CSS syntax errors (unclosed braces)
 func checkCSSSyntax(css string, location string, r *report.Report) {
 	// Strip comments before analyzing
 	commentRe := regexp.MustCompile(`/\*[\s\S]*?\*/`)
 	css = commentRe.ReplaceAllString(css, "")
 
-	// Check for properties without values (like "color: ;")
-	re := regexp.MustCompile(`:\s*;`)
-	if matches := re.FindAllString(css, -1); len(matches) > 0 {
-		r.AddWithLocation(report.Error, "CSS-001",
-			"An error occurred while parsing the CSS: empty property value",
+	// Count unclosed braces: each unmatched '{' is a syntax error
+	depth := 0
+	maxDepth := 0
+	for _, ch := range css {
+		if ch == '{' {
+			depth++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		} else if ch == '}' {
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	// Each unclosed brace is one CSS-008 error
+	for i := 0; i < depth; i++ {
+		r.AddWithLocation(report.Error, "CSS-008",
+			"An error occurred while parsing the CSS: unclosed block",
 			location)
 	}
 }
@@ -377,30 +457,20 @@ func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.M
 	}
 }
 
-// CSS-006: font file sources must exist in the container and be declared in the manifest.
-// When a font is in the manifest but missing from the container, RSC-001 fires instead.
+// checkCSSFontFileExists: font file sources must exist in the container.
+// RSC-007: referenced resource not found in the container.
 func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
 	urlRe := regexp.MustCompile(`url\(['"]?([^'")\s]+)['"]?\)`)
 
 	cssDir := path.Dir(location)
 
-	// Build manifest lookup by full path (to avoid CSS-006 duplicating RSC-001)
+	// Build manifest lookup by full path (to avoid duplicating RSC-001)
 	manifestPaths := make(map[string]bool)
 	if ep.Package != nil {
 		for _, item := range ep.Package.Manifest {
 			if item.Href != "\x00MISSING" {
 				manifestPaths[ep.ResolveHref(item.Href)] = true
-			}
-		}
-	}
-
-	// Build manifest lookup by media type for CSS-007
-	manifestByPath := make(map[string]string) // path -> media-type
-	if ep.Package != nil {
-		for _, item := range ep.Package.Manifest {
-			if item.Href != "\x00MISSING" {
-				manifestByPath[ep.ResolveHref(item.Href)] = item.MediaType
 			}
 		}
 	}
@@ -411,10 +481,18 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 		for _, u := range urls {
 			href := u[1]
 			if isRemoteURL(href) {
-				continue // Handled by CSS-004
+				continue
+			}
+			// Skip empty URLs (handled by CSS-002)
+			if strings.TrimSpace(href) == "" {
+				continue
 			}
 			parsed, err := url.Parse(href)
 			if err != nil {
+				continue
+			}
+			// Skip fragment-only URLs
+			if parsed.Path == "" {
 				continue
 			}
 			target := resolvePath(cssDir, parsed.Path)
@@ -423,25 +501,16 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 				if manifestPaths[target] {
 					continue
 				}
-				r.AddWithLocation(report.Error, "CSS-006",
+				r.AddWithLocation(report.Error, "RSC-007",
 					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 					location)
-			} else {
-				// CSS-007: emit info when font uses a truly non-standard media type
-				// (not a core type and not an accepted alias like application/x-font-ttf)
-				if mt, ok := manifestByPath[target]; ok {
-					if isFontMediaType(mt) && !coreMediaTypes[mt] && !acceptedFontTypeAliases[mt] {
-						r.AddWithLocation(report.Info, "CSS-007",
-							fmt.Sprintf("Font '%s' uses a non-standard media type '%s'", href, mt),
-							location)
-					}
-				}
 			}
 		}
 	}
 }
 
-// CSS-007: background-image referenced files must exist
+// checkCSSBackgroundImageExists: background-image referenced files must exist.
+// RSC-007: referenced resource not found in the container.
 func checkCSSBackgroundImageExists(ep *epub.EPUB, css string, location string, r *report.Report) {
 	bgRe := regexp.MustCompile(`background(?:-image)?\s*:\s*url\(['"]?([^'")\s]+)['"]?\)`)
 	cssDir := path.Dir(location)
@@ -456,16 +525,21 @@ func checkCSSBackgroundImageExists(ep *epub.EPUB, css string, location string, r
 		if err != nil {
 			continue
 		}
+		// Skip fragment-only URLs
+		if parsed.Path == "" {
+			continue
+		}
 		target := resolvePath(cssDir, parsed.Path)
 		if _, exists := ep.Files[target]; !exists {
-			r.AddWithLocation(report.Error, "CSS-007",
+			r.AddWithLocation(report.Error, "RSC-007",
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 				location)
 		}
 	}
 }
 
-// CSS-008: CSS-referenced resources must be declared in the OPF manifest
+// checkCSSResourceInManifest: CSS-referenced resources must be declared in the OPF manifest.
+// RSC-008: resource in container but not declared in the manifest.
 func checkCSSResourceInManifest(ep *epub.EPUB, css string, location string, manifestHrefs map[string]bool, r *report.Report) {
 	bgRe := regexp.MustCompile(`url\(['"]?([^'")\s]+)['"]?\)`)
 	cssDir := path.Dir(location)
@@ -480,10 +554,14 @@ func checkCSSResourceInManifest(ep *epub.EPUB, css string, location string, mani
 		if err != nil {
 			continue
 		}
+		// Skip fragment-only URLs
+		if parsed.Path == "" {
+			continue
+		}
 		target := resolvePath(cssDir, parsed.Path)
 		if _, exists := ep.Files[target]; exists {
 			if !manifestHrefs[target] {
-				r.AddWithLocation(report.Error, "CSS-008",
+				r.AddWithLocation(report.Error, "RSC-008",
 					fmt.Sprintf("Referenced resource '%s' is not declared in the OPF manifest", href),
 					location)
 			}
