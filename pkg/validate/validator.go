@@ -125,12 +125,9 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 
 	// Post-downgrade: emit legacy media type warnings AFTER DowngradeToInfo
 	// so they are not downgraded to INFO. These are real EPUBCheck warnings.
-	if ep.Package != nil {
-		if ep.IsLegacyOEBPS12 && ep.Package.Version != "" {
-			checkLegacyOEBPS12MediaTypes(ep.Package, r)
-		} else if ep.Package.Version < "3.0" {
-			// Also check EPUB 2 packages for deprecated OEB media types
-			checkLegacyOEBPS12MediaTypes(ep.Package, r)
+	if ep.Package != nil && ep.Package.Version != "" {
+		if ep.IsLegacyOEBPS12 || ep.Package.Version < "3.0" {
+			checkLegacyOEBPS12MediaTypes(ep, r)
 		}
 	}
 
@@ -160,7 +157,10 @@ var rsc005Mapping = map[string]func(string) string{
 		return `missing required element "dcterms:modified"`
 	},
 	"OPF-007": func(msg string) string {
-		return `missing required attribute "media-type"`
+		if strings.Contains(msg, "media-type") {
+			return `missing required attribute "media-type"`
+		}
+		return "" // don't remap prefix override warnings
 	},
 	"OPF-010": func(msg string) string {
 		return `missing required element "itemref"`
@@ -192,9 +192,6 @@ var rsc005Mapping = map[string]func(string) string{
 		}
 		return "" // don't remap other OPF-037 messages (e.g., deprecated media types)
 	},
-	"OPF-042": func(msg string) string {
-		return `The value of the "rendition:flow" property must be either "paginated", "scrolled-doc", "scrolled-continuous", or "auto"`
-	},
 	"OPF-044": func(msg string) string {
 		return `The media-overlay attribute must refer to an item with media type "application/smil+xml"; must be of the "application/smil+xml" type`
 	},
@@ -212,6 +209,21 @@ var rsc005Mapping = map[string]func(string) string{
 	},
 	"OPF-025a": func(msg string) string {
 		return `value of attribute "scheme" is invalid; must be an NMTOKEN`
+	},
+	"OPF-053b": func(msg string) string {
+		return `element "dc:date" not allowed here`
+	},
+	"OPF-086b": func(msg string) string {
+		return `attribute "fallback-style" not allowed here`
+	},
+	"OPF-039b": func(msg string) string {
+		return `element "guide" incomplete; missing required element "reference"`
+	},
+	"OPF-025b": func(msg string) string {
+		return `value of attribute "property" is invalid; must be a string with length at least 1`
+	},
+	"OPF-088": func(msg string) string {
+		return msg // pass through the message as-is for RSC-005
 	},
 }
 

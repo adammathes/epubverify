@@ -192,6 +192,9 @@ func (ep *EPUB) ParseOPF() error {
 	p.MetadataLinks = structInfo.metadataLinks
 	p.MetaSchemes = structInfo.metaSchemes
 	p.AllXMLLangs = structInfo.allXMLLangs
+	p.MetaEmptyProps = structInfo.metaEmptyProps
+	p.MetaListProps = structInfo.metaListProps
+	p.MetaEmptyValues = structInfo.metaEmptyValues
 
 	// Map meta element IDs to their property names for refines validation
 	if p.Metadata.IDToElement == nil {
@@ -254,6 +257,9 @@ type opfStructInfo struct {
 	allXMLLangs              []string // all xml:lang attribute values found in the OPF
 	metaSchemes              []MetaScheme // scheme attributes on meta elements
 	metaIDToProperty         map[string]string // meta element ID → property name
+	metaEmptyProps           int      // count of meta elements with empty property attribute
+	metaListProps            []string // meta property attributes containing spaces
+	metaEmptyValues          int      // count of meta elements with empty text content
 }
 
 type metaInfo struct {
@@ -379,11 +385,21 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			if scheme != "" {
 				info.metaSchemes = append(info.metaSchemes, MetaScheme{Scheme: scheme, Property: prop})
 			}
-			if prop != "" {
+			// Track empty/invalid property attributes
+			trimmedProp := strings.TrimSpace(prop)
+			if trimmedProp == "" {
+				info.metaEmptyProps++
+			} else if strings.Contains(trimmedProp, " ") {
+				info.metaListProps = append(info.metaListProps, prop)
+			}
+			if trimmedProp != "" {
 				// Read the text content
 				inner, _ := decoder.Token()
 				if cd, ok := inner.(xml.CharData); ok {
 					val = strings.TrimSpace(string(cd))
+				}
+				if val == "" {
+					info.metaEmptyValues++
 				}
 				info.metas = append(info.metas, metaInfo{property: prop, value: val})
 				if metaID != "" {
@@ -400,7 +416,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				}
 			}
 		case "link":
-			var href, rel, mediaType, hreflang string
+			var href, rel, mediaType, hreflang, linkRefines, linkProps string
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "href":
@@ -411,14 +427,20 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					mediaType = attr.Value
 				case "hreflang":
 					hreflang = attr.Value
+				case "refines":
+					linkRefines = attr.Value
+				case "properties":
+					linkProps = attr.Value
 				}
 			}
-			if href != "" {
+			if href != "" || rel != "" {
 				info.metadataLinks = append(info.metadataLinks, MetadataLink{
-					Href:      href,
-					Rel:       rel,
-					MediaType: mediaType,
-					Hreflang:  hreflang,
+					Href:       href,
+					Rel:        rel,
+					MediaType:  mediaType,
+					Hreflang:   hreflang,
+					Refines:    linkRefines,
+					Properties: linkProps,
 				})
 			}
 		}
@@ -574,6 +596,8 @@ func parseManifestRaw(data []byte) ([]ManifestItem, error) {
 						item.Properties = attr.Value
 					case "fallback":
 						item.Fallback = attr.Value
+					case "fallback-style":
+						item.FallbackStyle = attr.Value
 					case "media-overlay":
 						item.MediaOverlay = attr.Value
 					}

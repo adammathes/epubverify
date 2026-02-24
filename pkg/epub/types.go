@@ -59,6 +59,9 @@ type Package struct {
 	MetaSchemes      []MetaScheme   // scheme attributes on meta elements
 	AllXMLLangs      []string       // all xml:lang attribute values found in the OPF
 	PrimaryMetas     []MetaPrimary  // meta elements without refines (primary metadata)
+	MetaEmptyProps   int            // count of meta elements with empty property attribute
+	MetaListProps    []string       // meta property attributes that contain spaces (multiple values)
+	MetaEmptyValues  int            // count of meta elements with empty text content
 }
 
 // MetaPrimary represents a non-refining meta element (primary metadata).
@@ -69,10 +72,12 @@ type MetaPrimary struct {
 
 // MetadataLink represents a <link> element in the OPF metadata section.
 type MetadataLink struct {
-	Href      string
-	Rel       string
-	MediaType string
-	Hreflang  string
+	Href       string
+	Rel        string
+	MediaType  string
+	Hreflang   string
+	Refines    string // refines attribute
+	Properties string // properties attribute
 }
 
 // Metadata holds the OPF metadata section.
@@ -125,13 +130,14 @@ type MetaScheme struct {
 
 // ManifestItem represents a single item in the OPF manifest.
 type ManifestItem struct {
-	ID           string
-	Href         string
-	MediaType    string
-	Properties   string
-	Fallback     string
-	HasID        bool   // false when id attribute is missing
-	MediaOverlay string // media-overlay attribute
+	ID            string
+	Href          string
+	MediaType     string
+	Properties    string
+	Fallback      string
+	FallbackStyle string // fallback-style attribute (EPUB 2, deprecated in EPUB 3)
+	HasID         bool   // false when id attribute is missing
+	MediaOverlay  string // media-overlay attribute
 }
 
 // SpineItemref represents a single itemref in the OPF spine.
