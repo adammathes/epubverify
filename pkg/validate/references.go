@@ -313,16 +313,35 @@ func checkNavigation(ep *epub.EPUB, r *report.Report) {
 			fullPath)
 	}
 
-	// NAV-010: landmark entries should use valid epub:type values
-	// The EPUB 3 structural semantics vocabulary is extensible, so unknown
-	// values are informational rather than violations.
-	for _, t := range navInfo.landmarkTypes {
-		if !validEpubTypes[t] && !strings.Contains(t, ":") {
-			r.AddWithLocation(report.Info, "NAV-010",
-				fmt.Sprintf("Landmark nav entry uses unknown epub:type value '%s'", t),
+	// NAV-010: external links are not allowed in toc, page-list, or landmarks nav elements
+	for _, link := range navInfo.tocLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'toc' nav element must not contain links to remote resources: '%s'", link.href),
 				fullPath)
 		}
 	}
+	for _, link := range navInfo.landmarkLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'landmarks' nav element must not contain links to remote resources: '%s'", link.href),
+				fullPath)
+		}
+	}
+	for _, link := range navInfo.pageListLinks {
+		if isRemoteURL(link.href) {
+			r.AddWithLocation(report.Error, "NAV-010",
+				fmt.Sprintf("The 'page-list' nav element must not contain links to remote resources: '%s'", link.href),
+				fullPath)
+		}
+	}
+
+	// RSC-011: toc nav links must point to documents in the spine
+	// RSC-010: toc nav links must point to content documents (XHTML or SVG)
+	checkNavTocSpineLinks(ep, navInfo, fullPath, r)
+
+	// NAV-011: toc nav links must follow spine reading order
+	checkNavTOCOrder(ep, navInfo, fullPath, r)
 }
 
 type navLink struct {
@@ -491,6 +510,10 @@ func checkNavLinkResolves(ep *epub.EPUB, href, navFullPath, checkID string, r *r
 
 	// Check fragment identifier if present
 	if u.Fragment != "" {
+		// EPUB CFI fragments are always valid (they encode location within documents)
+		if strings.HasPrefix(u.Fragment, "epubcfi(") {
+			return
+		}
 		targetData, err := ep.ReadFile(target)
 		if err != nil && nfcTarget != target {
 			targetData, err = ep.ReadFile(nfcTarget)
@@ -509,6 +532,173 @@ func checkNavLinkResolves(ep *epub.EPUB, href, navFullPath, checkID string, r *r
 // collectNavIDs collects all id attributes from an HTML/XHTML document.
 func collectNavIDs(data []byte) map[string]bool {
 	return collectIDs(data)
+}
+
+// checkNavTocSpineLinks checks RSC-011 (toc link to non-spine doc) and
+// RSC-010 (toc link to non-content-document type).
+func checkNavTocSpineLinks(ep *epub.EPUB, navInfo navDocInfo, navPath string, r *report.Report) {
+	navDir := path.Dir(navPath)
+
+	// Build spine set: manifest full path → true
+	spineSet := buildSpinePathSet(ep)
+
+	// Build manifest path → media-type map
+	manifestMT := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestMT[ep.ResolveHref(item.Href)] = item.MediaType
+		}
+	}
+
+	for _, link := range navInfo.tocLinks {
+		if link.href == "" || isRemoteURL(link.href) {
+			continue
+		}
+		u, err := url.Parse(link.href)
+		if err != nil || u.Scheme != "" || u.Path == "" {
+			continue
+		}
+		target := resolvePath(navDir, u.Path)
+
+		mt, inManifest := manifestMT[target]
+		if !inManifest {
+			continue // file not in manifest, already reported by RSC-007
+		}
+
+		// RSC-010: toc nav links must point to XHTML or SVG content documents
+		isContentDoc := mt == "application/xhtml+xml" || mt == "image/svg+xml"
+		if !isContentDoc {
+			r.AddWithLocation(report.Error, "RSC-010",
+				fmt.Sprintf("The 'toc' nav element links to a resource that is not a Content Document: '%s'", link.href),
+				navPath)
+			continue
+		}
+
+		// RSC-011: toc nav links to content docs must be in the spine
+		if !spineSet[target] {
+			r.AddWithLocation(report.Error, "RSC-011",
+				fmt.Sprintf("Content document '%s' is referenced from the 'toc' nav but is not listed in the spine", link.href),
+				navPath)
+		}
+	}
+}
+
+// buildSpinePathSet returns a set of full file paths for all spine items.
+func buildSpinePathSet(ep *epub.EPUB) map[string]bool {
+	// manifest ID (trimmed) → full path
+	idToPath := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			idToPath[strings.TrimSpace(item.ID)] = ep.ResolveHref(item.Href)
+		}
+	}
+	spineSet := make(map[string]bool)
+	for _, ref := range ep.Package.Spine {
+		if p := idToPath[strings.TrimSpace(ref.IDRef)]; p != "" {
+			spineSet[p] = true
+		}
+	}
+	return spineSet
+}
+
+// buildSpinePositions returns a map of full file path → spine index (0-based).
+func buildSpinePositions(ep *epub.EPUB) map[string]int {
+	idToPath := make(map[string]string)
+	for _, item := range ep.Package.Manifest {
+		if item.Href != "\x00MISSING" {
+			idToPath[strings.TrimSpace(item.ID)] = ep.ResolveHref(item.Href)
+		}
+	}
+	positions := make(map[string]int)
+	for i, ref := range ep.Package.Spine {
+		if p := idToPath[strings.TrimSpace(ref.IDRef)]; p != "" {
+			positions[p] = i
+		}
+	}
+	return positions
+}
+
+// checkNavTOCOrder checks NAV-011: toc links must follow spine reading order
+// and fragment document order.
+func checkNavTOCOrder(ep *epub.EPUB, navInfo navDocInfo, navPath string, r *report.Report) {
+	navDir := path.Dir(navPath)
+	spinePositions := buildSpinePositions(ep)
+
+	lastSpinePos := -1
+	lastFragPos := make(map[string]int) // fullPath → last seen fragment byte offset
+
+	for _, link := range navInfo.tocLinks {
+		if link.href == "" || isRemoteURL(link.href) {
+			continue
+		}
+		u, err := url.Parse(link.href)
+		if err != nil || u.Scheme != "" || u.Path == "" {
+			continue
+		}
+		target := resolvePath(navDir, u.Path)
+
+		spinePos, inSpine := spinePositions[target]
+		if !inSpine {
+			continue // not in spine, already reported
+		}
+
+		fragOffset := 0 // no fragment = beginning of doc = offset 0
+		if u.Fragment != "" {
+			data, err := ep.ReadFile(target)
+			if err == nil {
+				elemPos := collectElementPositions(data)
+				if pos, ok := elemPos[u.Fragment]; ok {
+					fragOffset = pos
+				} else {
+					fragOffset = -1 // unknown fragment, skip fragment check
+				}
+			}
+		}
+
+		if spinePos < lastSpinePos {
+			// Out of spine order
+			r.AddWithLocation(report.Warning, "NAV-011",
+				fmt.Sprintf("The 'toc' nav link to '%s' is not in spine reading order", link.href),
+				navPath)
+		} else if spinePos == lastSpinePos && fragOffset >= 0 {
+			// Same document: check fragment order
+			if fragOffset < lastFragPos[target] {
+				r.AddWithLocation(report.Warning, "NAV-011",
+					fmt.Sprintf("The 'toc' nav link to '%s' is not in document reading order", link.href),
+					navPath)
+			}
+		}
+
+		// Update tracking (always update to current position)
+		lastSpinePos = spinePos
+		if fragOffset >= 0 {
+			lastFragPos[target] = fragOffset
+		}
+	}
+}
+
+// collectElementPositions returns a map of element id → byte offset in the document.
+func collectElementPositions(data []byte) map[string]int {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	positions := make(map[string]int)
+	for {
+		offset := decoder.InputOffset()
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				positions[attr.Value] = int(offset)
+				break
+			}
+		}
+	}
+	return positions
 }
 
 // RSC-010: manifest hrefs must be valid URLs
