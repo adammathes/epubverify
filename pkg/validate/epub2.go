@@ -485,7 +485,7 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 // RSC-005: NCX id attributes must be unique (schema validation)
 func checkNCXUniqueIDs(data []byte, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	seen := make(map[string]bool)
+	idCount := make(map[string]int)
 
 	for {
 		tok, err := decoder.Token()
@@ -498,11 +498,16 @@ func checkNCXUniqueIDs(data []byte, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "id" {
-				if seen[attr.Value] {
-					r.Add(report.Error, "RSC-005",
-						`The "id" attribute does not have a unique value`)
-				}
-				seen[attr.Value] = true
+				idCount[attr.Value]++
+			}
+		}
+	}
+	// Report all occurrences of duplicated IDs
+	for _, count := range idCount {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.Add(report.Error, "RSC-005",
+					`The "id" attribute does not have a unique value`)
 			}
 		}
 	}

@@ -3212,7 +3212,7 @@ func checkMissingNamespace(data []byte, location string, r *report.Report) {
 // checkDuplicateIDs detects duplicate id attribute values in XHTML (RSC-005 in single-file).
 func checkDuplicateIDs(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	seen := make(map[string]bool)
+	idCount := make(map[string]int)
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -3224,12 +3224,17 @@ func checkDuplicateIDs(data []byte, location string, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "id" && attr.Value != "" {
-				if seen[attr.Value] {
-					r.AddWithLocation(report.Error, "RSC-005",
-						fmt.Sprintf(`Duplicate ID "%s"`, attr.Value),
-						location)
-				}
-				seen[attr.Value] = true
+				idCount[attr.Value]++
+			}
+		}
+	}
+	// Report all occurrences of duplicated IDs
+	for id, count := range idCount {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id),
+					location)
 			}
 		}
 	}
@@ -3308,7 +3313,7 @@ func checkEntityReferences(data []byte, location string, r *report.Report) {
 	entityNoSemiRe := regexp.MustCompile(`&[a-zA-Z][a-zA-Z0-9]*[^;a-zA-Z0-9]`)
 	if entityNoSemiRe.MatchString(content) {
 		r.AddWithLocation(report.Fatal, "RSC-016",
-			"Fatal Error while parsing file: entity references must end with a semicolon",
+			"Fatal Error while parsing file: The entity name must end with the ';' delimiter",
 			location)
 	}
 }
@@ -4176,7 +4181,7 @@ func checkACCMathMLAlt(data []byte, location string, r *report.Report) {
 // checkSVGDuplicateIDs detects duplicate id attribute values in SVG (RSC-005).
 func checkSVGDuplicateIDs(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	seen := make(map[string]bool)
+	idCount := make(map[string]int)
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4188,12 +4193,17 @@ func checkSVGDuplicateIDs(data []byte, location string, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "id" && attr.Value != "" {
-				if seen[attr.Value] {
-					r.AddWithLocation(report.Error, "RSC-005",
-						fmt.Sprintf(`Duplicate ID "%s"`, attr.Value),
-						location)
-				}
-				seen[attr.Value] = true
+				idCount[attr.Value]++
+			}
+		}
+	}
+	// Report all occurrences of duplicated IDs
+	for id, count := range idCount {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id),
+					location)
 			}
 		}
 	}
@@ -4216,7 +4226,7 @@ func checkSVGInvalidIDs(data []byte, location string, r *report.Report) {
 			if attr.Name.Local == "id" && attr.Value != "" {
 				if invalidIDRe.MatchString(attr.Value) || strings.TrimSpace(attr.Value) == "" {
 					r.AddWithLocation(report.Error, "RSC-005",
-						fmt.Sprintf(`Invalid ID value "%s"`, attr.Value),
+						fmt.Sprintf(`value of attribute "id" is invalid; must be an XML Name`),
 						location)
 				}
 			}
@@ -4408,7 +4418,7 @@ func checkSVGTitleContent(data []byte, location string, r *report.Report) {
 // and text (text, textPath, tspan) elements.
 func checkSVGEpubType(data []byte, location string, r *report.Report) {
 	allowedEpubType := map[string]bool{
-		"svg": true, "g": true, "use": true, "symbol": true, "defs": true,
+		"svg": true, "g": true, "use": true, "symbol": true,
 		"rect": true, "circle": true, "ellipse": true, "line": true,
 		"polyline": true, "polygon": true, "path": true,
 		"text": true, "textPath": true, "tspan": true,
@@ -5298,8 +5308,8 @@ func checkPrefixAttrLocation(data []byte, location string, r *report.Report) {
 		if !ok {
 			continue
 		}
-		if se.Name.Local == "html" {
-			continue // prefix is allowed on html
+		if se.Name.Local == "html" || se.Name.Local == "svg" {
+			continue // prefix is allowed on html and svg root elements
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
@@ -5641,7 +5651,7 @@ func isValidDuration(s string) bool {
 		if timePart == "" {
 			return false
 		}
-		if !regexp.MustCompile(`^(\d+H)?(\d+M)?(\d+(\.\d+)?S)?$`).MatchString(timePart) {
+		if !regexp.MustCompile(`^(\d+H)?(\d+M)?(\d+(\.\d{1,3})?S)?$`).MatchString(timePart) {
 			return false
 		}
 		if !strings.ContainsAny(timePart, "HMS") {
