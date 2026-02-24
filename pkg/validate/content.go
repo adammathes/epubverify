@@ -56,6 +56,21 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		}
 		checkSVGPropertyDeclarations(ep, data, fullPath, item, r)
 		checkNoRemoteResources(ep, data, fullPath, item, r)
+
+		// HTM-048: FXL SVG spine items must have viewBox on root svg element
+		if spineItemIDs[item.ID] {
+			itemIsFXL := isFXL
+			if props, ok := spineProps[item.ID]; ok {
+				if hasProperty(props, "rendition:layout-reflowable") {
+					itemIsFXL = false
+				} else if hasProperty(props, "rendition:layout-pre-paginated") {
+					itemIsFXL = true
+				}
+			}
+			if itemIsFXL {
+				checkFXLSVGViewBox(data, fullPath, r)
+			}
+		}
 	}
 
 	for _, item := range ep.Package.Manifest {
@@ -1043,6 +1058,37 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 	}
 }
 
+// checkFXLSVGViewBox checks that a fixed-layout SVG content document has a viewBox
+// attribute on the root svg element. HTM-048.
+func checkFXLSVGViewBox(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "svg" {
+			hasViewBox := false
+			for _, attr := range se.Attr {
+				if strings.EqualFold(attr.Name.Local, "viewBox") {
+					hasViewBox = true
+					break
+				}
+			}
+			if !hasViewBox {
+				r.AddWithLocation(report.Error, "HTM-048",
+					"Fixed-layout SVG documents must declare a 'viewBox' attribute on the root 'svg' element",
+					location)
+			}
+			return // Only check root svg
+		}
+	}
+}
+
 // viewportDim represents a parsed key=value pair from a viewport meta content.
 type viewportDim struct {
 	key   string
@@ -1285,6 +1331,16 @@ func collectIDs(data []byte) map[string]bool {
 // - Remote fonts (in CSS/SVG) are ALLOWED
 // - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
 func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
+	// Build map of remote manifest URLs for RSC-008 checks.
+	remoteManifestURLs := make(map[string]bool)
+	if ep.Package != nil {
+		for _, mItem := range ep.Package.Manifest {
+			if isRemoteURL(mItem.Href) {
+				remoteManifestURLs[mItem.Href] = true
+			}
+		}
+	}
+
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	// Match href="..." in processing instruction data
 	piHrefRe := regexp.MustCompile(`href\s*=\s*["']([^"']+)["']`)
@@ -1368,14 +1424,22 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
-		// Remote audio/video resources are ALLOWED in EPUB 3.
+		// Remote audio/video resources are ALLOWED in EPUB 3 if declared in manifest.
+		// RSC-008: remote audio/video not declared in manifest.
 		// RSC-031: warn when using http:// instead of https:// for remote resources.
 		if se.Name.Local == "audio" || se.Name.Local == "video" || se.Name.Local == "source" {
 			for _, attr := range se.Attr {
-				if attr.Name.Local == "src" && isNonHTTPSRemote(attr.Value) {
-					r.AddWithLocation(report.Warning, "RSC-031",
-						fmt.Sprintf("Remote resource uses insecure 'http' scheme: '%s'", attr.Value),
-						location)
+				if attr.Name.Local == "src" {
+					if isNonHTTPSRemote(attr.Value) {
+						r.AddWithLocation(report.Warning, "RSC-031",
+							fmt.Sprintf("Remote resource uses insecure 'http' scheme: '%s'", attr.Value),
+							location)
+					}
+					if isRemoteURL(attr.Value) && !remoteManifestURLs[attr.Value] {
+						r.AddWithLocation(report.Error, "RSC-008",
+							fmt.Sprintf("Remote resource '%s' is not declared in the package document", attr.Value),
+							location)
+					}
 				}
 			}
 		}
@@ -1433,6 +1497,16 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
+	// Build map of remote manifest URLs (http/https hrefs) for RSC-006 checks on <a> links.
+	remoteManifestItems := make(map[string]epub.ManifestItem)
+	if ep.Package != nil {
+		for _, mItem := range ep.Package.Manifest {
+			if isRemoteURL(mItem.Href) {
+				remoteManifestItems[mItem.Href] = mItem
+			}
+		}
+	}
+
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1444,10 +1518,20 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			continue
 		}
 
-		// Check <a href="..."> for internal links
+		// Check <a href="..."> for internal links and remote image references
 		if se.Name.Local == "a" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "href" {
+					// RSC-006: <a> linking to a remote image is not allowed
+					if isRemoteURL(attr.Value) {
+						if mItem, ok2 := remoteManifestItems[attr.Value]; ok2 {
+							if strings.HasPrefix(mItem.MediaType, "image/") {
+								r.AddWithLocation(report.Error, "RSC-006",
+									fmt.Sprintf("Remote resource reference is not allowed: '%s'", attr.Value),
+									fullPath)
+							}
+						}
+					}
 					checkHyperlink(ep, attr.Value, itemDir, fullPath, r)
 				}
 			}

@@ -478,6 +478,7 @@ func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.M
 
 // checkCSSFontFileExists: font file sources must exist in the container.
 // RSC-007: referenced resource not found in the container.
+// RSC-008: remote font not declared in the manifest.
 // CSS-007: info when font uses a non-standard (non-core) media type.
 func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
@@ -488,12 +489,16 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 	// Build manifest lookups
 	manifestPaths := make(map[string]bool)
 	manifestByPath := make(map[string]string) // path -> media-type
+	remoteManifestURLs := make(map[string]bool)
 	if ep.Package != nil {
 		for _, item := range ep.Package.Manifest {
 			if item.Href != "\x00MISSING" {
 				fp := ep.ResolveHref(item.Href)
 				manifestPaths[fp] = true
 				manifestByPath[fp] = item.MediaType
+			}
+			if isRemoteURL(item.Href) {
+				remoteManifestURLs[item.Href] = true
 			}
 		}
 	}
@@ -504,6 +509,18 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 		for _, u := range urls {
 			href := u[1]
 			if isRemoteURL(href) {
+				// RSC-008: remote font not declared in manifest.
+				// Strip fragment (e.g. https://example.org/svg#font → https://example.org/svg)
+				// since manifest items reference the base resource URL.
+				baseURL := href
+				if idx := strings.Index(href, "#"); idx >= 0 {
+					baseURL = href[:idx]
+				}
+				if !remoteManifestURLs[baseURL] {
+					r.AddWithLocation(report.Error, "RSC-008",
+						fmt.Sprintf("Remote resource '%s' is not declared in the package document", href),
+						location)
+				}
 				continue
 			}
 			// Skip file:// URLs (handled by RSC-030)
