@@ -55,6 +55,7 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			continue
 		}
 		checkSVGPropertyDeclarations(ep, data, fullPath, item, r)
+		checkNoRemoteResources(ep, data, fullPath, item, r)
 	}
 
 	for _, item := range ep.Package.Manifest {
@@ -1020,12 +1021,18 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 	content := string(data)
 	hasRemote := false
 
-	// Check for remote URLs in SVG (href, xlink:href attributes and url() in style)
+	// Strip XML processing instructions — their remote hrefs are disallowed (RSC-006)
+	// and should not trigger the remote-resources property requirement (OPF-014).
+	piRe := regexp.MustCompile(`<\?[^?]*\?>`)
+	stripped := piRe.ReplaceAllString(content, "")
+
+	// Check for remote URLs in SVG element attributes (href, xlink:href)
 	remoteRe := regexp.MustCompile(`(?:href|xlink:href)\s*=\s*["'](https?://[^"']+)["']`)
-	if remoteRe.MatchString(content) {
+	if remoteRe.MatchString(stripped) {
 		hasRemote = true
 	}
-	if hasRemoteURLInCSS(content) {
+	// hasRemoteURLInCSS already strips @import (which fire RSC-006, not OPF-014)
+	if hasRemoteURLInCSS(stripped) {
 		hasRemote = true
 	}
 
