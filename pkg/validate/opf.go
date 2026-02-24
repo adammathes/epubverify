@@ -1,7 +1,9 @@
 package validate
 
 import (
+	"encoding/xml"
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -171,6 +173,11 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-099: OPF must not reference itself in manifest
 	checkManifestSelfReference(ep, pkg, r)
 
+	// OPF-093/RSC-007w: package metadata link checks
+	checkPackageMetadataLinks(ep, pkg, r)
+
+	// OPF-096: non-linear spine items must be reachable
+	checkSpineNonLinearReachable(ep, r)
 
 	return false
 }
@@ -1093,6 +1100,175 @@ func checkFallbackChainResolves(pkg *epub.Package, r *report.Report) {
 		if !resolved && !isCircular {
 			r.Add(report.Error, "RSC-032",
 				fmt.Sprintf("Fallback chain for manifest item '%s' does not resolve to a core media type", item.ID))
+		}
+	}
+}
+
+// OPF-093: local (non-remote) <link> elements in the OPF metadata section
+// must have a media-type attribute.
+// RSC-007w: <link> elements pointing to resources missing from the EPUB container.
+func checkPackageMetadataLinks(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	for _, link := range pkg.MetadataLinks {
+		href := link.Href
+		if href == "" {
+			continue
+		}
+		// Only check non-remote (local) resources
+		if isRemoteURL(href) {
+			continue
+		}
+		// OPF-093: local link must have media-type
+		if link.MediaType == "" {
+			r.Add(report.Error, "OPF-093",
+				fmt.Sprintf("Metadata link to local resource '%s' is missing required 'media-type' attribute", href))
+		}
+		// RSC-007w: local link target must exist in the EPUB
+		// Strip fragment before resolving (e.g. content_001.xhtml#meta-json)
+		hrefPath := href
+		if idx := strings.Index(hrefPath, "#"); idx >= 0 {
+			hrefPath = hrefPath[:idx]
+		}
+		target := ep.ResolveHref(hrefPath)
+		if _, exists := ep.Files[target]; !exists {
+			r.Add(report.Warning, "RSC-007w",
+				fmt.Sprintf("Metadata link resource '%s' could not be found in the container", href))
+		}
+	}
+}
+
+// OPF-096: all non-linear spine items (linear="no") must be reachable via
+// the navigation document or a hyperlink from a linear content document.
+func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	pkg := ep.Package
+
+	// Build map of all manifest items by ID
+	manifestByID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		manifestByID[item.ID] = item
+	}
+
+	// Collect non-linear spine items
+	type nonLinearItem struct {
+		id   string
+		path string
+	}
+	var nonLinear []nonLinearItem
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			if item, ok := manifestByID[ref.IDRef]; ok && item.Href != "\x00MISSING" {
+				nonLinear = append(nonLinear, nonLinearItem{
+					id:   ref.IDRef,
+					path: ep.ResolveHref(item.Href),
+				})
+			}
+		}
+	}
+	if len(nonLinear) == 0 {
+		return
+	}
+
+	// Build set of reachable paths: start with nav doc links
+	reachable := make(map[string]bool)
+
+	// Find nav document and collect its links
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		if !hasProperty(item.Properties, "nav") {
+			continue
+		}
+		navPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(navPath)
+		if err != nil {
+			continue
+		}
+		navDir := path.Dir(navPath)
+		// Collect all hrefs from nav document (scan <a href="..."> elements)
+		navDecoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := navDecoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "a" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local != "href" {
+					continue
+				}
+				u, err := url.Parse(attr.Value)
+				if err != nil || u.Scheme != "" {
+					continue
+				}
+				if u.Path == "" {
+					continue
+				}
+				target := resolvePath(navDir, u.Path)
+				reachable[target] = true
+			}
+		}
+	}
+
+	// Collect hyperlinks from all linear content documents
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			continue
+		}
+		item, ok := manifestByID[ref.IDRef]
+		if !ok || item.Href == "\x00MISSING" {
+			continue
+		}
+		docPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(docPath)
+		if err != nil {
+			continue
+		}
+		docDir := path.Dir(docPath)
+		// Scan for href attributes in a elements
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "a" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local != "href" {
+					continue
+				}
+				u, err := url.Parse(attr.Value)
+				if err != nil || u.Scheme != "" {
+					continue
+				}
+				if u.Path == "" {
+					continue
+				}
+				target := resolvePath(docDir, u.Path)
+				reachable[target] = true
+			}
+		}
+	}
+
+	// Report non-linear items that are not reachable
+	for _, item := range nonLinear {
+		if !reachable[item.path] {
+			r.Add(report.Error, "OPF-096",
+				fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
 		}
 	}
 }
