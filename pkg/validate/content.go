@@ -2967,6 +2967,8 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
 			checkHTM054ReservedNS(data, fullPath, r)
 			checkARIADescribedAt(data, fullPath, r)
 			checkTitleElement(data, fullPath, r)
+			checkPrefixAttrLocation(data, fullPath, r)
+			checkPrefixDeclarations(data, fullPath, r)
 
 			// Usage-level checks
 			checkHTM055Discouraged(data, fullPath, r)
@@ -4868,8 +4870,8 @@ func checkTitleElement(data []byte, location string, r *report.Report) {
 			}
 			if t.Name.Local == "head" {
 				if !hasTitle {
-					r.AddWithLocation(report.Error, "RSC-005",
-						`element "head" is missing a required instance of child element "title"`,
+					r.AddWithLocation(report.Warning, "RSC-017",
+						`The "head" element should have a "title" child element.`,
 						location)
 				}
 				inHead = false
@@ -4877,6 +4879,103 @@ func checkTitleElement(data []byte, location string, r *report.Report) {
 		case xml.CharData:
 			if inTitle {
 				titleContent += string(t)
+			}
+		}
+	}
+}
+
+// checkPrefixAttrLocation detects epub:prefix attributes on disallowed elements (RSC-005).
+// The prefix attribute is only allowed on the html element in content documents.
+func checkPrefixAttrLocation(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	// Elements where epub:prefix is not allowed (it's only valid on <html>)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "html" {
+			continue // prefix is allowed on html
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "epub:prefix" not allowed here`,
+					location)
+			}
+		}
+	}
+}
+
+// checkPrefixDeclarations checks prefix declarations in content documents.
+// Detects: underscore prefix (OPF-007a), reserved prefix overrides (OPF-007),
+// and prefix with empty namespace (OPF-028).
+func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	reservedPrefixURIs := map[string]string{
+		"a11y":      "http://www.idpf.org/epub/vocab/package/a11y/#",
+		"dcterms":   "http://purl.org/dc/terms/",
+		"marc":      "http://id.loc.gov/vocabulary/",
+		"media":     "http://www.idpf.org/epub/vocab/overlays/#",
+		"onix":      "http://www.editeur.org/ONIX/book/codelists/current.html#",
+		"rendition": "http://www.idpf.org/vocab/rendition/#",
+		"schema":    "http://schema.org/",
+		"xsd":       "http://www.w3.org/2001/XMLSchema#",
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
+				// Parse prefix declarations: "prefix1: uri1 prefix2: uri2"
+				val := attr.Value
+				parts := strings.Fields(val)
+				for i := 0; i < len(parts); i++ {
+					prefix := parts[i]
+					if !strings.HasSuffix(prefix, ":") {
+						continue
+					}
+					prefix = strings.TrimSuffix(prefix, ":")
+					uri := ""
+					if i+1 < len(parts) && !strings.HasSuffix(parts[i+1], ":") {
+						uri = parts[i+1]
+						i++
+					}
+					// OPF-007a: underscore prefix
+					if prefix == "_" {
+						r.AddWithLocation(report.Error, "OPF-007a",
+							`The prefix "_" must not be declared`,
+							location)
+						continue
+					}
+					// OPF-028: empty namespace
+					if uri == "" {
+						r.AddWithLocation(report.Error, "OPF-028",
+							fmt.Sprintf(`Undeclared prefix: "%s"`, prefix),
+							location)
+						continue
+					}
+					// OPF-007: reserved prefix override
+					if canonicalURI, ok := reservedPrefixURIs[prefix]; ok {
+						if uri != canonicalURI {
+							r.AddWithLocation(report.Warning, "OPF-007",
+								fmt.Sprintf(`Re-declaration of reserved prefix "%s"`, prefix),
+								location)
+						}
+					}
+				}
 			}
 		}
 	}
