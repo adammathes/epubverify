@@ -123,10 +123,15 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		r.DowngradeToInfo(divergenceChecks)
 	}
 
-	// Post-downgrade: emit OEBPS 1.2 legacy media type warnings AFTER DowngradeToInfo
+	// Post-downgrade: emit legacy media type warnings AFTER DowngradeToInfo
 	// so they are not downgraded to INFO. These are real EPUBCheck warnings.
-	if ep.IsLegacyOEBPS12 && ep.Package != nil && ep.Package.Version != "" {
-		checkLegacyOEBPS12MediaTypes(ep.Package, r)
+	if ep.Package != nil {
+		if ep.IsLegacyOEBPS12 && ep.Package.Version != "" {
+			checkLegacyOEBPS12MediaTypes(ep.Package, r)
+		} else if ep.Package.Version < "3.0" {
+			// Also check EPUB 2 packages for deprecated OEB media types
+			checkLegacyOEBPS12MediaTypes(ep.Package, r)
+		}
 	}
 
 	return r, nil
@@ -185,7 +190,7 @@ var rsc005Mapping = map[string]func(string) string{
 		if strings.Contains(msg, "refines missing target") {
 			return `@refines missing target id`
 		}
-		return msg
+		return "" // don't remap other OPF-037 messages (e.g., deprecated media types)
 	},
 	"OPF-042": func(msg string) string {
 		return `The value of the "rendition:flow" property must be either "paginated", "scrolled-doc", "scrolled-continuous", or "auto"`

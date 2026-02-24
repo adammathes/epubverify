@@ -58,6 +58,13 @@ type Package struct {
 	MetadataLinks    []MetadataLink // <link> elements in the metadata section
 	MetaSchemes      []MetaScheme   // scheme attributes on meta elements
 	AllXMLLangs      []string       // all xml:lang attribute values found in the OPF
+	PrimaryMetas     []MetaPrimary  // meta elements without refines (primary metadata)
+}
+
+// MetaPrimary represents a non-refining meta element (primary metadata).
+type MetaPrimary struct {
+	Property string
+	Value    string
 }
 
 // MetadataLink represents a <link> element in the OPF metadata section.
@@ -78,7 +85,8 @@ type Metadata struct {
 	Sources      []string
 	Creators     []DCCreator
 	Contributors []DCCreator  // dc:contributor elements (same structure as dc:creator)
-	DCElementIDs []string     // id attributes from all dc:* elements (publisher, subject, description, etc.)
+	DCElementIDs []string            // id attributes from all dc:* elements (publisher, subject, description, etc.)
+	IDToElement  map[string]string   // maps element id → element local name (e.g., "creator", "title", "subject")
 }
 
 // DCTitle represents a dc:title element with optional id attribute.

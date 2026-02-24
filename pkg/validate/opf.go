@@ -245,6 +245,9 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-027: scheme attribute validation on meta elements
 	checkMetaSchemeValid(pkg, r)
 
+	// Metadata refines property validation (D.3 vocabulary checks)
+	checkMetaRefinesPropertyRules(pkg, r)
+
 	return false
 }
 
@@ -824,8 +827,14 @@ func checkDCIdentifierNotEmpty(pkg *epub.Package, r *report.Report) {
 func checkDCTitleNotEmpty(pkg *epub.Package, r *report.Report) {
 	for _, t := range pkg.Metadata.Titles {
 		if strings.TrimSpace(t.Value) == "" {
-			r.Add(report.Error, "OPF-032",
-				"Element dc:title has invalid value: must not be empty")
+			if pkg.Version < "3.0" {
+				// EPUB 2: empty dc:title is a warning
+				r.Add(report.Warning, "OPF-055",
+					"Element dc:title has an empty value")
+			} else {
+				r.Add(report.Error, "OPF-032",
+					"Element dc:title has invalid value: must not be empty")
+			}
 		}
 	}
 }
@@ -886,6 +895,9 @@ var w3cdtfRe = regexp.MustCompile(`^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d
 
 func checkDCDateFormat(pkg *epub.Package, r *report.Report) {
 	for _, date := range pkg.Metadata.Dates {
+		if date == "" {
+			continue // Empty dates handled by OPF-054
+		}
 		if !w3cdtfRe.MatchString(date) {
 			r.Add(report.Warning, "OPF-036",
 				fmt.Sprintf("Date value '%s' does not follow recommended syntax of W3CDTF", date))
@@ -994,6 +1006,9 @@ func checkLegacyOEBPS12MediaTypes(pkg *epub.Package, r *report.Report) {
 		switch item.MediaType {
 		case "text/x-oeb1-document":
 			r.Add(report.Warning, "OPF-039",
+				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
+		case "text/x-oeb1-css":
+			r.Add(report.Warning, "OPF-037",
 				fmt.Sprintf("The media-type '%s' is a deprecated OEBPS 1.2 media type", item.MediaType))
 		case "text/html":
 			r.Add(report.Warning, "OPF-038",
@@ -1521,29 +1536,63 @@ func checkDCDateWarnings(pkg *epub.Package, r *report.Report) {
 
 // OPF-052: dc:creator role validation
 func checkDCCreatorRole(pkg *epub.Package, r *report.Report) {
-	// MARC relator codes (selected subset)
+	// MARC relator codes - comprehensive list from Library of Congress
+	// https://www.loc.gov/marc/relators/relaterm.html
 	marcCodes := map[string]bool{
-		"aut": true, "edt": true, "ill": true, "trl": true, "pbl": true,
-		"aui": true, "aft": true, "ann": true, "arr": true, "art": true,
-		"bkd": true, "bkp": true, "clb": true, "cmm": true, "cmp": true,
-		"cnd": true, "cns": true, "col": true, "com": true, "crp": true,
-		"cst": true, "cwt": true, "dsr": true, "dub": true, "flm": true,
-		"fnd": true, "hnr": true, "lyr": true, "mdc": true, "mus": true,
-		"nrt": true, "oth": true, "pht": true, "prf": true, "pro": true,
-		"red": true, "rev": true, "sng": true, "spn": true, "trc": true,
-		"wam": true, "wdc": true, "wde": true, "adp": true, "anl": true,
-		"ard": true, "aus": true, "bjd": true, "cll": true, "cng": true,
-		"cog": true, "cor": true, "cph": true, "cre": true, "cur": true,
-		"dnr": true, "dtc": true, "elg": true, "fmo": true, "his": true,
-		"inv": true, "isb": true, "itr": true, "ive": true, "ivr": true,
-		"led": true, "lsa": true, "ltg": true, "mfr": true, "mon": true,
-		"mrb": true, "mrk": true, "opn": true, "org": true, "orm": true,
-		"own": true, "pat": true, "pma": true, "pmn": true, "pop": true,
-		"ppt": true, "prg": true, "prm": true, "prs": true, "prt": true,
-		"prv": true, "rcd": true, "rce": true, "rcp": true, "res": true,
-		"rps": true, "rpy": true, "rsg": true, "rsp": true, "scr": true,
-		"sec": true, "sgn": true, "spk": true, "srv": true, "stl": true,
-		"ths": true, "tyg": true, "vdg": true, "wpr": true,
+		"abr": true, "act": true, "adp": true, "aft": true, "anl": true,
+		"anm": true, "ann": true, "ant": true, "ape": true, "apl": true,
+		"app": true, "aqt": true, "arc": true, "ard": true, "arr": true,
+		"art": true, "asg": true, "asn": true, "att": true, "auc": true,
+		"aud": true, "aui": true, "aus": true, "aut": true, "bdd": true,
+		"bjd": true, "bkd": true, "bkp": true, "blw": true, "bnd": true,
+		"bpd": true, "brd": true, "brl": true, "bsl": true, "cas": true,
+		"ccp": true, "chr": true, "clb": true, "cli": true, "cll": true,
+		"clr": true, "clt": true, "cmm": true, "cmp": true, "cmt": true,
+		"cnd": true, "cng": true, "cns": true, "coe": true, "col": true,
+		"com": true, "con": true, "cor": true, "cos": true, "cot": true,
+		"cou": true, "cov": true, "cpc": true, "cpe": true, "cph": true,
+		"cpl": true, "cpt": true, "cre": true, "crp": true, "crr": true,
+		"crt": true, "csl": true, "csp": true, "cst": true, "ctb": true,
+		"cte": true, "ctg": true, "ctr": true, "cts": true, "ctt": true,
+		"cur": true, "cwt": true, "dbp": true, "dfd": true, "dfe": true,
+		"dft": true, "dgg": true, "dgs": true, "dis": true, "dln": true,
+		"dnc": true, "dnr": true, "dpc": true, "dpt": true, "drm": true,
+		"drt": true, "dsr": true, "dst": true, "dtc": true, "dte": true,
+		"dtm": true, "dto": true, "dub": true, "edc": true, "edm": true,
+		"edt": true, "egr": true, "elg": true, "elt": true, "eng": true,
+		"enj": true, "etr": true, "evp": true, "exp": true, "fac": true,
+		"fds": true, "fld": true, "flm": true, "fmd": true, "fmk": true,
+		"fmo": true, "fmp": true, "fnd": true, "fpy": true, "frg": true,
+		"gis": true, "grt": true, "his": true, "hnr": true, "hst": true,
+		"ill": true, "ilu": true, "ins": true, "inv": true, "isb": true,
+		"itr": true, "ive": true, "ivr": true, "jud": true, "jug": true,
+		"lbr": true, "lbt": true, "ldr": true, "led": true, "lee": true,
+		"lel": true, "len": true, "let": true, "lgd": true, "lie": true,
+		"lil": true, "lit": true, "lsa": true, "lse": true, "lso": true,
+		"ltg": true, "lyr": true, "mcp": true, "mdc": true, "med": true,
+		"mfp": true, "mfr": true, "mod": true, "mon": true, "mrb": true,
+		"mrk": true, "msd": true, "mte": true, "mtk": true, "mus": true,
+		"nrt": true, "opn": true, "org": true, "orm": true, "osp": true,
+		"oth": true, "own": true, "pan": true, "pat": true, "pbd": true,
+		"pbl": true, "pdr": true, "pfr": true, "pht": true, "plt": true,
+		"pma": true, "pmn": true, "pop": true, "ppm": true, "ppt": true,
+		"pra": true, "prc": true, "prd": true, "pre": true, "prf": true,
+		"prg": true, "prm": true, "prn": true, "pro": true, "prp": true,
+		"prs": true, "prt": true, "prv": true, "pta": true, "pte": true,
+		"ptf": true, "pth": true, "ptt": true, "pup": true, "rbr": true,
+		"rcd": true, "rce": true, "rcp": true, "rdd": true, "red": true,
+		"ren": true, "res": true, "rev": true, "rpc": true, "rps": true,
+		"rpt": true, "rpy": true, "rse": true, "rsg": true, "rsp": true,
+		"rsr": true, "rst": true, "rth": true, "rtm": true, "sad": true,
+		"sce": true, "scl": true, "scr": true, "sds": true, "sec": true,
+		"sgd": true, "sgn": true, "sht": true, "sll": true, "sng": true,
+		"spk": true, "spn": true, "spy": true, "srv": true, "std": true,
+		"stg": true, "stl": true, "stm": true, "stn": true, "str": true,
+		"tcd": true, "tch": true, "ths": true, "tld": true, "tlp": true,
+		"trc": true, "trl": true, "tyd": true, "tyg": true, "uvp": true,
+		"vac": true, "vdg": true, "wac": true, "wal": true, "wam": true,
+		"wat": true, "wdc": true, "wde": true, "win": true, "wit": true,
+		"wpr": true, "wst": true, "cog": true,
 	}
 	for _, c := range pkg.Metadata.Creators {
 		if c.Role != "" && !marcCodes[strings.ToLower(c.Role)] {
@@ -1861,4 +1910,183 @@ func checkMetaSchemeValid(pkg *epub.Package, r *report.Report) {
 				fmt.Sprintf("The 'scheme' attribute value '%s' is not a known value with no prefix", scheme))
 		}
 	}
+}
+
+// checkMetaRefinesPropertyRules validates metadata refines property vocabulary rules (EPUB 3.3 D.3).
+// Reports RSC-005 for schema-level violations of refines target, cardinality, and value constraints.
+func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build ID-to-element mapping for refines targets
+	idMap := pkg.Metadata.IDToElement
+
+	// resolveRefines returns the element type/property that a refines target points to.
+	resolveRefines := func(refines string) string {
+		target := strings.TrimPrefix(refines, "#")
+		if elem, ok := idMap[target]; ok {
+			return elem
+		}
+		return ""
+	}
+
+	// Track cardinality: property+refinesTarget → count
+	cardinalityMap := make(map[string]int)
+
+	for _, mr := range pkg.MetaRefines {
+		target := resolveRefines(mr.Refines)
+		cardKey := mr.Property + "|" + mr.Refines
+
+		switch mr.Property {
+		case "authority":
+			// Must refine a "subject" property
+			if target != "subject" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"authority\" must refine a \"subject\" property"))
+			}
+		case "term":
+			// Must refine a "subject" property
+			if target != "subject" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"term\" must refine a \"subject\" property"))
+			}
+		case "belongs-to-collection":
+			// Can only refine other "belongs-to-collection" properties (or be primary)
+			if mr.Refines != "" && target != "belongs-to-collection" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"belongs-to-collection\" can only refine other \"belongs-to-collection\" properties"))
+			}
+		case "collection-type":
+			// Must refine a "belongs-to-collection" property (cannot be primary)
+			if mr.Refines == "" || target != "belongs-to-collection" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"collection-type\" must refine a \"belongs-to-collection\" property"))
+			}
+		case "identifier-type":
+			// Must refine an "identifier" or "source" property
+			if target != "identifier" && target != "source" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"identifier-type\" must refine an \"identifier\" or \"source\" property"))
+			}
+		case "role":
+			// Must refine a "creator", "contributor", or "publisher" property
+			if target != "creator" && target != "contributor" && target != "publisher" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("\"role\" must refine a \"creator\", \"contributor\", or \"publisher\" property"))
+			}
+		case "title-type":
+			// Must refine a "title" property
+			if target != "title" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"title-type\" must refine a \"title\" property"))
+			}
+		case "source-of":
+			// Must refine a "source" property and value must be "pagination"
+			if mr.Refines == "" || target != "source" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"source-of\" property must refine a \"source\" property"))
+			}
+			if mr.Value != "pagination" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"source-of\" property must have the value \"pagination\""))
+			}
+		case "meta-auth":
+			// Deprecated
+			r.Add(report.Warning, "RSC-017",
+				fmt.Sprintf("the meta-auth property is deprecated"))
+		case "media:active-class", "media:playback-active-class":
+			// Must not have refines
+			if mr.Refines != "" {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Property \"%s\" must not refine another property", mr.Property))
+			}
+		case "media:duration":
+			// Value must be a valid SMIL clock value
+			if !isValidClockValue(mr.Value) {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"media:duration\" value \"%s\" is not a valid SMIL clock value", mr.Value))
+			}
+		}
+
+		// Cardinality checks for properties that can only be declared once per refines target
+		cardinalityMap[cardKey]++
+	}
+
+	// Check for non-refining metas that should have refines
+	for _, m := range pkg.MetaRefines {
+		if m.Refines != "" {
+			continue
+		}
+		switch m.Property {
+		case "collection-type":
+			// Already caught above
+		case "source-of":
+			// Already caught above
+		}
+	}
+
+	// Check cardinality violations
+	seen := make(map[string]bool)
+	for _, mr := range pkg.MetaRefines {
+		cardKey := mr.Property + "|" + mr.Refines
+		if seen[cardKey] {
+			continue
+		}
+		seen[cardKey] = true
+		count := cardinalityMap[cardKey]
+
+		switch mr.Property {
+		case "collection-type", "display-seq", "file-as", "group-position",
+			"identifier-type", "source-of", "title-type":
+			if count > 1 {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("\"%s\" cannot be declared more than once to refine the same expression", mr.Property))
+			}
+		case "authority", "term":
+			// Authority and term come in pairs - only one pair per subject
+			if count > 1 {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("Only one pair of authority and term properties may refine the same expression"))
+			}
+		}
+	}
+
+	// Check authority-term pairing
+	authorityTargets := make(map[string]bool)
+	termTargets := make(map[string]bool)
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "authority" {
+			authorityTargets[mr.Refines] = true
+		}
+		if mr.Property == "term" {
+			termTargets[mr.Refines] = true
+		}
+	}
+	// Each authority must have a term and vice versa
+	for target := range authorityTargets {
+		if !termTargets[target] {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("A term property must be associated with the authority property"))
+		}
+	}
+	for target := range termTargets {
+		if !authorityTargets[target] {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("An authority property must be associated with the term property"))
+		}
+	}
+}
+
+// isValidClockValue checks if a string is a valid SMIL clock value.
+func isValidClockValue(val string) bool {
+	if val == "" {
+		return false
+	}
+	// Full clock: hh:mm:ss(.fff)
+	// Partial clock: mm:ss(.fff)
+	// Timecount: N(h|min|s|ms)
+	clockRe := regexp.MustCompile(`^(\d+:)?[0-5]?\d:[0-5]?\d(\.\d+)?$`)
+	timecountRe := regexp.MustCompile(`^\d+(\.\d+)?(h|min|s|ms)$`)
+	return clockRe.MatchString(val) || timecountRe.MatchString(val)
 }

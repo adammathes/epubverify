@@ -193,6 +193,26 @@ func (ep *EPUB) ParseOPF() error {
 	p.MetaSchemes = structInfo.metaSchemes
 	p.AllXMLLangs = structInfo.allXMLLangs
 
+	// Map meta element IDs to their property names for refines validation
+	if p.Metadata.IDToElement == nil {
+		p.Metadata.IDToElement = make(map[string]string)
+	}
+	for id, prop := range structInfo.metaIDToProperty {
+		p.Metadata.IDToElement[id] = prop
+	}
+
+	// Build primary metas (non-refining meta elements)
+	// MetaRefines only contains metas WITH refines; derive primary from metas that aren't refining
+	refiningProps := make(map[string]bool) // track properties that appear as refining
+	for _, mr := range structInfo.metaRefines {
+		refiningProps[mr.Property+"|"+mr.Value] = true
+	}
+	for _, m := range structInfo.metas {
+		if !refiningProps[m.property+"|"+m.value] {
+			p.PrimaryMetas = append(p.PrimaryMetas, MetaPrimary{Property: m.property, Value: m.value})
+		}
+	}
+
 	// Parse manifest items
 	rawItems, err := parseManifestRaw(data)
 	if err != nil {
@@ -233,6 +253,7 @@ type opfStructInfo struct {
 	metadataLinks            []MetadataLink
 	allXMLLangs              []string // all xml:lang attribute values found in the OPF
 	metaSchemes              []MetaScheme // scheme attributes on meta elements
+	metaIDToProperty         map[string]string // meta element ID → property name
 }
 
 type metaInfo struct {
@@ -243,7 +264,9 @@ type metaInfo struct {
 // scanOPFStructure does a raw XML scan of the OPF to detect structural elements.
 func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	info := &opfStructInfo{}
+	info := &opfStructInfo{
+		metaIDToProperty: make(map[string]string),
+	}
 
 	for {
 		tok, err := decoder.Token()
@@ -365,6 +388,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				info.metas = append(info.metas, metaInfo{property: prop, value: val})
 				if metaID != "" {
 					info.metaIDs = append(info.metaIDs, metaID)
+					info.metaIDToProperty[metaID] = prop
 				}
 				if refines != "" {
 					info.metaRefines = append(info.metaRefines, MetaRefines{
@@ -407,6 +431,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 func parseMetadata(data []byte) Metadata {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	var md Metadata
+	md.IDToElement = make(map[string]string)
 	inMetadata := false
 
 	for {
@@ -435,6 +460,7 @@ func parseMetadata(data []byte) Metadata {
 			}
 			if dcID != "" {
 				md.DCElementIDs = append(md.DCElementIDs, dcID)
+				md.IDToElement[dcID] = t.Name.Local
 			}
 
 			switch t.Name.Local {
