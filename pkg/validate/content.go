@@ -2954,6 +2954,12 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
 			checkCSS005AltStyleTag(data, fullPath, r)
 			checkDeprecatedDPUBARIA(data, fullPath, r)
 			checkACCMathMLAlt(data, fullPath, r)
+			checkEmptySrcAttr(data, fullPath, r)
+			checkEpubSwitchTrigger(data, fullPath, r)
+			checkEpubTypeOnHead(data, fullPath, r)
+			checkTableBorderAttr(data, fullPath, r)
+			checkHttpEquivCharset(data, fullPath, r)
+			checkImageMapValid(data, fullPath, r)
 
 			// Usage-level checks
 			checkHTM055Discouraged(data, fullPath, r)
@@ -3521,6 +3527,13 @@ func checkCSS005AltStyleTag(data []byte, location string, r *report.Report) {
 	knownTags := map[string]bool{
 		"horizontal": true, "vertical": true, "day": true, "night": true,
 	}
+	// Conflicting tag pairs
+	conflicts := map[string]string{
+		"horizontal": "vertical",
+		"vertical":   "horizontal",
+		"day":        "night",
+		"night":      "day",
+	}
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -3532,9 +3545,25 @@ func checkCSS005AltStyleTag(data []byte, location string, r *report.Report) {
 		}
 		for _, attr := range se.Attr {
 			if attr.Name.Local == "class" {
-				for _, cls := range strings.Fields(attr.Value) {
+				classes := strings.Fields(attr.Value)
+				classSet := make(map[string]bool)
+				for _, cls := range classes {
+					classSet[cls] = true
+				}
+				// Check for conflicting pairs
+				for _, cls := range classes {
+					if conflictWith, ok := conflicts[cls]; ok {
+						if classSet[conflictWith] {
+							r.AddWithLocation(report.Usage, "CSS-005",
+								fmt.Sprintf(`Conflicting alternate style tags "%s" and "%s"`, cls, conflictWith),
+								location)
+							return
+						}
+					}
+				}
+				// Check for unknown tags
+				for _, cls := range classes {
 					if !knownTags[cls] && strings.Contains(cls, "-") {
-						// Unknown alt style tag
 						r.AddWithLocation(report.Usage, "CSS-005",
 							fmt.Sprintf(`Unknown alternate style tag "%s"`, cls),
 							location)
@@ -3962,7 +3991,7 @@ func checkImageMapValid(data []byte, location string, r *report.Report) {
 						val := attr.Value
 						if val != "" && !strings.HasPrefix(val, "#") {
 							r.AddWithLocation(report.Error, "RSC-005",
-								`The "usemap" attribute value must start with "#"`,
+								`value of attribute "usemap" is invalid; must start with "#"`,
 								location)
 						}
 					}
@@ -4014,19 +4043,17 @@ func checkHttpEquivCharset(data []byte, location string, r *report.Report) {
 		if httpEquiv == "content-type" {
 			hasHttpEquivCharset = true
 			// Check that charset is UTF-8
-			if content != "" && strings.Contains(strings.ToLower(content), "charset=") {
-				charsetVal := strings.ToLower(content)
-				if !strings.Contains(charsetVal, "utf-8") {
-					r.AddWithLocation(report.Error, "RSC-005",
-						`http-equiv charset declaration must use "utf-8"`,
-						location)
-				}
+			contentLower := strings.ToLower(strings.TrimSpace(content))
+			if contentLower != "" && contentLower != "text/html; charset=utf-8" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "content" must have the value "text/html; charset=utf-8"`,
+					location)
 			}
 		}
 	}
 	if hasCharsetAttr && hasHttpEquivCharset {
 		r.AddWithLocation(report.Error, "RSC-005",
-			`Cannot have both "charset" attribute and http-equiv "Content-Type" meta element`,
+			`must not contain both a meta element in encoding declaration state (http-equiv='content-type') and a meta element with the charset attribute`,
 			location)
 	}
 }
@@ -4037,15 +4064,21 @@ func checkMicrodataAttrs(data []byte, location string, r *report.Report) {
 	// Placeholder - microdata validation is complex and low priority
 }
 
-// checkObsoleteAttrs detects obsolete HTML attributes (RSC-005).
+// checkObsoleteAttrs detects obsolete HTML attributes and elements (RSC-005).
 func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 	obsoleteAttrs := map[string]bool{
 		"typemustmatch": true,
 		"contextmenu":   true,
 		"dropzone":      true,
+		"pubdate":       true,
+		"seamless":      true,
 	}
 	obsoleteElements := map[string]bool{
 		"keygen": true,
+	}
+	// Obsolete element-specific attributes
+	obsoleteMenuAttrs := map[string]bool{
+		"type": true, "label": true,
 	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	for {
@@ -4059,13 +4092,19 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 		}
 		if obsoleteElements[se.Name.Local] {
 			r.AddWithLocation(report.Error, "RSC-005",
-				fmt.Sprintf(`The "%s" element is obsolete`, se.Name.Local),
+				fmt.Sprintf(`element "%s" not allowed here`, se.Name.Local),
 				location)
 		}
 		for _, attr := range se.Attr {
 			if obsoleteAttrs[attr.Name.Local] {
 				r.AddWithLocation(report.Error, "RSC-005",
-					fmt.Sprintf(`The "%s" attribute is obsolete`, attr.Name.Local),
+					fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+					location)
+			}
+			// menu element obsolete attributes
+			if se.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
 					location)
 			}
 		}
@@ -4300,7 +4339,8 @@ func checkSingleFileEncoding(ep *epub.EPUB, r *report.Report) {
 	xmlEncodingRe := regexp.MustCompile(`<\?xml[^?]*encoding=["']([^"']+)["']`)
 
 	for _, item := range ep.Package.Manifest {
-		if item.MediaType != "application/xhtml+xml" && item.MediaType != "image/svg+xml" {
+		// Only check SVG files here; XHTML encoding is handled by checkHTM058Encoding
+		if item.MediaType != "image/svg+xml" {
 			continue
 		}
 		if item.Href == "\x00MISSING" {
@@ -4500,4 +4540,172 @@ func parseFloat(s string) (float64, error) {
 	var result float64
 	_, err := fmt.Sscanf(s, "%f", &result)
 	return result, err
+}
+
+// ============================================================================
+// Additional single-file content checks
+// ============================================================================
+
+// checkEmptySrcAttr detects img elements with empty src attributes (RSC-005).
+func checkEmptySrcAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "img" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && strings.TrimSpace(attr.Value) == "" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`attribute "src" has a bad value: must be a valid URL`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkEpubSwitchTrigger detects epub:switch and epub:trigger elements (RSC-017 deprecated).
+func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	type switchState struct {
+		hasCaseBefore bool
+		hasDefault    bool
+		defaultCount  int
+		caseCount     int
+	}
+	var switchStack []*switchState
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "switch" && t.Name.Space == opsNS {
+				r.AddWithLocation(report.Warning, "RSC-017",
+					`The "epub:switch" element is deprecated`,
+					location)
+				switchStack = append(switchStack, &switchState{})
+			}
+			if t.Name.Local == "trigger" && t.Name.Space == opsNS {
+				r.AddWithLocation(report.Warning, "RSC-017",
+					`The "epub:trigger" element is deprecated`,
+					location)
+			}
+			if t.Name.Local == "case" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				cur.caseCount++
+				cur.hasCaseBefore = true
+				// Check for required-namespace attribute
+				hasReqNS := false
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "required-namespace" {
+						hasReqNS = true
+					}
+				}
+				if !hasReqNS {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:case" missing required attribute "required-namespace"`,
+						location)
+				}
+			}
+			if t.Name.Local == "default" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				cur.defaultCount++
+				if !cur.hasCaseBefore {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:default" not allowed yet`,
+						location)
+				}
+				if cur.defaultCount > 1 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:default" not allowed here; only one is permitted`,
+						location)
+				}
+				cur.hasDefault = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "switch" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				if cur.caseCount == 0 && !cur.hasDefault {
+					// Only report missing case if we haven't already reported "default not allowed yet"
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:switch" incomplete; missing required element "epub:case"`,
+						location)
+				}
+				if !cur.hasDefault {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:switch" incomplete; missing required element "epub:default"`,
+						location)
+				}
+				switchStack = switchStack[:len(switchStack)-1]
+			}
+		}
+	}
+}
+
+// checkEpubTypeOnHead detects epub:type attributes on head/metadata elements (RSC-005).
+func checkEpubTypeOnHead(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	// Elements where epub:type is not allowed
+	disallowed := map[string]bool{
+		"head": true, "title": true, "meta": true, "link": true,
+		"style": true, "base": true, "script": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if disallowed[se.Name.Local] {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "epub:type" not allowed on element "%s"`, se.Name.Local),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkTableBorderAttr checks table border attribute values (RSC-005).
+func checkTableBorderAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "table" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "border" {
+					val := strings.TrimSpace(attr.Value)
+					if val != "" && val != "1" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`value of attribute "border" is invalid; must be equal to "" or "1"`),
+							location)
+					}
+				}
+			}
+		}
+	}
 }
