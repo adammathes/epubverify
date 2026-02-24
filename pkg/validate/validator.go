@@ -300,6 +300,18 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
 		mediaType = "image/svg+xml"
 	}
 
+	// For SVG files, add a separate nav item (XHTML) to satisfy nav requirements
+	navItem := ""
+	navSpine := ""
+	contentProps := ` properties="nav"`
+	if mediaType != "application/xhtml+xml" {
+		contentProps = ""
+		navItem = `
+  <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>`
+		navSpine = `
+  <itemref idref="nav"/>`
+	}
+
 	opf := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" xml:lang="en" unique-identifier="uid">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -309,12 +321,18 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
   <meta property="dcterms:modified">2000-01-01T00:00:00Z</meta>
 </metadata>
 <manifest>
-  <item id="content" href="%s" media-type="%s" properties="nav"/>
+  <item id="content" href="%s" media-type="%s"%s/>%s
 </manifest>
 <spine>
-  <itemref idref="content"/>
+  <itemref idref="content"/>%s
 </spine>
-</package>`, name, mediaType)
+</package>`, name, mediaType, contentProps, navItem, navSpine)
+
+	nav := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
+<head><title>Nav</title></head>
+<body><nav epub:type="toc"><ol><li><a href="#">Start</a></li></ol></nav></body>
+</html>`
 
 	container := `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -328,6 +346,9 @@ func validateSingleXHTML(name string, data []byte) (*report.Report, error) {
 		"META-INF/container.xml": []byte(container),
 		"EPUB/package.opf":       []byte(opf),
 		"EPUB/" + name:           data,
+	}
+	if mediaType != "application/xhtml+xml" {
+		files["EPUB/nav.xhtml"] = []byte(nav)
 	}
 
 	tmpPath, err := createTempEPUB(files)

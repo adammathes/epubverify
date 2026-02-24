@@ -278,7 +278,71 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 			`element "guide" incomplete; missing required element "reference"`)
 	}
 
+	// RSC-005: element order (metadata must come before manifest, manifest before spine)
+	checkElementOrder(pkg, r)
+
+	// RSC-005: nav property checks (EPUB 3)
+	checkNavProperty(pkg, r)
+
 	return false
+}
+
+// checkElementOrder verifies that OPF child elements appear in the required order.
+func checkElementOrder(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	order := pkg.ElementOrder
+	if len(order) < 2 {
+		return
+	}
+	// The required order is: metadata, manifest, spine, [guide]
+	expectedOrder := []string{"metadata", "manifest", "spine"}
+	idxMap := make(map[string]int)
+	for i, elem := range order {
+		if _, seen := idxMap[elem]; !seen {
+			idxMap[elem] = i
+		}
+	}
+	metaIdx, hasMeta := idxMap["metadata"]
+	manIdx, hasMan := idxMap["manifest"]
+	_, hasSpine := idxMap["spine"]
+
+	if hasMeta && hasMan && manIdx < metaIdx {
+		r.Add(report.Error, "RSC-005",
+			`element "manifest" not allowed yet; expected element "metadata"`)
+		r.Add(report.Error, "RSC-005",
+			`element "metadata" not allowed here; expected element "spine"`)
+	}
+
+	_ = expectedOrder
+	_ = hasSpine
+}
+
+// checkNavProperty verifies that exactly one manifest item has the "nav" property
+// and that it is an XHTML Content Document.
+func checkNavProperty(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	navCount := 0
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "nav") {
+			navCount++
+			// Must be XHTML
+			if item.MediaType != "application/xhtml+xml" {
+				r.Add(report.Error, "RSC-005",
+					`the Navigation Document must be of the "application/xhtml+xml" type`)
+			}
+		}
+	}
+	if navCount == 0 {
+		r.Add(report.Error, "RSC-005",
+			`Exactly one manifest item must declare the "nav" property (0 found)`)
+	} else if navCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			`Exactly one manifest item must declare the "nav" property (multiple found)`)
+	}
 }
 
 // OPF-032b: meta element with empty text content (excluding rendition properties
@@ -904,15 +968,9 @@ func checkManifestPropertyValid(pkg *epub.Package, r *report.Report) {
 			if strings.Contains(prop, ":") {
 				continue
 			}
-			// OPF-027: property exists but is for a different context
-			// (e.g. rendition/spine properties used on manifest items)
-			if validSpineProperties[prop] || strings.HasPrefix(prop, "rendition:") {
-				r.Add(report.Error, "OPF-027",
-					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
-			} else {
-				r.Add(report.Error, "OPF-029",
-					fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
-			}
+			// OPF-027: undefined property
+			r.Add(report.Error, "OPF-027",
+				fmt.Sprintf("Undefined property '%s' on manifest item '%s'", prop, item.ID))
 		}
 	}
 }
@@ -2070,6 +2128,7 @@ func checkMetaPropertyDefined(pkg *epub.Package, r *report.Report) {
 		"group-position":          true,
 		"identifier-type":         true,
 		"meta-auth":               true,
+		"pageBreakSource":         true,
 		"role":                    true,
 		"scheme":                  true,
 		"source-of":               true,
@@ -2523,16 +2582,18 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 		cardinalityMap[cardKey]++
 	}
 
-	// Check for non-refining metas that should have refines
-	for _, m := range pkg.MetaRefines {
-		if m.Refines != "" {
-			continue
-		}
+	// Check for primary metas that must have refines or are deprecated
+	for _, m := range pkg.PrimaryMetas {
 		switch m.Property {
 		case "collection-type":
-			// Already caught above
+			r.Add(report.Error, "RSC-005",
+				`Property "collection-type" must refine a "belongs-to-collection" property`)
 		case "source-of":
-			// Already caught above
+			r.Add(report.Error, "RSC-005",
+				`The "source-of" property must refine a "source" property`)
+		case "meta-auth":
+			r.Add(report.Warning, "RSC-017",
+				"the meta-auth property is deprecated")
 		}
 	}
 
@@ -2562,10 +2623,14 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 		}
 	}
 
-	// Check authority-term pairing
+	// Check authority-term pairing (only for those correctly refining a subject)
 	authorityTargets := make(map[string]bool)
 	termTargets := make(map[string]bool)
 	for _, mr := range pkg.MetaRefines {
+		target := resolveRefines(mr.Refines)
+		if target != "subject" {
+			continue // Only check pairing for subject-refining metas
+		}
 		if mr.Property == "authority" {
 			authorityTargets[mr.Refines] = true
 		}
@@ -2577,13 +2642,13 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 	for target := range authorityTargets {
 		if !termTargets[target] {
 			r.Add(report.Error, "RSC-005",
-				fmt.Sprintf("A term property must be associated with the authority property"))
+				"A term property must be associated with the authority property")
 		}
 	}
 	for target := range termTargets {
 		if !authorityTargets[target] {
 			r.Add(report.Error, "RSC-005",
-				fmt.Sprintf("An authority property must be associated with the term property"))
+				"An authority property must be associated with the term property")
 		}
 	}
 }
