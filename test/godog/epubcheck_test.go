@@ -274,7 +274,11 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			return godog.ErrPending
+			rpt, err := validate.ValidateFile(path)
+			if err != nil {
+				return fmt.Errorf("single-file validation failed: %w", err)
+			}
+			s.result = rpt
 		default:
 			rpt, err := validate.Validate(path)
 			if err != nil {
@@ -298,7 +302,11 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			return godog.ErrPending
+			rpt, err := validate.ValidateFile(path)
+			if err != nil {
+				return fmt.Errorf("single-file validation failed: %w", err)
+			}
+			s.result = rpt
 		default:
 			// Full EPUB (directory or .epub)
 			rpt, valErr := validate.Validate(path)
