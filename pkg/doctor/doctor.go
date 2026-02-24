@@ -73,8 +73,8 @@ func Repair(inputPath, outputPath string) (*Result, error) {
 		return nil, fmt.Errorf("validating: %w", err)
 	}
 
-	// If already valid, nothing to do
-	if beforeReport.IsValid() && beforeReport.WarningCount() == 0 {
+	// If already valid with no warnings or usage notes, nothing to do
+	if beforeReport.IsValid() && beforeReport.WarningCount() == 0 && beforeReport.UsageCount() == 0 {
 		ep.Close()
 		return &Result{
 			BeforeReport: beforeReport,

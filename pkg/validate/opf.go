@@ -179,7 +179,34 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// OPF-096: non-linear spine items must be reachable
 	checkSpineNonLinearReachable(ep, r)
 
+	// OPF-090: manifest items with non-preferred but valid core media types
+	checkNonPreferredMediaTypes(pkg, r)
+
 	return false
+}
+
+// nonPreferredMediaTypes maps deprecated-but-valid core media types to
+// their preferred equivalents. EPUB 3 prefers font/ttf, font/otf, etc.
+var nonPreferredMediaTypes = map[string]string{
+	"application/font-sfnt":     "font/ttf or font/otf",
+	"application/x-font-ttf":    "font/ttf",
+	"application/vnd.ms-opentype": "font/otf",
+	"application/font-woff":     "font/woff",
+	"application/font-woff2":    "font/woff2",
+	"application/ecmascript":    "application/javascript",
+	"text/javascript":            "application/javascript",
+	"application/x-javascript":  "application/javascript",
+}
+
+// OPF-090: usage for manifest items using non-preferred but valid core media types.
+func checkNonPreferredMediaTypes(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if preferred, ok := nonPreferredMediaTypes[item.MediaType]; ok {
+			r.Add(report.Usage, "OPF-090",
+				fmt.Sprintf("Manifest item '%s' uses a non-preferred media type '%s' (prefer %s)",
+					item.Href, item.MediaType, preferred))
+		}
+	}
 }
 
 // OPF-001
@@ -1264,11 +1291,31 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 		}
 	}
 
+	// Check whether any linear spine item has scripted content
+	hasScripted := false
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			continue
+		}
+		if item, ok := manifestByID[ref.IDRef]; ok {
+			if hasProperty(item.Properties, "scripted") {
+				hasScripted = true
+				break
+			}
+		}
+	}
+
 	// Report non-linear items that are not reachable
 	for _, item := range nonLinear {
 		if !reachable[item.path] {
-			r.Add(report.Error, "OPF-096",
-				fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
+			if hasScripted {
+				// OPF-096b: cannot verify reachability because scripted content may link dynamically
+				r.Add(report.Usage, "OPF-096b",
+					fmt.Sprintf("Non-linear spine item '%s' may be reachable via scripted content, but this cannot be verified statically", item.id))
+			} else {
+				r.Add(report.Error, "OPF-096",
+					fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
+			}
 		}
 	}
 }

@@ -157,6 +157,9 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			// Skip nav document from FXL viewport checks
 			if itemIsFXL && !hasProperty(item.Properties, "nav") {
 				checkFXLViewport(data, fullPath, r)
+			} else if !itemIsFXL && !hasProperty(item.Properties, "nav") {
+				// HTM-060b: viewport in reflowable content (usage note)
+				checkReflowViewport(data, fullPath, r)
 			}
 		}
 
@@ -1015,10 +1018,21 @@ func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item
 			location)
 	}
 	if hasProperty(item.Properties, "remote-resources") && !hasRemoteResources {
-		// OPF-018 in epubcheck for unnecessary remote-resources is a warning
-		r.AddWithLocation(report.Warning, "OPF-018",
-			"Property 'remote-resources' is declared in the manifest but is not needed",
-			location)
+		if hasProperty(item.Properties, "scripted") {
+			// OPF-018b: scripted content may access remote resources dynamically
+			r.AddWithLocation(report.Usage, "OPF-018b",
+				"Property 'remote-resources' is declared but could not be verified because the content document is scripted",
+				location)
+			// RSC-006b: suggest manually checking scripts for remote resource usage
+			r.AddWithLocation(report.Usage, "RSC-006b",
+				"Scripted content documents may access remote resources; scripts should be manually checked",
+				location)
+		} else {
+			// OPF-018: remote-resources declared but no remote resources found (warning)
+			r.AddWithLocation(report.Warning, "OPF-018",
+				"Property 'remote-resources' is declared in the manifest but is not needed",
+				location)
+		}
 	}
 }
 
@@ -1134,10 +1148,42 @@ func parseViewportDims(content string) []viewportDim {
 	return dims
 }
 
-// HTM-046/047/056/057/059: Fixed-layout XHTML viewport checks
+// HTM-060b: viewport meta tag in reflowable content (usage note)
+func checkReflowViewport(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "body" {
+			break
+		}
+		if se.Name.Local == "meta" {
+			var name string
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "name" {
+					name = attr.Value
+				}
+			}
+			if name == "viewport" {
+				r.AddWithLocation(report.Usage, "HTM-060b",
+					"Viewport metadata is only used for fixed-layout content documents; it will be ignored in reflowable content",
+					location)
+				return
+			}
+		}
+	}
+}
+
+// HTM-046/047/056/057/059/060a: Fixed-layout XHTML viewport checks
 func checkFXLViewport(data []byte, location string, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
-	hasViewport := false
+	viewportCount := 0
 	viewportContent := ""
 
 	for {
@@ -1161,8 +1207,15 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 				}
 			}
 			if name == "viewport" {
-				hasViewport = true
-				viewportContent = content
+				viewportCount++
+				if viewportCount == 1 {
+					viewportContent = content
+				} else {
+					// HTM-060a: additional viewport meta tags are ignored (usage)
+					r.AddWithLocation(report.Usage, "HTM-060a",
+						"Fixed-layout documents must have only one viewport declaration; additional viewport meta elements are ignored",
+						location)
+				}
 			}
 		}
 
@@ -1172,7 +1225,7 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 		}
 	}
 
-	if !hasViewport {
+	if viewportCount == 0 {
 		r.AddWithLocation(report.Error, "HTM-046",
 			"Fixed-layout content document has no viewport meta element",
 			location)

@@ -710,7 +710,7 @@ func fixFilesNotInManifest(files map[string][]byte, ep *epub.EPUB) []Fix {
 
 		insertions = append(insertions, fmt.Sprintf(`    <item id="%s" href="%s" media-type="%s"/>`, id, href, mediaType))
 		fixes = append(fixes, Fix{
-			CheckID:     "RSC-002w",
+			CheckID:     "OPF-003",
 			Description: fmt.Sprintf("Added '%s' to manifest (id='%s', media-type='%s')", name, id, mediaType),
 			File:        ep.RootfilePath,
 		})

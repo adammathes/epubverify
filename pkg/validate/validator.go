@@ -125,7 +125,6 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 // epubcheck 5.3.0 does not. In non-Strict mode these are downgraded
 // from WARNING to INFO so they don't affect warning_count.
 var divergenceChecks = map[string]bool{
-	"RSC-002w": true, // file in container not in manifest (our custom warning)
 	"HTM-003":  true, // empty href attribute
 	"HTM-009":  true, // base element
 	"HTM-021":  true, // position:absolute in inline style

@@ -90,6 +90,17 @@ func (r *Report) WarningCount() int {
 	return n
 }
 
+// UsageCount returns the number of USAGE messages.
+func (r *Report) UsageCount() int {
+	n := 0
+	for _, m := range r.Messages {
+		if m.Severity == Usage {
+			n++
+		}
+	}
+	return n
+}
+
 // IsValid returns true if there are no FATAL or ERROR messages.
 func (r *Report) IsValid() bool {
 	return r.FatalCount() == 0 && r.ErrorCount() == 0

@@ -89,6 +89,9 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	// RSC-005: NCX pageTarget type attribute must be valid
 	checkNCXPageTargetType(data, r)
 
+	// NCX-006: NCX text labels must not be empty (usage)
+	checkNCXEmptyTextLabels(data, r)
+
 	// RSC-010: NCX content src must point to an OPS document (not a foreign resource)
 	checkNCXLinkToOPS(ep, data, ncxFullPath, r)
 
@@ -805,5 +808,50 @@ func checkLegacyNCXForAll(ep *epub.EPUB, r *report.Report) {
 	}
 	// RSC-012: NCX fragment identifiers must exist in target documents
 	checkNCXFragmentIdentifiers(ep, data, ncxFullPath, r)
+}
+
+// NCX-006: NCX text labels (docTitle/navLabel) must not be empty (usage)
+func checkNCXEmptyTextLabels(data []byte, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inTextLabel := false // inside docTitle or navLabel
+	inText := false
+	textHasContent := false
+
+	for {
+		tok, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			local := t.Name.Local
+			if local == "docTitle" || local == "navLabel" {
+				inTextLabel = true
+			}
+			if inTextLabel && local == "text" {
+				inText = true
+				textHasContent = false
+			}
+		case xml.EndElement:
+			local := t.Name.Local
+			if local == "text" && inText {
+				if !textHasContent {
+					r.Add(report.Usage, "NCX-006", "NCX text label is empty")
+				}
+				inText = false
+			}
+			if local == "docTitle" || local == "navLabel" {
+				inTextLabel = false
+				inText = false
+			}
+		case xml.CharData:
+			if inText && strings.TrimSpace(string(t)) != "" {
+				textHasContent = true
+			}
+		}
+	}
 }
 

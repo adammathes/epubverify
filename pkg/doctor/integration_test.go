@@ -293,7 +293,7 @@ func TestDoctorIntegrationTier2Problems(t *testing.T) {
 		"OPF-036": false, // bad date format
 		"HTM-003": false, // empty href
 		"HTM-004": false, // obsolete elements
-		"RSC-002w": false, // file not in manifest
+		"OPF-003": false, // file not in manifest
 	}
 	for _, fix := range result.Fixes {
 		if _, ok := expectedFixes[fix.CheckID]; ok {
