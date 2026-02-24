@@ -238,10 +238,7 @@ var rsc005Mapping = map[string]func(string) string{
 		return msg // pass through for RSC-005 schema validation
 	},
 	"HTM-009": func(msg string) string {
-		if strings.Contains(msg, "Invalid DOCTYPE") {
-			return msg
-		}
-		return "" // don't remap base element warnings
+		return "" // don't remap HTM-009 (base element warnings or DOCTYPE)
 	},
 }
 

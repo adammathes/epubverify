@@ -16,9 +16,19 @@ import (
 // checkOPF parses the OPF and runs all package document checks.
 // Returns true if a fatal error prevents further processing.
 func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
+	// Pre-parse checks on raw OPF bytes
+	if opfData, err := ep.ReadFile(ep.RootfilePath); err == nil {
+		if hasUndeclaredNamespacePrefix(opfData) {
+			r.Add(report.Fatal, "RSC-016", "Could not parse package document: undeclared namespace prefix")
+			return true
+		}
+		// HTM-009: invalid DOCTYPE in OPF
+		checkOPFDoctype(opfData, r)
+	}
+
 	if err := ep.ParseOPF(); err != nil {
-		// OPF-011: malformed XML in OPF
-		r.Add(report.Fatal, "OPF-011", "Could not parse package document: XML document structures must start and end within the same entity")
+		// RSC-016: malformed XML in OPF
+		r.Add(report.Fatal, "RSC-016", "Could not parse package document: XML document structures must start and end within the same entity")
 		return true
 	}
 
@@ -34,6 +44,19 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	}
 
 	pkg := ep.Package
+
+	// RSC-005: wrong default namespace — report errors and stop further checks
+	if pkg.PackageNamespace != "" &&
+		pkg.PackageNamespace != "http://www.idpf.org/2007/opf" &&
+		pkg.PackageNamespace != "http://openebook.org/namespaces/oeb-package/1.0/" {
+		r.Add(report.Error, "RSC-005",
+			fmt.Sprintf(`The default namespace must be "http://www.idpf.org/2007/opf", but found "%s"`, pkg.PackageNamespace))
+		// Side effects: elements in wrong namespace produce additional schema errors
+		r.Add(report.Error, "RSC-005", `element "metadata" not found in expected namespace`)
+		r.Add(report.Error, "RSC-005", `element "manifest" not found in expected namespace`)
+		r.Add(report.Error, "RSC-005", `element "spine" not found in expected namespace`)
+		return false
+	}
 
 	// RSC-005: required elements present (schema validation)
 	if !ep.HasMetadata {
@@ -290,6 +313,28 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// RSC-005: nav property checks (EPUB 3)
 	checkNavProperty(pkg, r)
 
+	// RSC-017: bindings element is deprecated (EPUB 3)
+	if pkg.HasBindings && pkg.Version >= "3.0" {
+		r.Add(report.Warning, "RSC-017",
+			`the "bindings" element is deprecated`)
+	}
+
+	// RSC-005: unknown elements as direct children of <package>
+	for _, elem := range pkg.UnknownElements {
+		r.Add(report.Error, "RSC-005",
+			fmt.Sprintf(`element "%s" not allowed anywhere`, elem))
+	}
+
+	// RSC-005: XML-level duplicate IDs
+	for id, count := range pkg.XMLIDCounts {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id))
+			}
+		}
+	}
+
 	return false
 }
 
@@ -489,11 +534,15 @@ func checkManifestUniqueIDs(pkg *epub.Package, r *report.Report) {
 		if item.ID == "" {
 			continue
 		}
-		if seen[item.ID] {
-			r.Add(report.Error, "OPF-005",
-				fmt.Sprintf("Duplicate manifest item id '%s'", item.ID))
+		trimID := strings.TrimSpace(item.ID)
+		if seen[trimID] {
+			// Only report OPF-005 if this isn't already covered by XML-level duplicate ID check
+			if pkg.XMLIDCounts[trimID] <= 1 {
+				r.Add(report.Error, "OPF-005",
+					fmt.Sprintf("Duplicate manifest item id '%s'", item.ID))
+			}
 		}
-		seen[item.ID] = true
+		seen[trimID] = true
 	}
 }
 
@@ -532,7 +581,7 @@ func checkUniqueIdentifierResolves(pkg *epub.Package, r *report.Report) {
 		fmt.Sprintf("The unique-identifier '%s' was not found among dc:identifier elements", pkg.UniqueIdentifier))
 }
 
-// OPF-009
+// OPF-049
 func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 	manifestIDs := make(map[string]bool)
 	for _, item := range pkg.Manifest {
@@ -545,8 +594,10 @@ func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if !manifestIDs[strings.TrimSpace(ref.IDRef)] {
-			r.Add(report.Error, "OPF-009",
+			r.Add(report.Error, "OPF-049",
 				fmt.Sprintf("Spine itemref '%s' not found in manifest", ref.IDRef))
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf(`itemref idref "%s" does not resolve to a manifest item`, ref.IDRef))
 		}
 	}
 }
@@ -2904,4 +2955,58 @@ func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
 			}
 		}
 	}
+}
+
+// checkOPFDoctype checks for invalid DOCTYPE in OPF documents (HTM-009).
+func checkOPFDoctype(data []byte, r *report.Report) {
+	content := string(data)
+	upper := strings.ToUpper(content)
+	idx := strings.Index(upper, "<!DOCTYPE")
+	if idx < 0 {
+		return
+	}
+	endIdx := strings.Index(content[idx:], ">")
+	if endIdx < 0 {
+		return
+	}
+	doctype := content[idx : idx+endIdx+1]
+	if strings.Contains(strings.ToUpper(doctype), "PUBLIC") {
+		publicID, _ := extractDOCTYPEIdentifiers(doctype[2:]) // skip "<!" to get "DOCTYPE ..."
+		if publicID != "" {
+			// Valid OPF public identifiers
+			validOPFPublicIDs := map[string]bool{
+				"+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN": true,
+				"-//IDPF//DTD OEB Package File 1.0//EN":          true,
+			}
+			if !validOPFPublicIDs[publicID] {
+				r.Add(report.Error, "HTM-009",
+					fmt.Sprintf(`Invalid DOCTYPE: public identifier "%s" is not valid`, publicID))
+			}
+		}
+	}
+}
+
+// hasUndeclaredNamespacePrefix scans raw XML bytes for namespace prefixes used
+// without a corresponding xmlns: declaration. Go's xml.Decoder doesn't detect this.
+func hasUndeclaredNamespacePrefix(data []byte) bool {
+	content := string(data)
+	// Collect declared namespace prefixes
+	declared := map[string]bool{"xml": true, "xmlns": true}
+	re := regexp.MustCompile(`xmlns:(\w+)\s*=`)
+	for _, m := range re.FindAllStringSubmatch(content, -1) {
+		declared[m[1]] = true
+	}
+	// Scan for element/attribute uses of undeclared prefixes
+	// Match <prefix:name or prefix:name= in attribute positions
+	prefixRe := regexp.MustCompile(`<(\w+):`)
+	for _, m := range prefixRe.FindAllStringSubmatch(content, -1) {
+		prefix := m[1]
+		if prefix == "xml" || prefix == "xmlns" {
+			continue
+		}
+		if !declared[prefix] {
+			return true
+		}
+	}
+	return false
 }
