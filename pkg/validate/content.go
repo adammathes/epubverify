@@ -170,6 +170,8 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// Skip nav document - its links are checked by NAV-003/006/007
 		if !isNav {
 			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
+			// RSC-014: hyperlinks to SVG symbol elements are not allowed
+			checkSVGSymbolLinks(data, fullPath, r)
 		}
 
 		// HTM-016: unique IDs within content document
@@ -1462,6 +1464,20 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 			}
 		}
 
+		// RSC-015: SVG <use> element must reference a document fragment
+		if se.Name.Local == "use" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if href != "" && !strings.Contains(href, "#") && !isRemoteURL(href) {
+						r.AddWithLocation(report.Error, "RSC-015",
+							fmt.Sprintf("SVG 'use' element must reference a fragment identifier: '%s'", href),
+							location)
+					}
+				}
+			}
+		}
+
 		// RSC-006: Remote stylesheet in SVG inline <style> @import
 		if se.Name.Local == "style" {
 			inner, _ := decoder.Token()
@@ -1473,6 +1489,62 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 						r.AddWithLocation(report.Error, "RSC-006",
 							fmt.Sprintf("Remote resource reference is not allowed: '%s'", m[1]),
 							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkSVGSymbolLinks checks for hyperlinks to SVG symbol elements.
+// RSC-014: linking to a symbol is an incompatible resource type.
+func checkSVGSymbolLinks(data []byte, location string, r *report.Report) {
+	// First pass: collect all symbol element IDs
+	symbolIDs := make(map[string]bool)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "symbol" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "id" && attr.Value != "" {
+					symbolIDs[attr.Value] = true
+				}
+			}
+		}
+	}
+	if len(symbolIDs) == 0 {
+		return
+	}
+
+	// Second pass: check <a href="#id"> against symbol IDs
+	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "a" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if strings.HasPrefix(href, "#") {
+						frag := href[1:]
+						if symbolIDs[frag] {
+							r.AddWithLocation(report.Error, "RSC-014",
+								fmt.Sprintf("Hyperlink to SVG 'symbol' element is not allowed: '%s'", href),
+								location)
+						}
 					}
 				}
 			}
@@ -1542,6 +1614,15 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "src":
+					// RSC-009: fragment identifier on non-SVG image reference
+					if idx := strings.Index(attr.Value, "#"); idx >= 0 {
+						base := attr.Value[:idx]
+						if !strings.HasSuffix(strings.ToLower(base), ".svg") {
+							r.AddWithLocation(report.Warning, "RSC-009",
+								fmt.Sprintf("Fragment identifier not allowed on non-SVG image reference: '%s'", attr.Value),
+								fullPath)
+						}
+					}
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
 				case "srcset":
 					// RSC-008: srcset resources must be declared in the manifest
@@ -1550,7 +1631,24 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 			}
 		}
 
-		// RSC-007: Check <iframe src="...">, <embed src="...">, <object data="...">
+		// RSC-009: SVG <image> with fragment on non-SVG resource
+		if se.Name.Local == "image" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" {
+					href := attr.Value
+					if idx := strings.Index(href, "#"); idx >= 0 {
+						base := href[:idx]
+						if !strings.HasSuffix(strings.ToLower(base), ".svg") {
+							r.AddWithLocation(report.Warning, "RSC-009",
+								fmt.Sprintf("Fragment identifier not allowed on non-SVG image reference: '%s'", href),
+								fullPath)
+						}
+					}
+				}
+			}
+		}
+
+		// RSC-007: MathML altimg not found; <iframe src="...">, <embed src="...">, <object data="...">
 		if se.Name.Local == "iframe" || se.Name.Local == "embed" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "src" {
@@ -1561,6 +1659,15 @@ func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref strin
 		if se.Name.Local == "object" {
 			for _, attr := range se.Attr {
 				if attr.Name.Local == "data" {
+					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
+				}
+			}
+		}
+
+		// RSC-007: MathML <math altimg="..."> must reference an existing resource
+		if se.Name.Local == "math" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "altimg" && attr.Value != "" {
 					checkResourceRef(ep, attr.Value, itemDir, fullPath, manifestPaths, r)
 				}
 			}

@@ -388,7 +388,19 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 }
 
 // MED-007: audio src must exist in container
+// MED-005: audio clip must be a Core Media Type
 func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location string, r *report.Report) {
+	// Build manifest lookup: resolved path → media type
+	manifestByPath := make(map[string]string)
+	if ep.Package != nil {
+		for _, item := range ep.Package.Manifest {
+			if item.Href != "\x00MISSING" {
+				fp := ep.ResolveHref(item.Href)
+				manifestByPath[fp] = item.MediaType
+			}
+		}
+	}
+
 	for _, attr := range se.Attr {
 		if attr.Name.Local == "src" && attr.Value != "" {
 			u, err := url.Parse(attr.Value)
@@ -400,6 +412,13 @@ func checkSMILAudio(ep *epub.EPUB, se xml.StartElement, smilDir string, location
 				r.AddWithLocation(report.Error, "MED-007",
 					fmt.Sprintf("Referenced resource '%s' could not be found in the container", attr.Value),
 					location)
+			} else if mt, ok := manifestByPath[target]; ok {
+				// MED-005: audio clip must be a Core Media Type
+				if !coreMediaTypes[mt] {
+					r.AddWithLocation(report.Error, "MED-005",
+						fmt.Sprintf("Audio clip '%s' is not a Core Media Type (found '%s')", attr.Value, mt),
+						location)
+				}
 			}
 		}
 		// MED-010: clipBegin/clipEnd must be valid SMIL clock values
