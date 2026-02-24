@@ -86,6 +86,12 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// PKG-010: warn about spaces in file names
 	checkFilenameSpaces(ep, r)
 
+	// PKG-011: filenames must not end with a full stop
+	checkFilenameTrailingDot(ep, r)
+
+	// PKG-012: usage note for non-ASCII characters in file names
+	checkFilenameNonASCII(ep, r)
+
 	// PKG-014: warn about empty directories
 	checkEmptyDirectories(ep, r)
 
@@ -581,35 +587,109 @@ func checkContainerVersion(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// pkg009ForbiddenChar describes a forbidden character and its human-readable label
-type pkg009ForbiddenChar struct {
-	codepoint rune
-	label     string
+// isFilenameSpaceChar returns true if the character is a space character per the EPUB spec.
+// Space characters get PKG-010 (warning) rather than PKG-009 (error).
+func isFilenameSpaceChar(c rune) bool {
+	switch c {
+	case 0x0009, // TAB
+		0x000A, // LF
+		0x000C, // FF
+		0x000D, // CR
+		0x0020, // SPACE
+		0x2009: // THIN SPACE
+		return true
+	}
+	return false
 }
 
 // formatCodePoint formats a rune for PKG-009 error messages: "U+XXXX (desc)"
 func formatCodePoint(c rune) string {
 	switch {
-	case c == '"':			return "U+0022 (\")"
-	case c == '*':			return "U+002A (*)"
-	case c == ':':			return "U+003A (:)"
-	case c == '<':			return "U+003C (<)"
-	case c == '>':			return "U+003E (>)"
-	case c == '?':			return "U+003F (?)"
-	case c == '\\':			return "U+005C (\\\\)"
-	case c == '|':			return "U+007C (\\|)"
-	case c == 0x7F:			return "U+007F (CONTROL)"
-	case c == 0xFFFD:		return "U+FFFD REPLACEMENT CHARACTER (SPECIALS)"
-	case c >= 0xE000 && c <= 0xF8FF: return fmt.Sprintf("U+%04X (PRIVATE USE)", c)
-	case c >= 0xF0000 && c <= 0xFFFFF: return fmt.Sprintf("U+%05X (PRIVATE USE)", c)
-	case c >= 0x100000 && c <= 0x10FFFF: return fmt.Sprintf("U+%06X (PRIVATE USE)", c)
-	case c >= 0xFDD0 && c <= 0xFDEF: return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
-	case c == 0xFFFE || c == 0xFFFF: return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
-	case (c & 0xFFFF) == 0xFFFE || (c & 0xFFFF) == 0xFFFF: return fmt.Sprintf("U+%X (NON CHARACTER)", c)
-	case c == 0xE0001: return "U+E0001 LANGUAGE TAG (DEPRECATED)"
-	case c < 0x20: return fmt.Sprintf("U+%04X (CONTROL)", c)
-	default: return fmt.Sprintf("U+%04X (%c)", c, c)
+	case c == '"':
+		return "U+0022 (\")"
+	case c == '*':
+		return "U+002A (*)"
+	case c == ':':
+		return "U+003A (:)"
+	case c == '<':
+		return "U+003C (<)"
+	case c == '>':
+		return "U+003E (>)"
+	case c == '?':
+		return "U+003F (?)"
+	case c == '\\':
+		return "U+005C (\\)"
+	case c == '|':
+		return "U+007C (|)"
+	case c == 0x7F:
+		return "U+007F (CONTROL)"
+	case c >= 0x80 && c <= 0x9F:
+		return fmt.Sprintf("U+%04X (CONTROL)", c)
+	case c == 0xFFFD:
+		return "U+FFFD REPLACEMENT CHARACTER (SPECIALS)"
+	case c >= 0xE000 && c <= 0xF8FF:
+		return fmt.Sprintf("U+%04X (PRIVATE USE)", c)
+	case c >= 0xF0000 && c <= 0xFFFFF:
+		return fmt.Sprintf("U+%05X (PRIVATE USE)", c)
+	case c >= 0x100000 && c <= 0x10FFFF:
+		return fmt.Sprintf("U+%06X (PRIVATE USE)", c)
+	case c >= 0xFDD0 && c <= 0xFDEF:
+		return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
+	case c == 0xFFFE || c == 0xFFFF:
+		return fmt.Sprintf("U+%04X (NON CHARACTER)", c)
+	case (c&0xFFFF) == 0xFFFE || (c&0xFFFF) == 0xFFFF:
+		return fmt.Sprintf("U+%X (NON CHARACTER)", c)
+	case c == 0xE0001:
+		return "U+E0001 LANGUAGE TAG (DEPRECATED)"
+	case c < 0x20:
+		return fmt.Sprintf("U+%04X (CONTROL)", c)
+	default:
+		return fmt.Sprintf("U+%04X (%c)", c, c)
 	}
+}
+
+// ValidateFilenameString validates a single filename string (without a full EPUB).
+// Used by the filename-checker step definitions. Checks PKG-009, PKG-010, PKG-011.
+func ValidateFilenameString(name string, epub2 bool) *report.Report {
+	r := report.NewReport()
+
+	// PKG-010: warn about space characters in filenames
+	for _, c := range name {
+		if isFilenameSpaceChar(c) {
+			r.Add(report.Warning, "PKG-010",
+				fmt.Sprintf("Filename contains spaces, which is discouraged: '%s'", name))
+			break
+		}
+	}
+
+	// PKG-009: forbidden characters (skip space chars — they get PKG-010 instead)
+	seen := make(map[rune]bool)
+	var forbidden []rune
+	for _, c := range name {
+		if isFilenameSpaceChar(c) {
+			continue
+		}
+		if isForbiddenFilenameChar(c, epub2) && !seen[c] {
+			seen[c] = true
+			forbidden = append(forbidden, c)
+		}
+	}
+	if len(forbidden) > 0 {
+		var parts []string
+		for _, c := range forbidden {
+			parts = append(parts, formatCodePoint(c))
+		}
+		r.Add(report.Error, "PKG-009",
+			fmt.Sprintf("File name contains characters forbidden in OCF file names: %s.", strings.Join(parts, ", ")))
+	}
+
+	// PKG-011: filename must not end with a full stop
+	if strings.HasSuffix(name, ".") {
+		r.Add(report.Error, "PKG-011",
+			fmt.Sprintf("File name must not end with a full stop: '%s'", name))
+	}
+
+	return r
 }
 
 // isForbiddenFilenameChar returns true if the character is forbidden in EPUB file names (PKG-009).
@@ -683,12 +763,41 @@ func checkFilenameValidChars(ep *epub.EPUB, r *report.Report) {
 	}
 }
 
-// PKG-010: warn about spaces in file names
+// PKG-010: warn about spaces in file names (any Unicode space character)
 func checkFilenameSpaces(ep *epub.EPUB, r *report.Report) {
 	for _, f := range ep.ZipFile.File {
-		if strings.Contains(f.Name, " ") && f.Name != "mimetype" {
-			r.Add(report.Warning, "PKG-010",
-				fmt.Sprintf("Filename contains spaces, which is discouraged: '%s'", f.Name))
+		if f.Name == "mimetype" {
+			continue
+		}
+		for _, c := range f.Name {
+			if isFilenameSpaceChar(c) {
+				r.Add(report.Warning, "PKG-010",
+					fmt.Sprintf("Filename contains spaces, which is discouraged: '%s'", f.Name))
+				break
+			}
+		}
+	}
+}
+
+// PKG-011: filenames must not end with a full stop (.)
+func checkFilenameTrailingDot(ep *epub.EPUB, r *report.Report) {
+	for _, f := range ep.ZipFile.File {
+		if strings.HasSuffix(f.Name, ".") {
+			r.Add(report.Error, "PKG-011",
+				fmt.Sprintf("File name must not end with a full stop: '%s'", f.Name))
+		}
+	}
+}
+
+// PKG-012: usage note for non-ASCII characters in file names
+func checkFilenameNonASCII(ep *epub.EPUB, r *report.Report) {
+	for _, f := range ep.ZipFile.File {
+		for _, c := range f.Name {
+			if c > 0x7F {
+				r.Add(report.Usage, "PKG-012",
+					fmt.Sprintf("Filename contains non-ASCII characters, which may cause interoperability issues: '%s'", f.Name))
+				break
+			}
 		}
 	}
 }

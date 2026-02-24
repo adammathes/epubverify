@@ -14,7 +14,7 @@ import (
 
 // checkOPF parses the OPF and runs all package document checks.
 // Returns true if a fatal error prevents further processing.
-func checkOPF(ep *epub.EPUB, r *report.Report) bool {
+func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	if err := ep.ParseOPF(); err != nil {
 		// OPF-011: malformed XML in OPF
 		r.Add(report.Fatal, "OPF-011", "Could not parse package document: XML document structures must start and end within the same entity")
@@ -102,13 +102,17 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	checkFallbackNoCycle(pkg, r)
 
 	// RSC-032: fallback chain must resolve to a core media type
-	checkFallbackChainResolves(pkg, r)
+	if !opts.SingleFileMode {
+		checkFallbackChainResolves(pkg, r)
+	}
 
 	// OPF-023: spine items must be content documents (or have fallback)
 	checkSpineContentDocs(pkg, r)
 
-	// OPF-024: media-type must match actual content
-	checkMediaTypeMatches(ep, r)
+	// OPF-024: media-type must match actual content (needs container files)
+	if !opts.SingleFileMode {
+		checkMediaTypeMatches(ep, r)
+	}
 
 	// OPF-025: cover-image must be on image media type
 	checkCoverImageIsImage(pkg, r)
@@ -170,16 +174,45 @@ func checkOPF(ep *epub.EPUB, r *report.Report) bool {
 	// RSC-005/OPF-063: page-map attribute on spine is not allowed
 	checkSpinePageMap(ep, pkg, r)
 
-	// OPF-099: OPF must not reference itself in manifest
-	checkManifestSelfReference(ep, pkg, r)
+	if !opts.SingleFileMode {
+		// OPF-099: OPF must not reference itself in manifest
+		checkManifestSelfReference(ep, pkg, r)
 
-	// OPF-093/RSC-007w: package metadata link checks
-	checkPackageMetadataLinks(ep, pkg, r)
+		// OPF-093/RSC-007w: package metadata link checks
+		checkPackageMetadataLinks(ep, pkg, r)
 
-	// OPF-096: non-linear spine items must be reachable
-	checkSpineNonLinearReachable(ep, r)
+		// OPF-096: non-linear spine items must be reachable
+		checkSpineNonLinearReachable(ep, r)
+	}
+
+	// OPF-090: manifest items with non-preferred but valid core media types
+	checkNonPreferredMediaTypes(pkg, r)
 
 	return false
+}
+
+// nonPreferredMediaTypes maps deprecated-but-valid core media types to
+// their preferred equivalents. EPUB 3 prefers font/ttf, font/otf, etc.
+var nonPreferredMediaTypes = map[string]string{
+	"application/font-sfnt":     "font/ttf or font/otf",
+	"application/x-font-ttf":    "font/ttf",
+	"application/vnd.ms-opentype": "font/otf",
+	"application/font-woff":     "font/woff",
+	"application/font-woff2":    "font/woff2",
+	"application/ecmascript":    "application/javascript",
+	"text/javascript":            "application/javascript",
+	"application/x-javascript":  "application/javascript",
+}
+
+// OPF-090: usage for manifest items using non-preferred but valid core media types.
+func checkNonPreferredMediaTypes(pkg *epub.Package, r *report.Report) {
+	for _, item := range pkg.Manifest {
+		if preferred, ok := nonPreferredMediaTypes[item.MediaType]; ok {
+			r.Add(report.Usage, "OPF-090",
+				fmt.Sprintf("Manifest item '%s' uses a non-preferred media type '%s' (prefer %s)",
+					item.Href, item.MediaType, preferred))
+		}
+	}
 }
 
 // OPF-001
@@ -1264,11 +1297,31 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 		}
 	}
 
+	// Check whether any linear spine item has scripted content
+	hasScripted := false
+	for _, ref := range pkg.Spine {
+		if strings.EqualFold(ref.Linear, "no") {
+			continue
+		}
+		if item, ok := manifestByID[ref.IDRef]; ok {
+			if hasProperty(item.Properties, "scripted") {
+				hasScripted = true
+				break
+			}
+		}
+	}
+
 	// Report non-linear items that are not reachable
 	for _, item := range nonLinear {
 		if !reachable[item.path] {
-			r.Add(report.Error, "OPF-096",
-				fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
+			if hasScripted {
+				// OPF-096b: cannot verify reachability because scripted content may link dynamically
+				r.Add(report.Usage, "OPF-096b",
+					fmt.Sprintf("Non-linear spine item '%s' may be reachable via scripted content, but this cannot be verified statically", item.id))
+			} else {
+				r.Add(report.Error, "OPF-096",
+					fmt.Sprintf("Non-linear spine item '%s' is not reachable from a linear content document or the navigation document", item.id))
+			}
 		}
 	}
 }

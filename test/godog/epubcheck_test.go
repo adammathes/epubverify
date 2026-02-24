@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -273,7 +274,11 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			return godog.ErrPending
+			rpt, err := validate.ValidateFile(path)
+			if err != nil {
+				return fmt.Errorf("single-file validation failed: %w", err)
+			}
+			s.result = rpt
 		default:
 			rpt, err := validate.Validate(path)
 			if err != nil {
@@ -297,7 +302,11 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			return godog.ErrPending
+			rpt, err := validate.ValidateFile(path)
+			if err != nil {
+				return fmt.Errorf("single-file validation failed: %w", err)
+			}
+			s.result = rpt
 		default:
 			// Full EPUB (directory or .epub)
 			rpt, valErr := validate.Validate(path)
@@ -514,14 +523,40 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	})
 
 	// ----------------------------------------------------------------
-	// Usage assertions (not yet implemented in the validator)
+	// Usage assertions
 	// ----------------------------------------------------------------
 
 	ctx.Step(`^[Uu]sage ([A-Z]+-\d+\w*) is reported (\d+) times?\b`, func(code string, n int) error {
-		return godog.ErrPending
+		if s.result == nil {
+			return fmt.Errorf("no validation result available")
+		}
+		count := 0
+		for i, m := range s.result.Messages {
+			if m.Severity == report.Usage && m.CheckID == code {
+				count++
+				s.lastMessage = m.Message
+				s.markAsserted(i)
+			}
+		}
+		if count != n {
+			return fmt.Errorf("expected usage %s reported %d times, got %d.\nGot messages:\n%s",
+				code, n, count, formatMessages(s.result.Messages))
+		}
+		return nil
 	})
 	ctx.Step(`^[Uu]sage ([A-Z]+-\d+\w*) is reported\b`, func(code string) error {
-		return godog.ErrPending
+		if s.result == nil {
+			return fmt.Errorf("no validation result available")
+		}
+		for i, m := range s.result.Messages {
+			if m.Severity == report.Usage && m.CheckID == code {
+				s.lastMessage = m.Message
+				s.markAsserted(i)
+				return nil
+			}
+		}
+		return fmt.Errorf("expected usage %s but it was not reported.\nGot messages:\n%s",
+			code, formatMessages(s.result.Messages))
 	})
 
 	// ----------------------------------------------------------------
@@ -625,15 +660,39 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	})
 
 	// ----------------------------------------------------------------
-	// Pending/unsupported steps
+	// Filename checker steps
 	// ----------------------------------------------------------------
 
 	ctx.Step(`^checking file name '([^']*)'$`, func(name string) error {
-		return godog.ErrPending
+		s.result = nil
+		s.lastMessage = ""
+		s.assertedIndices = nil
+		epub2 := s.epubVersion == "2"
+		s.result = validate.ValidateFilenameString(name, epub2)
+		return nil
 	})
 	ctx.Step(`^checking file name containing code point (.+)$`, func(cp string) error {
-		return godog.ErrPending
+		s.result = nil
+		s.lastMessage = ""
+		s.assertedIndices = nil
+		// Parse "U+XXXX" to a rune
+		cp = strings.TrimSpace(cp)
+		cp = strings.TrimPrefix(cp, "U+")
+		n, err := strconv.ParseInt(cp, 16, 32)
+		if err != nil {
+			return fmt.Errorf("invalid codepoint %q: %v", cp, err)
+		}
+		r := rune(n)
+		name := "prefix" + string(r) + "suffix"
+		epub2 := s.epubVersion == "2"
+		s.result = validate.ValidateFilenameString(name, epub2)
+		return nil
 	})
+
+	// ----------------------------------------------------------------
+	// Viewport parser steps (pending — viewport parser not yet implemented)
+	// ----------------------------------------------------------------
+
 	ctx.Step(`^parsing viewport (.+)$`, func(vp string) error {
 		return godog.ErrPending
 	})

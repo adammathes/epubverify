@@ -180,6 +180,16 @@ func checkMedia(ep *epub.EPUB, r *report.Report) {
 	if ep.Package.Version >= "3.0" {
 		checkMediaActiveClassCSS(ep, r)
 	}
+
+	// MED-015: overlay text elements must match DOM order of content document
+	if ep.Package.Version >= "3.0" {
+		checkMediaOverlayDOMOrder(ep, r)
+	}
+
+	// CSS-029: well-known media overlay class names in CSS but not declared in package
+	if ep.Package.Version >= "3.0" {
+		checkMediaOverlayUndeclaredClassNames(ep, r)
+	}
 }
 
 // OPF-029: verify image file type matches declared media type in manifest.
@@ -750,6 +760,166 @@ func checkMediaActiveClassCSS(ep *epub.EPUB, r *report.Report) {
 			r.AddWithLocation(report.Error, "CSS-030",
 				fmt.Sprintf("The 'media:active-class' property is defined but no CSS was found in content document '%s'", item.Href),
 				fullPath)
+		}
+	}
+}
+
+// collectIDsInOrder returns a slice of element IDs in DOM order from an XML document.
+func collectIDsInOrder(data []byte) []string {
+	var ids []string
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "id" && attr.Value != "" {
+					ids = append(ids, attr.Value)
+				}
+			}
+		}
+	}
+	return ids
+}
+
+// MED-015: text elements in the media overlay must follow the DOM order
+// of the corresponding content document.
+func checkMediaOverlayDOMOrder(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/smil+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		smilDir := path.Dir(fullPath)
+
+		// Collect text src references in order, grouped by content document path
+		type smilRef struct {
+			docPath  string
+			fragment string
+		}
+		var refs []smilRef
+
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok || se.Name.Local != "text" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && attr.Value != "" {
+					u, err := url.Parse(attr.Value)
+					if err != nil || u.Scheme != "" {
+						continue
+					}
+					docPath := resolvePath(smilDir, u.Path)
+					refs = append(refs, smilRef{docPath: docPath, fragment: u.Fragment})
+				}
+			}
+		}
+
+		// Group SMIL references by content document
+		type docInfo struct {
+			order []string // fragment IDs in SMIL reference order
+		}
+		docRefs := make(map[string]*docInfo)
+		var docOrder []string // preserve insertion order
+		for _, ref := range refs {
+			if ref.fragment == "" {
+				continue
+			}
+			if _, exists := docRefs[ref.docPath]; !exists {
+				docRefs[ref.docPath] = &docInfo{}
+				docOrder = append(docOrder, ref.docPath)
+			}
+			docRefs[ref.docPath].order = append(docRefs[ref.docPath].order, ref.fragment)
+		}
+
+		// For each content document, check if SMIL references follow DOM order
+		reported := false
+		for _, docPath := range docOrder {
+			if reported {
+				break
+			}
+			info := docRefs[docPath]
+			if len(info.order) < 2 {
+				continue
+			}
+			targetData, err := ep.ReadFile(docPath)
+			if err != nil {
+				continue
+			}
+			domIDs := collectIDsInOrder(targetData)
+			domPos := make(map[string]int, len(domIDs))
+			for i, id := range domIDs {
+				domPos[id] = i
+			}
+
+			// Check that SMIL reference order is non-decreasing in DOM order
+			prevPos := -1
+			for _, frag := range info.order {
+				pos, found := domPos[frag]
+				if !found {
+					// RSC-012 handles missing IDs; skip for order check
+					prevPos = -1
+					continue
+				}
+				if pos < prevPos {
+					r.AddWithLocation(report.Usage, "MED-015",
+						fmt.Sprintf("The text elements of media overlay '%s' are not in the same order as in the content document", item.Href),
+						fullPath)
+					reported = true
+					break
+				}
+				prevPos = pos
+			}
+		}
+	}
+}
+
+// wellKnownMediaOverlayClasses are the default EPUB 3 media overlay CSS class names.
+var wellKnownMediaOverlayClasses = []string{
+	"-epub-media-overlay-active",
+	"-epub-media-overlay-playing",
+}
+
+// CSS-029: well-known media overlay class names found in CSS but not declared in package.
+func checkMediaOverlayUndeclaredClassNames(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
+	// If the package declares active-class properties, those are intentionally used.
+	if pkg.HasMediaActiveClass {
+		return
+	}
+
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "text/css" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		cssText := string(data)
+		for _, className := range wellKnownMediaOverlayClasses {
+			// Look for .CLASS_NAME as a CSS class selector
+			selector := "." + className
+			if strings.Contains(cssText, selector) {
+				r.AddWithLocation(report.Usage, "CSS-029",
+					fmt.Sprintf("The CSS class name '%s' is a well-known media overlays class but is not declared in the package document", className),
+					fullPath)
+			}
 		}
 	}
 }

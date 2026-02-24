@@ -598,7 +598,7 @@ func TestDoctorFixesFileNotInManifest(t *testing.T) {
 
 	foundFix := false
 	for _, fix := range result.Fixes {
-		if fix.CheckID == "RSC-002w" {
+		if fix.CheckID == "OPF-003" {
 			foundFix = true
 			if !strings.Contains(fix.Description, "extra-style.css") {
 				t.Errorf("Expected fix to mention 'extra-style.css', got: %s", fix.Description)
@@ -607,7 +607,7 @@ func TestDoctorFixesFileNotInManifest(t *testing.T) {
 		}
 	}
 	if !foundFix {
-		t.Error("Expected RSC-002 fix for file not in manifest")
+		t.Error("Expected OPF-003 fix for file not in manifest")
 	}
 
 	// Verify the OPF now contains the extra file in manifest

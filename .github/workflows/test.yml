@@ -2,25 +2,45 @@ name: Tests
 
 on:
   push:
-    branches: [ main, claude/** ]
+    branches: [ main, claude/**, moreDogs* ]
   pull_request:
     branches: [ main ]
 
 jobs:
-  test:
+  unit-tests:
+    name: Unit tests (Go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        go-version: ['1.24']
+        go-version: ['1.24', '1.25']
 
     steps:
     - uses: actions/checkout@v4
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
 
     - name: Run unit tests
       run: go test -v ./pkg/...
+
+  godog-tests:
+    name: BDD tests (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        go-version: ['1.24', '1.25']
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Run godog BDD tests
+      run: go test -v ./test/godog/...
