@@ -205,13 +205,8 @@ func (ep *EPUB) ParseOPF() error {
 	}
 
 	// Build primary metas (non-refining meta elements)
-	// MetaRefines only contains metas WITH refines; derive primary from metas that aren't refining
-	refiningProps := make(map[string]bool) // track properties that appear as refining
-	for _, mr := range structInfo.metaRefines {
-		refiningProps[mr.Property+"|"+mr.Value] = true
-	}
 	for _, m := range structInfo.metas {
-		if !refiningProps[m.property+"|"+m.value] {
+		if m.refines == "" {
 			p.PrimaryMetas = append(p.PrimaryMetas, MetaPrimary{Property: m.property, Value: m.value})
 		}
 	}
@@ -228,6 +223,12 @@ func (ep *EPUB) ParseOPF() error {
 
 	// Parse guide (EPUB 2)
 	p.Guide = structInfo.guideRefs
+
+	// XML-level fields
+	p.HasBindings = structInfo.hasBindings
+	p.UnknownElements = structInfo.unknownElements
+	p.XMLIDCounts = structInfo.xmlIDCounts
+	p.PackageNamespace = structInfo.packageNamespace
 
 	ep.Package = p
 	return nil
@@ -260,11 +261,16 @@ type opfStructInfo struct {
 	metaEmptyProps           int      // count of meta elements with empty property attribute
 	metaListProps            []string // meta property attributes containing spaces
 	metaEmptyValues          int      // count of meta elements with empty text content
+	hasBindings              bool
+	unknownElements          []string
+	xmlIDCounts              map[string]int
+	packageNamespace         string
 }
 
 type metaInfo struct {
 	property string
 	value    string
+	refines  string
 }
 
 // scanOPFStructure does a raw XML scan of the OPF to detect structural elements.
@@ -272,6 +278,13 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	info := &opfStructInfo{
 		metaIDToProperty: make(map[string]string),
+		xmlIDCounts:      make(map[string]int),
+	}
+
+	depth := 0 // track nesting to detect direct children of <package>
+	knownPackageChildren := map[string]bool{
+		"metadata": true, "manifest": true, "spine": true, "guide": true,
+		"bindings": true, "collection": true,
 	}
 
 	for {
@@ -283,6 +296,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			return nil, err
 		}
 
+		switch tok.(type) {
+		case xml.EndElement:
+			depth--
+			continue
+		default:
+		}
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
@@ -295,8 +314,19 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			}
 		}
 
+		// Collect all id attributes for XML-level duplicate detection (with whitespace normalization)
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				normalized := strings.TrimSpace(attr.Value)
+				if normalized != "" {
+					info.xmlIDCounts[normalized]++
+				}
+			}
+		}
+
 		switch se.Name.Local {
 		case "package":
+			info.packageNamespace = se.Name.Space
 			// Detect OEBPS 1.2 namespace
 			if se.Name.Space == "http://openebook.org/namespaces/oeb-package/1.0/" {
 				info.isLegacyOEBPS12 = true
@@ -340,6 +370,8 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 		case "guide":
 			info.hasGuide = true
 			info.elementOrder = append(info.elementOrder, "guide")
+		case "bindings":
+			info.hasBindings = true
 		case "itemref":
 			var idref, props, linear string
 			for _, attr := range se.Attr {
@@ -401,7 +433,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				if val == "" {
 					info.metaEmptyValues++
 				}
-				info.metas = append(info.metas, metaInfo{property: prop, value: val})
+				info.metas = append(info.metas, metaInfo{property: prop, value: val, refines: refines})
 				if metaID != "" {
 					info.metaIDs = append(info.metaIDs, metaID)
 					info.metaIDToProperty[metaID] = prop
@@ -443,7 +475,13 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					Properties: linkProps,
 				})
 			}
+		default:
+			// Track unknown direct children of <package>
+			if depth == 1 && !knownPackageChildren[se.Name.Local] {
+				info.unknownElements = append(info.unknownElements, se.Name.Local)
+			}
 		}
+		depth++
 	}
 
 	return info, nil

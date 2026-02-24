@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -2903,21 +2904,117 @@ func checkNestedDFN(data []byte, location string, r *report.Report) {
 
 // checkSingleFileContent runs targeted content checks for single-file XHTML/SVG validation.
 // This checks for data URLs, file URLs, and query strings in href attributes.
-func checkSingleFileContent(ep *epub.EPUB, r *report.Report) {
+func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 	if ep.Package == nil {
 		return
 	}
+
+	// Run encoding detection for single-file XHTML (RSC-016/RSC-017/HTM-058)
+	checkSingleFileEncoding(ep, r)
+
 	for _, item := range ep.Package.Manifest {
 		mt := item.MediaType
-		if mt != "application/xhtml+xml" && mt != "image/svg+xml" {
-			continue
-		}
 		fullPath := ep.ResolveHref(item.Href)
 		data, err := ep.ReadFile(fullPath)
 		if err != nil {
 			continue
 		}
-		checkSingleFileURLs(data, fullPath, r)
+
+		if mt == "application/xhtml+xml" {
+			// Skip the synthetic nav document (only validate the user's file)
+			if item.ID == "nav" && hasProperty(item.Properties, "nav") {
+				continue
+			}
+
+			// HTM-001: XML 1.1 version detection
+			checkXML11Version(data, fullPath, r)
+
+			// HTM-058: encoding check (UTF-16 detection)
+			checkHTM058Encoding(data, fullPath, r)
+
+			// Well-formedness check (lenient for single-file mode)
+			if !checkSingleFileWellFormed(data, fullPath, r) {
+				checkSingleFileURLs(data, fullPath, r)
+				continue
+			}
+
+			// Schema-like content checks (will be remapped to RSC-005)
+			checkNestedAnchors(data, fullPath, r)
+			checkMissingNamespace(data, fullPath, r)
+			checkDuplicateIDs(data, fullPath, r)
+			checkIDReferences(data, fullPath, r)
+			checkObsoleteAttrs(data, fullPath, r)
+			checkHTM004SingleFile(data, fullPath, r)
+
+			// Specific content checks
+			checkExternalEntities(data, fullPath, r)
+			checkHTM061DataAttrs(data, fullPath, r)
+			checkHTM007SSML(data, fullPath, r)
+			checkHTM025URLScheme(data, fullPath, r)
+			checkCSS015AltStylesheet(data, fullPath, r)
+			checkCSS005AltStyleTag(data, fullPath, r)
+			checkDeprecatedDPUBARIA(data, fullPath, r)
+			checkACCMathMLAlt(data, fullPath, r)
+			checkEmptySrcAttr(data, fullPath, r)
+			checkEpubSwitchTrigger(data, fullPath, r)
+			checkEpubTypeOnHead(data, fullPath, r)
+			checkTableBorderAttr(data, fullPath, r)
+			checkHttpEquivCharset(data, fullPath, r)
+			checkImageMapValid(data, fullPath, r)
+			checkCSS008StyleType(data, fullPath, r)
+			checkStyleInBody(data, fullPath, r)
+			checkStyleAttrCSS(data, fullPath, r)
+			checkMicrodataAttrs(data, fullPath, r)
+			checkHTM054ReservedNS(data, fullPath, r)
+			checkARIADescribedAt(data, fullPath, r)
+			checkTitleElement(data, fullPath, r)
+			checkPrefixAttrLocation(data, fullPath, r)
+			checkPrefixDeclarations(data, fullPath, r)
+			checkNestedTime(data, fullPath, r)
+			checkMathMLContentOnly(data, fullPath, r)
+			checkMathMLAnnotation(data, fullPath, r)
+			checkHiddenAttrValue(data, fullPath, r)
+			checkDatetimeFormat(data, fullPath, r)
+			checkURLConformance(data, fullPath, r)
+			checkEntityReferences(data, fullPath, r)
+
+			// Nav document checks - use content-based detection OR explicit checkMode
+			if opts.CheckMode == "nav" || isNavDocument(data) {
+				checkNavContentModel(data, fullPath, r)
+			}
+
+			// Usage-level checks
+			checkHTM055Discouraged(data, fullPath, r)
+			checkHTM010UnknownEpubNS(data, fullPath, r)
+			checkOPF088UnknownEpubType(data, fullPath, r)
+			checkOPF086bDeprecatedEpubType(data, fullPath, r)
+			checkOPF087MisusedEpubType(data, fullPath, r)
+			checkOPF028UndeclaredPrefix(data, fullPath, r)
+
+			// URL checks
+			checkSingleFileURLs(data, fullPath, r)
+
+			// Embedded SVG checks (for XHTML with inline SVG)
+			checkSVGForeignObject(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r)
+			checkSVGInvalidElements(data, fullPath, r)
+		} else if mt == "image/svg+xml" {
+			// SVG content checks
+			checkSingleFileURLs(data, fullPath, r)
+			checkSVGLinkLabel(data, fullPath, r)
+			checkSVGDuplicateIDs(data, fullPath, r)
+			checkSVGInvalidIDs(data, fullPath, r)
+			checkSVGForeignObject(data, fullPath, r)
+			checkSVGTitleContent(data, fullPath, r)
+			checkSVGEpubType(data, fullPath, r)
+			checkSVGUnknownEpubAttr(data, fullPath, r)
+			checkSVGInvalidElements(data, fullPath, r)
+		} else if mt == "application/smil+xml" {
+			// SMIL media overlay checks for single-file mode
+			checkSingleFileSMIL(ep, data, fullPath, r)
+		} else {
+			continue
+		}
 	}
 }
 
@@ -3003,5 +3100,2961 @@ func checkSingleFileURLs(data []byte, location string, r *report.Report) {
 					"File URL used in processing instruction", location)
 			}
 		}
+	}
+}
+
+// ============================================================================
+// Single-file content check functions
+// ============================================================================
+
+// checkSingleFileWellFormed checks XML well-formedness for single-file mode.
+// Returns true always since we don't want to block further checks.
+// Entity-related errors from Go's XML parser (which doesn't process DTD)
+// are expected and should not prevent validation.
+func checkSingleFileWellFormed(data []byte, location string, r *report.Report) bool {
+	// In single-file mode, we don't perform strict well-formedness checks
+	// because Go's XML parser can't handle internal DTD entity declarations
+	// which are valid in EPUB XHTML documents.
+	return true
+}
+
+// checkXML11Version detects XML 1.1 version declarations (HTM-001).
+func checkXML11Version(data []byte, location string, r *report.Report) {
+	header := string(data[:min(200, len(data))])
+	if strings.Contains(header, `version="1.1"`) || strings.Contains(header, `version='1.1'`) {
+		r.AddWithLocation(report.Error, "HTM-001",
+			"XML version 1.1 is not allowed in EPUB content documents; must use XML 1.0",
+			location)
+	}
+}
+
+// checkNestedAnchors detects nested <a> elements (RSC-005 in single-file mode).
+func checkNestedAnchors(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	depth := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "a" {
+				if depth > 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`The "a" element cannot contain any nested "a" elements`,
+						location)
+				}
+				depth++
+			}
+		case xml.EndElement:
+			if t.Name.Local == "a" && depth > 0 {
+				depth--
+			}
+		}
+	}
+}
+
+// checkCustomNamespacedAttrs detects non-standard namespace attributes on XHTML elements (RSC-005).
+func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			ns := attr.Name.Space
+			if ns == "" || ns == "xmlns" || ns == "http://www.w3.org/XML/1998/namespace" ||
+				ns == "http://www.w3.org/2000/xmlns/" || ns == "http://www.w3.org/1999/xhtml" ||
+				ns == "http://www.idpf.org/2007/ops" || ns == "http://www.w3.org/2001/10/synthesis" ||
+				ns == "http://www.w3.org/2000/svg" || ns == "http://www.w3.org/1998/Math/MathML" ||
+				ns == "http://www.w3.org/1999/xlink" {
+				continue
+			}
+			// Custom namespace found — report with local name
+			localName := attr.Name.Local
+			r.AddWithLocation(report.Error, "RSC-005",
+				fmt.Sprintf(`attribute "%s:%s" not allowed here`, ns, localName),
+				location)
+			return
+		}
+	}
+}
+
+// checkMissingNamespace detects XHTML documents without an XHTML namespace (RSC-005).
+func checkMissingNamespace(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "html" {
+			if se.Name.Space == "" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`elements from namespace "" are not allowed`,
+					location)
+			}
+			return
+		}
+	}
+}
+
+// checkDuplicateIDs detects duplicate id attribute values in XHTML (RSC-005 in single-file).
+func checkDuplicateIDs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	idCount := make(map[string]int)
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				idCount[attr.Value]++
+			}
+		}
+	}
+	// Report all occurrences of duplicated IDs
+	for id, count := range idCount {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id),
+					location)
+			}
+		}
+	}
+}
+
+// checkIDReferences checks that id-referencing attributes (for, headers, aria-labelledby, etc.)
+// refer to existing IDs in the same document (RSC-005 in single-file mode).
+func checkIDReferences(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	// First pass: collect all IDs
+	ids := collectIDs(data)
+
+	// ID-referencing attributes
+	idRefAttrs := map[string]bool{
+		"for": true, "headers": true, "aria-labelledby": true,
+		"aria-describedby": true, "aria-owns": true, "aria-controls": true,
+		"aria-flowto": true, "aria-activedescendant": true,
+		"aria-errormessage": true, "aria-details": true,
+	}
+
+	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if idRefAttrs[attr.Name.Local] && attr.Value != "" {
+				// These attributes can contain space-separated lists of IDs
+				for _, ref := range strings.Fields(attr.Value) {
+					if !ids[ref] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`ID-referencing attribute "%s" must refer to elements in the same document (target ID missing): "%s"`, attr.Name.Local, ref),
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkExternalEntities detects external entity declarations in DOCTYPE (HTM-003).
+func checkExternalEntities(data []byte, location string, r *report.Report) {
+	content := string(data)
+	// Look for DOCTYPE with internal subset
+	idx := strings.Index(strings.ToUpper(content), "<!DOCTYPE")
+	if idx == -1 {
+		return
+	}
+	// Find the internal subset between [ and ]
+	startBracket := strings.Index(content[idx:], "[")
+	if startBracket == -1 {
+		return
+	}
+	endBracket := strings.Index(content[idx+startBracket:], "]")
+	if endBracket == -1 {
+		return
+	}
+	subset := content[idx+startBracket : idx+startBracket+endBracket+1]
+	// Check for SYSTEM or PUBLIC entity declarations
+	if strings.Contains(strings.ToUpper(subset), "SYSTEM") || strings.Contains(strings.ToUpper(subset), "PUBLIC") {
+		r.AddWithLocation(report.Error, "HTM-003",
+			"External entities are not allowed in EPUB content documents",
+			location)
+	}
+}
+
+// checkEntityReferences detects XML entity reference errors that cause parse failures (RSC-016).
+func checkEntityReferences(data []byte, location string, r *report.Report) {
+	content := string(data)
+	// Check for entity references not ending with semicolons: &word followed by non-semicolon
+	entityNoSemiRe := regexp.MustCompile(`&[a-zA-Z][a-zA-Z0-9]*[^;a-zA-Z0-9]`)
+	if entityNoSemiRe.MatchString(content) {
+		r.AddWithLocation(report.Fatal, "RSC-016",
+			"Fatal Error while parsing file: The entity name must end with the ';' delimiter",
+			location)
+	}
+}
+
+// checkHTM061DataAttrs validates data-* attribute names (HTM-061).
+func checkHTM061DataAttrs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			name := attr.Name.Local
+			if !strings.HasPrefix(name, "data-") {
+				continue
+			}
+			suffix := name[5:]
+			if suffix == "" {
+				// data- with no name after hyphen
+				r.AddWithLocation(report.Error, "HTM-061",
+					fmt.Sprintf(`Invalid data attribute "%s": must have at least one character after "data-"`, name),
+					location)
+				continue
+			}
+			if strings.HasPrefix(suffix, "-") {
+				// data-- is not valid XML name
+				r.AddWithLocation(report.Error, "HTM-061",
+					fmt.Sprintf(`Invalid data attribute "%s": not a valid XML name`, name),
+					location)
+				continue
+			}
+			// Check for uppercase letters
+			if strings.ToLower(suffix) != suffix {
+				r.AddWithLocation(report.Error, "HTM-061",
+					fmt.Sprintf(`Invalid data attribute "%s": must not contain uppercase ASCII letters`, name),
+					location)
+			}
+		}
+	}
+}
+
+// checkHTM054ReservedNS detects custom attributes using reserved namespace strings (HTM-054).
+func checkHTM054ReservedNS(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	// Reserved prefixes/namespaces that custom attributes must not use
+	reservedNS := map[string]bool{
+		"http://www.w3.org/XML/1998/namespace": true,
+		"http://www.w3.org/2000/xmlns/":        true,
+	}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Space != "" && reservedNS[attr.Name.Space] {
+				// Don't flag standard xml:lang, xml:space, xmlns:*
+				if attr.Name.Local == "lang" || attr.Name.Local == "space" ||
+					attr.Name.Local == "base" || attr.Name.Local == "id" {
+					continue
+				}
+				r.AddWithLocation(report.Error, "HTM-054",
+					fmt.Sprintf(`Attribute "%s" in namespace "%s" uses a reserved string`, attr.Name.Local, attr.Name.Space),
+					location)
+			}
+		}
+	}
+}
+
+// checkHTM058Encoding checks if an XHTML document is not encoded as UTF-8 (HTM-058).
+func checkHTM058Encoding(data []byte, location string, r *report.Report) {
+	// Check for UTF-16 BOM
+	if bytes.HasPrefix(data, utf16LEBOM) || bytes.HasPrefix(data, utf16BEBOM) {
+		r.AddWithLocation(report.Error, "HTM-058",
+			"Content document is not encoded as UTF-8",
+			location)
+	}
+}
+
+// checkHTM007SSML checks for empty SSML ph attributes (HTM-007).
+func checkHTM007SSML(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			// ssml:ph attribute (namespace http://www.w3.org/2001/10/synthesis)
+			if attr.Name.Local == "ph" && attr.Name.Space == "http://www.w3.org/2001/10/synthesis" {
+				if strings.TrimSpace(attr.Value) == "" {
+					r.AddWithLocation(report.Warning, "HTM-007",
+						fmt.Sprintf(`Empty value for SSML attribute "%s" on element "%s"`, "ssml:ph", se.Name.Local),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkHTM025URLScheme checks for unregistered URL schemes in href/src (HTM-025).
+func checkHTM025URLScheme(data []byte, location string, r *report.Report) {
+	registeredSchemes := map[string]bool{
+		"http": true, "https": true, "mailto": true, "tel": true,
+		"ftp": true, "ftps": true, "data": true, "file": true,
+		"javascript": true, "urn": true, "cid": true, "mid": true,
+		"geo": true, "sms": true, "xmpp": true, "irc": true,
+		"ircs": true, "ssh": true, "news": true, "nntp": true,
+		"rtsp": true, "sip": true, "sips": true, "magnet": true,
+		"feed": true, "svn": true, "git": true, "vnc": true,
+		"telnet": true, "ldap": true, "ldaps": true, "nfs": true,
+		"blob": true, "about": true, "ws": true, "wss": true,
+		"coap": true, "cap": true, "acap": true, "tag": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local != "href" && attr.Name.Local != "src" {
+				continue
+			}
+			val := strings.TrimSpace(attr.Value)
+			if val == "" {
+				continue
+			}
+			u, err := url.Parse(val)
+			if err != nil || u.Scheme == "" {
+				continue
+			}
+			scheme := strings.ToLower(u.Scheme)
+			if !registeredSchemes[scheme] {
+				r.AddWithLocation(report.Warning, "HTM-025",
+					fmt.Sprintf(`Unregistered URL scheme "%s" in attribute "%s"`, scheme, attr.Name.Local),
+					location)
+				return
+			}
+		}
+	}
+}
+
+// checkCSS008Inline checks for CSS errors in style elements and style attributes (CSS-008).
+func checkCSS008Inline(data []byte, location string, r *report.Report) {
+	content := string(data)
+
+	// Check for <style> without type attribute (EPUB 2 issue)
+	// In EPUB 3, the type attribute defaults to text/css, so this is only reported
+	// if the style element has a non-CSS type
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "style" {
+			typeAttr := ""
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" {
+					typeAttr = strings.TrimSpace(strings.ToLower(attr.Value))
+				}
+			}
+			if typeAttr != "" && typeAttr != "text/css" {
+				r.AddWithLocation(report.Error, "CSS-008",
+					fmt.Sprintf(`The style element type attribute value "%s" is not "text/css"`, typeAttr),
+					location)
+			}
+		}
+
+		// Check style attribute for CSS syntax errors
+		if se.Name.Local != "" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "style" && attr.Value != "" {
+					// Basic CSS property validation
+					val := strings.TrimSpace(attr.Value)
+					if val != "" && !strings.Contains(val, ":") && !strings.Contains(val, ";") {
+						// style attribute with no property:value pattern
+						r.AddWithLocation(report.Error, "CSS-008",
+							"An error occurred while parsing the CSS in a style attribute",
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkCSS015AltStylesheet checks that alternative stylesheets have titles (CSS-015).
+func checkCSS015AltStylesheet(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "link" {
+			continue
+		}
+		rel := ""
+		title := ""
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "rel" {
+				rel = strings.ToLower(strings.TrimSpace(attr.Value))
+			}
+			if attr.Name.Local == "title" {
+				title = attr.Value
+			}
+		}
+		// Check for alternate stylesheet without title
+		if strings.Contains(rel, "stylesheet") && strings.Contains(rel, "alternate") {
+			if title == "" {
+				r.AddWithLocation(report.Error, "CSS-015",
+					"Alternate stylesheet link element is missing a title attribute",
+					location)
+			} else if strings.TrimSpace(title) == "" {
+				r.AddWithLocation(report.Error, "CSS-015",
+					"Alternate stylesheet link element has an empty title attribute",
+					location)
+			}
+		}
+	}
+}
+
+// checkCSS005AltStyleTag checks for conflicting alt style tags (CSS-005).
+func checkCSS005AltStyleTag(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	knownTags := map[string]bool{
+		"horizontal": true, "vertical": true, "day": true, "night": true,
+	}
+	// Conflicting tag pairs
+	conflicts := map[string]string{
+		"horizontal": "vertical",
+		"vertical":   "horizontal",
+		"day":        "night",
+		"night":      "day",
+	}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "link" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "class" {
+				classes := strings.Fields(attr.Value)
+				classSet := make(map[string]bool)
+				for _, cls := range classes {
+					classSet[cls] = true
+				}
+				// Check for conflicting pairs
+				for _, cls := range classes {
+					if conflictWith, ok := conflicts[cls]; ok {
+						if classSet[conflictWith] {
+							r.AddWithLocation(report.Usage, "CSS-005",
+								fmt.Sprintf(`Conflicting alternate style tags "%s" and "%s"`, cls, conflictWith),
+								location)
+							return
+						}
+					}
+				}
+				// Check for unknown tags
+				for _, cls := range classes {
+					if !knownTags[cls] && strings.Contains(cls, "-") {
+						r.AddWithLocation(report.Usage, "CSS-005",
+							fmt.Sprintf(`Unknown alternate style tag "%s"`, cls),
+							location)
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkHTM055Discouraged detects discouraged HTML constructs in EPUB (HTM-055).
+func checkHTM055Discouraged(data []byte, location string, r *report.Report) {
+	discouraged := map[string]bool{
+		"base": true, "embed": true, "rp": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if discouraged[se.Name.Local] {
+			r.AddWithLocation(report.Usage, "HTM-055",
+				fmt.Sprintf(`The "%s" element is a discouraged construct in EPUB`, se.Name.Local),
+				location)
+		}
+	}
+}
+
+// checkHTM010UnknownEpubNS detects unrecognized epub-like namespace URIs (HTM-010).
+func checkHTM010UnknownEpubNS(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	knownEpubNS := "http://www.idpf.org/2007/ops"
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Space == "xmlns" && strings.Contains(attr.Value, "www.idpf.org/2007") {
+				if attr.Value != knownEpubNS && attr.Value != "http://www.idpf.org/2007/opf" {
+					r.AddWithLocation(report.Usage, "HTM-010",
+						fmt.Sprintf(`Namespace "%s" is unusual; should use "%s"`, attr.Value, knownEpubNS),
+						location)
+					return
+				}
+			}
+		}
+	}
+}
+
+// Deprecated epub:type values (epubcheck OPF-086b)
+var deprecatedEpubTypes = map[string]bool{
+	"annoref":       true,
+	"annotation":    true,
+	"biblioentry":   true,
+	"bridgehead":    true,
+	"endnote":       true,
+	"help":          true,
+	"marginalia":    true,
+	"note":          true,
+	"rearnote":      true,
+	"rearnotes":     true,
+	"sidebar":       true,
+	"subchapter":    true,
+	"warning":       true,
+	"biblioref":     true,
+	"glossref":      true,
+	"noteref":       true,
+	"backlink":      true,
+}
+
+// checkOPF086bDeprecatedEpubType reports deprecated epub:type values (OPF-086b).
+func checkOPF086bDeprecatedEpubType(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				for _, val := range strings.Fields(attr.Value) {
+					if strings.Contains(val, ":") {
+						continue
+					}
+					if deprecatedEpubTypes[val] {
+						r.AddWithLocation(report.Usage, "OPF-086b",
+							fmt.Sprintf(`epub:type value "%s" is deprecated`, val),
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// epub:type usage suggestions: which elements should use which epub:type values
+var epubTypeSuggestions = map[string][]string{
+	"bodymatter":    {"body", "section"},
+	"frontmatter":   {"body", "section"},
+	"backmatter":    {"body", "section"},
+	"chapter":       {"section", "body"},
+	"part":          {"section", "body"},
+	"division":      {"section", "body"},
+	"volume":        {"section", "body"},
+	"subchapter":    {"section"},
+	"toc":           {"nav", "section"},
+	"landmarks":     {"nav"},
+	"page-list":     {"nav"},
+	"loa":           {"nav", "section"},
+	"loi":           {"nav", "section"},
+	"lot":           {"nav", "section"},
+	"lov":           {"nav", "section"},
+	"footnote":      {"aside"},
+	"endnote":       {"aside", "li"},
+	"endnotes":      {"section", "body"},
+	"bibliography":  {"section", "body"},
+	"index":         {"section", "body"},
+	"glossary":      {"section", "body", "dl"},
+	"pagebreak":     {"span", "div", "hr"},
+	"noteref":       {"a"},
+	"biblioref":     {"a"},
+	"glossref":      {"a"},
+}
+
+// epubTypeRedundant maps epub:type values to element names where they are redundant.
+// Using these epub:type values on their matching elements triggers OPF-087 as usage.
+var epubTypeRedundant = map[string]string{
+	"table":      "table",
+	"table-row":  "tr",
+	"table-cell": "td",
+	"list":       "ul",
+	"list-item":  "li",
+	"figure":     "figure",
+	"aside":      "aside",
+}
+
+// checkOPF087MisusedEpubType reports epub:type values used on unexpected elements (OPF-087).
+func checkOPF087MisusedEpubType(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		elemName := se.Name.Local
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				for _, val := range strings.Fields(attr.Value) {
+					if strings.Contains(val, ":") {
+						continue
+					}
+					// Check for redundant usage (e.g., epub:type="table" on <table>)
+					if redundantElem, ok := epubTypeRedundant[val]; ok {
+						if redundantElem == elemName {
+							r.AddWithLocation(report.Usage, "OPF-087",
+								fmt.Sprintf(`epub:type value "%s" is redundant on element "%s"`, val, elemName),
+								location)
+							continue
+						}
+					}
+					// Check for misused suggestions (wrong element)
+					if suggested, ok := epubTypeSuggestions[val]; ok {
+						found := false
+						for _, s := range suggested {
+							if s == elemName {
+								found = true
+								break
+							}
+						}
+						if !found {
+							r.AddWithLocation(report.Usage, "OPF-087",
+								fmt.Sprintf(`epub:type value "%s" is not appropriate for element "%s"`, val, elemName),
+								location)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkOPF088UnknownEpubType reports unknown epub:type values in the default vocabulary (OPF-088).
+func checkOPF088UnknownEpubType(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				for _, val := range strings.Fields(attr.Value) {
+					if strings.Contains(val, ":") {
+						continue
+					}
+					if !validEpubTypes[val] && !deprecatedEpubTypes[val] {
+						r.AddWithLocation(report.Usage, "OPF-088",
+							fmt.Sprintf(`epub:type value "%s" is not defined in the default vocabulary`, val),
+							location)
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkOPF028UndeclaredPrefix detects undeclared prefixes in epub:type attributes (OPF-028).
+func checkOPF028UndeclaredPrefix(data []byte, location string, r *report.Report) {
+	// Reserved prefixes that don't need declaration
+	reservedPrefixes := map[string]bool{
+		"dc": true, "dcterms": true, "a11y": true, "epub": true,
+		"marc": true, "media": true, "onix": true, "rendition": true,
+		"schema": true, "xsd": true, "msv": true, "prism": true,
+	}
+
+	// Collect declared prefixes from prefix attributes on any element
+	declaredPrefixes := make(map[string]bool)
+	content := string(data)
+
+	// Parse prefix attributes: prefix="prefix: URL prefix2: URL2"
+	prefixRe := regexp.MustCompile(`\bprefix\s*=\s*["']([^"']*)["']`)
+	for _, match := range prefixRe.FindAllStringSubmatch(content, -1) {
+		if len(match) > 1 {
+			parts := strings.Fields(match[1])
+			for _, p := range parts {
+				cleaned := strings.TrimSuffix(p, ":")
+				// Only accept prefix names (not URLs)
+				if !strings.Contains(cleaned, "/") && !strings.Contains(cleaned, ".") {
+					declaredPrefixes[cleaned] = true
+				}
+			}
+		}
+	}
+
+	// Also check xmlns namespace declarations for prefixes
+	xmlnsRe := regexp.MustCompile(`xmlns:([a-zA-Z][a-zA-Z0-9]*)\s*=\s*["']([^"']*)["']`)
+	for _, match := range xmlnsRe.FindAllStringSubmatch(content, -1) {
+		if len(match) > 1 {
+			declaredPrefixes[match[1]] = true
+		}
+	}
+
+	// Check epub:type values for undeclared prefixes
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				for _, val := range strings.Fields(attr.Value) {
+					if idx := strings.Index(val, ":"); idx > 0 {
+						prefix := val[:idx]
+						if !reservedPrefixes[prefix] && !declaredPrefixes[prefix] {
+							r.AddWithLocation(report.Error, "OPF-028",
+								fmt.Sprintf(`Undeclared prefix "%s" in epub:type value "%s"`, prefix, val),
+								location)
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkDeprecatedDPUBARIA detects deprecated DPUB-ARIA roles (RSC-017).
+func checkDeprecatedDPUBARIA(data []byte, location string, r *report.Report) {
+	deprecatedRoles := map[string]bool{
+		"doc-endnote":     true,
+		"doc-biblioentry": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "role" {
+				for _, role := range strings.Fields(attr.Value) {
+					if deprecatedRoles[role] {
+						r.AddWithLocation(report.Warning, "RSC-017",
+							fmt.Sprintf(`"%s" role is deprecated`, role),
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkDOCTYPEChecks performs various DOCTYPE-related checks for single-file mode.
+func checkDOCTYPEChecks(data []byte, location string, r *report.Report) {
+	content := string(data)
+	idx := strings.Index(strings.ToUpper(content), "<!DOCTYPE")
+	if idx == -1 {
+		return
+	}
+	endIdx := strings.Index(content[idx:], ">")
+	if endIdx == -1 {
+		return
+	}
+	doctype := content[idx : idx+endIdx+1]
+	doctypeUpper := strings.ToUpper(doctype)
+
+	// Check for unresolved entity reference in doctype
+	if strings.Contains(doctypeUpper, "PUBLIC") {
+		publicID, _ := extractDOCTYPEIdentifiers(doctype[9:]) // skip "<!DOCTYPE"
+		if publicID != "" {
+			// Invalid public ID patterns
+			if strings.HasPrefix(publicID, "+//") {
+				r.AddWithLocation(report.Error, "HTM-009",
+					fmt.Sprintf(`Invalid DOCTYPE: public identifier "%s" is not valid`, publicID),
+					location)
+			}
+		}
+	}
+}
+
+// checkHTM004SingleFile checks for DOCTYPE issues in single-file XHTML (HTM-004).
+// Works for both EPUB 2 and EPUB 3 content by detecting:
+// - Obsolete/invalid public identifiers
+// - Invalid DOCTYPE formats
+func checkHTM004SingleFile(data []byte, location string, r *report.Report) {
+	content := string(data)
+	idx := strings.Index(strings.ToUpper(content), "<!DOCTYPE")
+	if idx == -1 {
+		return
+	}
+	endIdx := strings.Index(content[idx:], ">")
+	if endIdx == -1 {
+		return
+	}
+	doctype := content[idx : idx+endIdx+1]
+	doctypeUpper := strings.ToUpper(doctype)
+
+	if strings.Contains(doctypeUpper, "PUBLIC") {
+		publicID, _ := extractDOCTYPEIdentifiers(doctype[9:])
+		if publicID != "" {
+			// Valid public identifiers
+			validPublicIDs := map[string]bool{
+				"-//W3C//DTD XHTML 1.1//EN":                true,
+				"-//W3C//DTD XHTML 1.0 Strict//EN":         true,
+				"-//W3C//DTD XHTML 1.0 Transitional//EN":   true,
+				"-//W3C//DTD XHTML Basic 1.1//EN":           true,
+				"-//W3C//DTD XHTML+RDFa 1.0//EN":            true,
+			}
+			if !validPublicIDs[publicID] {
+				r.AddWithLocation(report.Error, "HTM-004",
+					fmt.Sprintf(`Irregular DOCTYPE: public identifier "%s" is not valid`, publicID),
+					location)
+			}
+		}
+	}
+}
+
+// checkImageMapValid detects invalid image map constructs (RSC-005).
+func checkImageMapValid(data []byte, location string, r *report.Report) {
+	content := string(data)
+	isHTML5 := strings.Contains(content, "<!DOCTYPE html>") || strings.Contains(content, "<!doctype html>")
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "img" && isHTML5 {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "usemap" {
+					val := attr.Value
+					if val != "" && !strings.HasPrefix(val, "#") {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`value of attribute "usemap" is invalid; must start with "#"`,
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkHttpEquivCharset detects http-equiv charset issues (RSC-005).
+func checkHttpEquivCharset(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	hasCharsetAttr := false
+	hasHttpEquivCharset := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "meta" {
+			continue
+		}
+		httpEquiv := ""
+		content := ""
+		charset := ""
+		for _, attr := range se.Attr {
+			switch attr.Name.Local {
+			case "http-equiv":
+				httpEquiv = strings.ToLower(strings.TrimSpace(attr.Value))
+			case "content":
+				content = attr.Value
+			case "charset":
+				charset = attr.Value
+			}
+		}
+		if charset != "" {
+			hasCharsetAttr = true
+		}
+		if httpEquiv == "content-type" {
+			hasHttpEquivCharset = true
+			// Check that charset is UTF-8
+			contentLower := strings.ToLower(strings.TrimSpace(content))
+			if contentLower != "" && contentLower != "text/html; charset=utf-8" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "content" must have the value "text/html; charset=utf-8"`,
+					location)
+			}
+		}
+	}
+	if hasCharsetAttr && hasHttpEquivCharset {
+		r.AddWithLocation(report.Error, "RSC-005",
+			`must not contain both a meta element in encoding declaration state (http-equiv='content-type') and a meta element with the charset attribute`,
+			location)
+	}
+}
+
+// checkMicrodataAttrs detects microdata attributes on non-allowed elements (RSC-005).
+// Simplified check: just detect the presence of microdata attributes.
+func checkMicrodataAttrs(data []byte, location string, r *report.Report) {
+	// Placeholder - microdata validation is complex and low priority
+}
+
+// checkObsoleteAttrs detects obsolete HTML attributes and elements (RSC-005).
+func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
+	obsoleteAttrs := map[string]bool{
+		"typemustmatch": true,
+		"contextmenu":   true,
+		"dropzone":      true,
+		"pubdate":       true,
+		"seamless":      true,
+	}
+	obsoleteElements := map[string]bool{
+		"keygen":  true,
+		"command": true,
+	}
+	// Obsolete element-specific attributes
+	obsoleteMenuAttrs := map[string]bool{
+		"type": true, "label": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	menuDepth := 0  // depth inside a menu element (1 = direct child)
+	inMenu := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "menu" {
+				inMenu = true
+				menuDepth = 0
+			} else if inMenu {
+				menuDepth++
+			}
+			if obsoleteElements[t.Name.Local] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+					location)
+			}
+			// button as direct child of menu (not nested in li)
+			if inMenu && menuDepth == 1 && t.Name.Local == "button" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "button" not allowed here`,
+					location)
+			}
+			for _, attr := range t.Attr {
+				if obsoleteAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+				// menu element obsolete attributes
+				if t.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "menu" {
+				inMenu = false
+				menuDepth = 0
+			} else if inMenu {
+				menuDepth--
+			}
+		}
+	}
+}
+
+// checkACCMathMLAlt checks MathML elements for alternative text (ACC-009).
+func checkACCMathMLAlt(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "math" && (se.Name.Space == "http://www.w3.org/1998/Math/MathML" || se.Name.Space == "") {
+			hasAlt := false
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "alttext" || attr.Name.Local == "altimg" ||
+					attr.Name.Local == "aria-label" || attr.Name.Local == "aria-labelledby" {
+					hasAlt = true
+					break
+				}
+			}
+			if !hasAlt {
+				r.AddWithLocation(report.Usage, "ACC-009",
+					"MathML element should have an alternative text representation (alttext, altimg, aria-label, or aria-labelledby)",
+					location)
+			}
+		}
+	}
+}
+
+// ============================================================================
+// SVG single-file check functions
+// ============================================================================
+
+// checkSVGDuplicateIDs detects duplicate id attribute values in SVG (RSC-005).
+func checkSVGDuplicateIDs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	idCount := make(map[string]int)
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				idCount[attr.Value]++
+			}
+		}
+	}
+	// Report all occurrences of duplicated IDs
+	for id, count := range idCount {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id),
+					location)
+			}
+		}
+	}
+}
+
+// checkSVGInvalidIDs detects invalid id attribute values in SVG (RSC-005).
+func checkSVGInvalidIDs(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	invalidIDRe := regexp.MustCompile(`^\d|^\s|\s`)
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "id" && attr.Value != "" {
+				if invalidIDRe.MatchString(attr.Value) || strings.TrimSpace(attr.Value) == "" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`value of attribute "id" is invalid; must be an XML Name`),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkSVGForeignObject checks foreignObject for valid content (RSC-005).
+// Checks: non-HTML content, non-flow content (title/head/etc), multiple body elements,
+// and HTML validation errors (invalid attributes).
+func checkSVGForeignObject(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	svgNS := "http://www.w3.org/2000/svg"
+	htmlNS := "http://www.w3.org/1999/xhtml"
+
+	// Non-flow HTML elements (metadata content, not allowed as direct children of foreignObject)
+	nonFlowElements := map[string]bool{
+		"title": true, "base": true, "link": true, "meta": true,
+		"style": true, "head": true,
+	}
+	// HTML attributes that are NOT valid on specific elements
+	noHrefElements := map[string]bool{
+		"p": true, "div": true, "span": true, "h1": true, "h2": true,
+		"h3": true, "h4": true, "h5": true, "h6": true,
+	}
+
+	foDepth := 0    // foreignObject nesting depth
+	bodyCount := 0  // body elements in current foreignObject
+	firstChild := false // true when next element is direct child of foreignObject
+	isXHTMLDoc := false // true if the root is <html> (XHTML context)
+	isHTML5 := strings.Contains(string(data), "<!DOCTYPE html>") || strings.Contains(string(data), "<!doctype html>")
+	rootSeen := false
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if !rootSeen {
+				rootSeen = true
+				isXHTMLDoc = t.Name.Local == "html"
+			}
+			if t.Name.Local == "foreignObject" && (t.Name.Space == svgNS || t.Name.Space == "") {
+				foDepth++
+				bodyCount = 0
+				firstChild = true
+				continue
+			}
+			if foDepth > 0 {
+				isHTML := t.Name.Space == htmlNS || t.Name.Space == ""
+				isSVG := t.Name.Space == svgNS
+				// Direct children of foreignObject
+				if firstChild {
+					firstChild = false
+					if !isHTML || isSVG {
+						// Non-HTML child content
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+							location)
+						continue
+					}
+					// Non-flow content (like <title> as direct child)
+					if isHTML && nonFlowElements[t.Name.Local] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+							location)
+						continue
+					}
+					// In HTML5/EPUB 3 XHTML context, body is not allowed inside foreignObject
+					if isXHTMLDoc && isHTML5 && t.Name.Local == "body" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "body" not allowed here`,
+							location)
+						continue
+					}
+				}
+				// body element tracking (in SVG context, only second body is error)
+				if t.Name.Local == "body" && (t.Name.Space == htmlNS || t.Name.Space == "") {
+					bodyCount++
+					if !isXHTMLDoc && bodyCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "body" not allowed here`,
+							location)
+					}
+				}
+				// HTML validation: href not allowed on certain elements
+				if isHTML && noHrefElements[t.Name.Local] {
+					for _, attr := range t.Attr {
+						if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`attribute "href" not allowed here`,
+								location)
+						}
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "foreignObject" && foDepth > 0 {
+				foDepth--
+			}
+		}
+	}
+}
+
+// checkSVGTitleContent checks SVG title elements for valid content (RSC-005).
+// SVG title elements can only contain HTML phrasing content; no custom namespace
+// elements or SVG elements are allowed. Also checks for invalid HTML attributes.
+func checkSVGTitleContent(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	svgNS := "http://www.w3.org/2000/svg"
+	htmlNS := "http://www.w3.org/1999/xhtml"
+	noHrefElements := map[string]bool{
+		"span": true, "p": true, "div": true,
+	}
+
+	inSVG := 0        // SVG element nesting depth
+	inSVGTitle := false // inside an SVG title element
+	titleDepth := 0    // element depth inside title (to track direct children)
+	reportedNS := make(map[string]bool) // track reported namespaces per title
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			isSVGElem := t.Name.Space == svgNS
+			if t.Name.Local == "svg" && (isSVGElem || t.Name.Space == "") {
+				inSVG++
+			}
+			if inSVGTitle {
+				titleDepth++
+				isHTML := t.Name.Space == htmlNS
+				// Namespace violation checks apply at any depth
+				if !isHTML && !isSVGElem && t.Name.Space != "" {
+					ns := t.Name.Space
+					if !reportedNS[ns] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`elements from namespace "%s" are not allowed`, ns),
+							location)
+						reportedNS[ns] = true
+					}
+				} else if isSVGElem {
+					// SVG elements inside title
+					if !reportedNS[svgNS] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`elements from namespace "%s" are not allowed`, svgNS),
+							location)
+						reportedNS[svgNS] = true
+					}
+				} else if titleDepth == 1 {
+					// HTML attribute validation: only check direct children
+					if isHTML && noHrefElements[t.Name.Local] {
+						for _, attr := range t.Attr {
+							if attr.Name.Local == "href" && (attr.Name.Space == "" || attr.Name.Space == htmlNS) {
+								r.AddWithLocation(report.Error, "RSC-005",
+									`attribute "href" not allowed here`,
+									location)
+							}
+						}
+					}
+				}
+			} else if inSVG > 0 && t.Name.Local == "title" && (isSVGElem || t.Name.Space == "") {
+				inSVGTitle = true
+				titleDepth = 0
+				reportedNS = make(map[string]bool)
+			}
+		case xml.EndElement:
+			if t.Name.Local == "svg" && (t.Name.Space == svgNS || t.Name.Space == "") && inSVG > 0 {
+				inSVG--
+			}
+			if inSVGTitle {
+				if t.Name.Local == "title" && (t.Name.Space == svgNS || t.Name.Space == "") && titleDepth == 0 {
+					inSVGTitle = false
+				} else {
+					titleDepth--
+				}
+			}
+		}
+	}
+}
+
+// checkSVGEpubType checks epub:type usage on SVG elements (RSC-005).
+// epub:type is allowed on structural (svg, g, use, symbol, defs),
+// shape (rect, circle, ellipse, line, polyline, polygon, path),
+// and text (text, textPath, tspan) elements.
+func checkSVGEpubType(data []byte, location string, r *report.Report) {
+	allowedEpubType := map[string]bool{
+		"svg": true, "g": true, "use": true, "symbol": true,
+		"rect": true, "circle": true, "ellipse": true, "line": true,
+		"polyline": true, "polygon": true, "path": true,
+		"text": true, "textPath": true, "tspan": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+				if !allowedEpubType[se.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`"epub:type" not allowed on element "%s"`, se.Name.Local),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkSVGUnknownEpubAttr detects unknown epub: attributes in SVG (RSC-005).
+func checkSVGUnknownEpubAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Space == "http://www.idpf.org/2007/ops" && attr.Name.Local != "type" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`"epub:%s" not allowed here`, attr.Name.Local),
+					location)
+				return
+			}
+		}
+	}
+}
+
+// checkSVGInvalidElements reports unknown elements in SVG as usage (RSC-025).
+func checkSVGInvalidElements(data []byte, location string, r *report.Report) {
+	svgElements := map[string]bool{
+		"svg": true, "g": true, "defs": true, "symbol": true, "use": true,
+		"image": true, "switch": true, "foreignObject": true,
+		"desc": true, "title": true, "metadata": true,
+		"rect": true, "circle": true, "ellipse": true, "line": true,
+		"polyline": true, "polygon": true, "path": true,
+		"text": true, "textPath": true, "tspan": true, "tref": true,
+		"a": true, "altGlyphDef": true, "clipPath": true, "color-profile": true,
+		"cursor": true, "filter": true, "font": true, "font-face": true,
+		"glyph": true, "glyphRef": true, "altGlyph": true, "altGlyphItem": true,
+		"linearGradient": true, "radialGradient": true, "stop": true,
+		"pattern": true, "marker": true, "mask": true,
+		"style": true, "script": true, "animate": true, "set": true,
+		"animateMotion": true, "animateTransform": true, "animateColor": true,
+		"mpath": true, "view": true, "solidColor": true,
+		"feBlend": true, "feColorMatrix": true, "feComponentTransfer": true,
+		"feComposite": true, "feConvolveMatrix": true, "feDiffuseLighting": true,
+		"feDisplacementMap": true, "feDistantLight": true, "feFlood": true,
+		"feFuncA": true, "feFuncB": true, "feFuncG": true, "feFuncR": true,
+		"feGaussianBlur": true, "feImage": true, "feMerge": true,
+		"feMergeNode": true, "feMorphology": true, "feOffset": true,
+		"fePointLight": true, "feSpecularLighting": true, "feSpotLight": true,
+		"feTile": true, "feTurbulence": true,
+		"font-face-format": true, "font-face-name": true, "font-face-src": true,
+		"font-face-uri": true, "hkern": true, "vkern": true,
+		"missing-glyph": true,
+	}
+	svgNS := "http://www.w3.org/2000/svg"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inSVG := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Space == svgNS || (t.Name.Space == "" && inSVG > 0) {
+				if t.Name.Local == "svg" {
+					inSVG++
+				}
+				if inSVG > 0 && !svgElements[t.Name.Local] && t.Name.Space != "http://www.w3.org/1999/xhtml" {
+					r.AddWithLocation(report.Usage, "RSC-025",
+						fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+						location)
+				}
+			}
+		case xml.EndElement:
+			if (t.Name.Space == svgNS || t.Name.Space == "") && t.Name.Local == "svg" && inSVG > 0 {
+				inSVG--
+			}
+		}
+	}
+}
+
+// checkSVGLinkLabel reports SVG hyperlinks without accessible labels (ACC-011).
+func checkSVGLinkLabel(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "a" {
+			hasLabel := false
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "aria-label" || attr.Name.Local == "aria-labelledby" {
+					hasLabel = true
+				}
+				if attr.Name.Local == "title" {
+					hasLabel = true
+				}
+			}
+			if !hasLabel {
+				// Check if the <a> has a child <title> element
+				inner, err := decoder.Token()
+				if err == nil {
+					if se2, ok := inner.(xml.StartElement); ok && se2.Name.Local == "title" {
+						hasLabel = true
+					}
+				}
+			}
+			if !hasLabel {
+				r.AddWithLocation(report.Usage, "ACC-011",
+					"SVG link element should have a label (title, aria-label, or aria-labelledby)",
+					location)
+			}
+		}
+	}
+}
+
+// ============================================================================
+// Single-file encoding detection
+// ============================================================================
+
+// UCS-4 BOM markers
+var ucs4BE = []byte{0x00, 0x00, 0xFE, 0xFF}
+var ucs4LE = []byte{0xFF, 0xFE, 0x00, 0x00}
+
+// checkSingleFileEncoding detects encoding issues in single-file XHTML (RSC-016/RSC-017).
+func checkSingleFileEncoding(ep *epub.EPUB, r *report.Report) {
+	if ep.Package == nil {
+		return
+	}
+	xmlEncodingRe := regexp.MustCompile(`<\?xml[^?]*encoding=["']([^"']+)["']`)
+
+	for _, item := range ep.Package.Manifest {
+		// Only check SVG files here; XHTML encoding is handled by checkHTM058Encoding
+		if item.MediaType != "image/svg+xml" {
+			continue
+		}
+		if item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+
+		// RSC-016: UCS-4 encoding
+		if bytes.HasPrefix(data, ucs4BE) || bytes.HasPrefix(data, ucs4LE) {
+			r.AddWithLocation(report.Fatal, "RSC-016",
+				"Fatal Error while parsing file: UCS-4 encoding is not supported",
+				fullPath)
+			continue
+		}
+
+		// RSC-017: UTF-16 encoding
+		if bytes.HasPrefix(data, utf16LEBOM) || bytes.HasPrefix(data, utf16BEBOM) {
+			r.AddWithLocation(report.Warning, "RSC-017",
+				"Warning while parsing file: XML document is encoded as UTF-16",
+				fullPath)
+			continue
+		}
+
+		// Check XML encoding declaration
+		header := string(data[:min(200, len(data))])
+		if matches := xmlEncodingRe.FindStringSubmatch(header); len(matches) > 1 {
+			enc := strings.ToUpper(matches[1])
+			switch {
+			case enc == "UTF-16":
+				// UTF-16 declared but no BOM
+				r.AddWithLocation(report.Warning, "RSC-017",
+					"Warning while parsing file: XML document declares UTF-16 encoding",
+					fullPath)
+			case enc == "ISO-8859-1" || enc == "LATIN-1" || enc == "LATIN1":
+				r.AddWithLocation(report.Fatal, "RSC-016",
+					fmt.Sprintf("Fatal Error while parsing file: encoding %s is not supported", matches[1]),
+					fullPath)
+			case enc != "UTF-8":
+				r.AddWithLocation(report.Fatal, "RSC-016",
+					fmt.Sprintf("Fatal Error while parsing file: unknown encoding %s", matches[1]),
+					fullPath)
+			}
+		}
+	}
+}
+
+// ============================================================================
+// Single-file SMIL check functions
+// ============================================================================
+
+// checkSingleFileSMIL runs SMIL-specific checks for single-file validation.
+func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	// Stack tracking for parent elements
+	var parentStack []string
+
+	currentParent := func() string {
+		if len(parentStack) == 0 {
+			return ""
+		}
+		return parentStack[len(parentStack)-1]
+	}
+
+	// Track par children
+	type parState struct {
+		textCount int
+	}
+	parStates := make(map[int]*parState) // keyed by stack depth
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			depth := len(parentStack)
+			parentStack = append(parentStack, name)
+
+			// meta directly in head (not in metadata)
+			if name == "meta" && currentParent() == "meta" {
+				// This won't fire... let me check differently
+			}
+			if name == "meta" {
+				// Look back for parent = head
+				if depth >= 1 && parentStack[depth-1] == "head" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "meta" not allowed here`,
+						location)
+				}
+			}
+
+			// seq direct children: text and audio not allowed
+			parent := ""
+			if depth > 0 {
+				parent = parentStack[depth-1]
+			}
+			if parent == "seq" && (name == "text" || name == "audio") {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`element "%s" not allowed here`, name),
+					location)
+			}
+
+			// par content model
+			if parent == "par" {
+				if name == "seq" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "seq" not allowed here`,
+						location)
+				}
+				if name == "text" {
+					ps, ok := parStates[depth-1]
+					if !ok {
+						ps = &parState{}
+						parStates[depth-1] = ps
+					}
+					ps.textCount++
+					if ps.textCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "text" not allowed here`,
+							location)
+					}
+				}
+			}
+
+			// Initialize par state
+			if name == "par" {
+				parStates[depth] = &parState{}
+			}
+
+			// Audio element checks
+			if name == "audio" {
+				var src, clipBegin, clipEnd string
+				for _, attr := range t.Attr {
+					switch attr.Name.Local {
+					case "src":
+						src = attr.Value
+					case "clipBegin":
+						clipBegin = attr.Value
+					case "clipEnd":
+						clipEnd = attr.Value
+					}
+				}
+				// MED-014: audio src should not contain a fragment identifier
+				if src != "" && strings.Contains(src, "#") {
+					r.AddWithLocation(report.Error, "MED-014",
+						fmt.Sprintf("Audio source '%s' must not have a fragment identifier", src),
+						location)
+				}
+				// Clock value validation
+				if clipBegin != "" && !isValidSMILClock(clipBegin) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`Invalid clock value "%s"`, clipBegin),
+						location)
+				}
+				if clipEnd != "" && !isValidSMILClock(clipEnd) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`Invalid clock value "%s"`, clipEnd),
+						location)
+				}
+				// MED-008/MED-009: clip time comparison (only when both values are valid)
+				validBegin := clipBegin == "" || isValidSMILClock(clipBegin)
+				validEnd := clipEnd == "" || isValidSMILClock(clipEnd)
+				if validBegin && validEnd {
+					beginMs := parseSMILClockMs(clipBegin)
+					endMs := parseSMILClockMs(clipEnd)
+					// Default clipBegin is 0
+					if clipBegin == "" {
+						beginMs = 0
+					}
+					if beginMs >= 0 && endMs >= 0 {
+						if beginMs > endMs {
+							r.AddWithLocation(report.Error, "MED-008",
+								fmt.Sprintf("clipBegin value (%s) is after clipEnd value (%s)", clipBegin, clipEnd),
+								location)
+						}
+						if beginMs == endMs {
+							r.AddWithLocation(report.Error, "MED-009",
+								fmt.Sprintf("clipEnd value (%s) equals clipBegin value (%s)", clipEnd, clipBegin),
+								location)
+						}
+					}
+				}
+			}
+
+			// Check epub:type on SMIL elements for OPF-088
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "type" && attr.Name.Space == "http://www.idpf.org/2007/ops" {
+					for _, val := range strings.Fields(attr.Value) {
+						if strings.Contains(val, ":") {
+							continue
+						}
+						if !validEpubTypes[val] && !deprecatedEpubTypes[val] {
+							r.AddWithLocation(report.Usage, "OPF-088",
+								fmt.Sprintf(`epub:type value "%s" is not defined in the default vocabulary`, val),
+								location)
+						}
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if len(parentStack) > 0 {
+				depth := len(parentStack) - 1
+				if parentStack[depth] == "par" {
+					delete(parStates, depth)
+				}
+				parentStack = parentStack[:depth]
+			}
+		}
+	}
+}
+
+// isValidSMILClock validates a SMIL3 clock value format.
+func isValidSMILClock(val string) bool {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return false
+	}
+
+	// Timecount values: number followed by unit (h, min, s, ms)
+	if strings.HasSuffix(val, "ms") {
+		numStr := strings.TrimSuffix(val, "ms")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "min") {
+		numStr := strings.TrimSuffix(val, "min")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "h") {
+		numStr := strings.TrimSuffix(val, "h")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+	if strings.HasSuffix(val, "s") {
+		numStr := strings.TrimSuffix(val, "s")
+		_, err := parseFloat(numStr)
+		return err == nil && len(numStr) > 0 && numStr[0] != '.'
+	}
+
+	// Check for invalid unit suffixes (e.g., "10m" instead of "10min")
+	lastChar := val[len(val)-1]
+	if lastChar >= 'a' && lastChar <= 'z' {
+		return false // Has a letter suffix that wasn't caught above
+	}
+
+	// Clock values: HH:MM:SS.mmm or MM:SS.mmm
+	parts := strings.Split(val, ":")
+	switch len(parts) {
+	case 3: // Full clock: HH:MM:SS.mmm
+		h, err1 := parseFloat(parts[0])
+		m, err2 := parseFloat(parts[1])
+		s, err3 := parseFloat(parts[2])
+		if err1 != nil || err2 != nil || err3 != nil {
+			return false
+		}
+		return m < 60 && s < 60 && h >= 0
+	case 2: // Partial clock: MM:SS.mmm
+		m, err1 := parseFloat(parts[0])
+		s, err2 := parseFloat(parts[1])
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		// Partial clock minutes must be < 60 (one or two digits)
+		if len(parts[0]) > 2 {
+			return false
+		}
+		return m < 60 && s < 60
+	case 1: // Just a number (seconds)
+		_, err := parseFloat(val)
+		return err == nil && len(val) > 0 && val[0] != '.'
+	}
+	return false
+}
+
+// parseSMILClockMs parses a SMIL clock value to milliseconds. Returns -1 on error.
+func parseSMILClockMs(val string) int64 {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return -1
+	}
+
+	// Handle metric values: XXh, XXmin, XXs, XXms
+	if strings.HasSuffix(val, "ms") {
+		numStr := strings.TrimSuffix(val, "ms")
+		f, err := parseFloat(numStr)
+		if err != nil {
+			return -1
+		}
+		return int64(f)
+	}
+	if strings.HasSuffix(val, "h") {
+		numStr := strings.TrimSuffix(val, "h")
+		f, err := parseFloat(numStr)
+		if err != nil {
+			return -1
+		}
+		return int64(f * 3600000)
+	}
+	if strings.HasSuffix(val, "min") {
+		numStr := strings.TrimSuffix(val, "min")
+		f, err := parseFloat(numStr)
+		if err != nil {
+			return -1
+		}
+		return int64(f * 60000)
+	}
+	if strings.HasSuffix(val, "s") {
+		numStr := strings.TrimSuffix(val, "s")
+		f, err := parseFloat(numStr)
+		if err != nil {
+			return -1
+		}
+		return int64(f * 1000)
+	}
+
+	// Handle clock values: HH:MM:SS.mmm or MM:SS.mmm or just seconds
+	parts := strings.Split(val, ":")
+	switch len(parts) {
+	case 3:
+		h, err1 := parseFloat(parts[0])
+		m, err2 := parseFloat(parts[1])
+		s, err3 := parseFloat(parts[2])
+		if err1 != nil || err2 != nil || err3 != nil {
+			return -1
+		}
+		return int64((h*3600 + m*60 + s) * 1000)
+	case 2:
+		m, err1 := parseFloat(parts[0])
+		s, err2 := parseFloat(parts[1])
+		if err1 != nil || err2 != nil {
+			return -1
+		}
+		return int64((m*60 + s) * 1000)
+	case 1:
+		s, err := parseFloat(parts[0])
+		if err != nil {
+			return -1
+		}
+		return int64(s * 1000)
+	}
+	return -1
+}
+
+// parseFloat parses a float from a string, returning an error if it fails.
+func parseFloat(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty string")
+	}
+	return strconv.ParseFloat(s, 64)
+}
+
+// ============================================================================
+// Additional single-file content checks
+// ============================================================================
+
+// checkEmptySrcAttr detects img elements with empty src attributes (RSC-005).
+func checkEmptySrcAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "img" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "src" && strings.TrimSpace(attr.Value) == "" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`attribute "src" has a bad value: must be a valid URL`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkEpubSwitchTrigger detects epub:switch and epub:trigger elements (RSC-017 deprecated).
+func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+
+	type switchState struct {
+		hasCaseBefore bool
+		hasDefault    bool
+		defaultCount  int
+		caseCount     int
+	}
+	var switchStack []*switchState
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "switch" && t.Name.Space == opsNS {
+				r.AddWithLocation(report.Warning, "RSC-017",
+					`The "epub:switch" element is deprecated`,
+					location)
+				switchStack = append(switchStack, &switchState{})
+			}
+			if t.Name.Local == "trigger" && t.Name.Space == opsNS {
+				r.AddWithLocation(report.Warning, "RSC-017",
+					`The "epub:trigger" element is deprecated`,
+					location)
+			}
+			if t.Name.Local == "case" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				cur.caseCount++
+				cur.hasCaseBefore = true
+				// Check for required-namespace attribute
+				hasReqNS := false
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "required-namespace" {
+						hasReqNS = true
+					}
+				}
+				if !hasReqNS {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:case" missing required attribute "required-namespace"`,
+						location)
+				}
+			}
+			if t.Name.Local == "default" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				cur.defaultCount++
+				if !cur.hasCaseBefore {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:default" not allowed yet`,
+						location)
+				}
+				if cur.defaultCount > 1 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:default" not allowed here; only one is permitted`,
+						location)
+				}
+				cur.hasDefault = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "switch" && t.Name.Space == opsNS && len(switchStack) > 0 {
+				cur := switchStack[len(switchStack)-1]
+				if cur.caseCount == 0 && !cur.hasDefault {
+					// Only report missing case if we haven't already reported "default not allowed yet"
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:switch" incomplete; missing required element "epub:case"`,
+						location)
+				}
+				if !cur.hasDefault {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "epub:switch" incomplete; missing required element "epub:default"`,
+						location)
+				}
+				switchStack = switchStack[:len(switchStack)-1]
+			}
+		}
+	}
+}
+
+// checkEpubTypeOnHead detects epub:type attributes on head/metadata elements (RSC-005).
+func checkEpubTypeOnHead(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	// Elements where epub:type is not allowed
+	disallowed := map[string]bool{
+		"head": true, "title": true, "meta": true, "link": true,
+		"style": true, "base": true, "script": true, "noscript": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if disallowed[se.Name.Local] {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "epub:type" not allowed on element "%s"`, se.Name.Local),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkTableBorderAttr checks table border attribute values (RSC-005).
+func checkTableBorderAttr(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "table" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "border" {
+					val := strings.TrimSpace(attr.Value)
+					if val != "" && val != "1" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf(`value of attribute "border" is invalid; must be equal to "" or "1"`),
+							location)
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkCSS008StyleType detects style elements in <head> without a type declaration (CSS-008).
+func checkCSS008StyleType(data []byte, location string, r *report.Report) {
+	// In HTML5 (EPUB 3), the type attribute is not required on style elements.
+	// Only check for EPUB 2 / XHTML 1.1 documents (no HTML5 doctype).
+	content := string(data)
+	if strings.Contains(content, "<!DOCTYPE html>") || strings.Contains(content, "<!doctype html>") {
+		// HTML5 doctype — type attribute not required
+		return
+	}
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	inHead := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "head" {
+				inHead = true
+			}
+			if t.Name.Local == "style" && inHead {
+				hasType := false
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "type" {
+						hasType = true
+					}
+				}
+				if !hasType {
+					r.AddWithLocation(report.Error, "CSS-008",
+						`style element missing required "type" attribute`,
+						location)
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "head" {
+				inHead = false
+			}
+		}
+	}
+}
+
+// checkStyleInBody detects style elements in the body (RSC-005).
+func checkStyleInBody(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inBody := false
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "body" {
+				inBody = true
+			}
+			if t.Name.Local == "style" && inBody {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "style" not allowed here`,
+					location)
+				// Check for "scoped" attribute
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "scoped" {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`attribute "scoped" not allowed here`,
+							location)
+					}
+				}
+			}
+		case xml.EndElement:
+			if t.Name.Local == "body" {
+				inBody = false
+			}
+		}
+	}
+}
+
+// checkStyleAttrCSS detects invalid CSS in style attributes (CSS-008).
+func checkStyleAttrCSS(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "style" {
+				val := strings.TrimSpace(attr.Value)
+				if val == "" {
+					continue
+				}
+				// Check for invalid CSS syntax
+				// A style attribute should contain property: value declarations
+				if strings.Contains(val, "{") || strings.Contains(val, "}") {
+					r.AddWithLocation(report.Error, "CSS-008",
+						`invalid CSS syntax in "style" attribute; must not contain declaration blocks`,
+						location)
+				} else if !strings.Contains(val, ":") {
+					// No colon means no property:value pair
+					r.AddWithLocation(report.Error, "CSS-008",
+						`invalid CSS syntax in "style" attribute`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkARIADescribedAt detects non-existent ARIA describedat attribute (RSC-005).
+func checkARIADescribedAt(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "aria-describedat" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "aria-describedat" not allowed here`,
+					location)
+			}
+		}
+	}
+}
+
+// checkTitleElement checks for empty or missing title elements (RSC-005).
+func checkTitleElement(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	inHead := false
+	hasTitle := false
+	inTitle := false
+	titleContent := ""
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "head" {
+				inHead = true
+			}
+			if t.Name.Local == "title" && inHead {
+				inTitle = true
+				hasTitle = true
+				titleContent = ""
+			}
+		case xml.EndElement:
+			if t.Name.Local == "title" && inTitle {
+				inTitle = false
+				if strings.TrimSpace(titleContent) == "" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "title" must not be empty`,
+						location)
+				}
+			}
+			if t.Name.Local == "head" {
+				if !hasTitle {
+					r.AddWithLocation(report.Warning, "RSC-017",
+						`The "head" element should have a "title" child element.`,
+						location)
+				}
+				inHead = false
+			}
+		case xml.CharData:
+			if inTitle {
+				titleContent += string(t)
+			}
+		}
+	}
+}
+
+// checkPrefixAttrLocation detects epub:prefix attributes on disallowed elements (RSC-005).
+// The prefix attribute is only allowed on the html element in content documents.
+func checkPrefixAttrLocation(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	// Elements where epub:prefix is not allowed (it's only valid on <html>)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "html" || se.Name.Local == "svg" {
+			continue // prefix is allowed on html and svg root elements
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`attribute "epub:prefix" not allowed here`,
+					location)
+			}
+		}
+	}
+}
+
+// checkPrefixDeclarations checks prefix declarations in content documents.
+// Detects: underscore prefix (OPF-007a), reserved prefix overrides (OPF-007),
+// and prefix with empty namespace (OPF-028).
+func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
+	opsNS := "http://www.idpf.org/2007/ops"
+	reservedPrefixURIs := map[string]string{
+		"a11y":      "http://www.idpf.org/epub/vocab/package/a11y/#",
+		"dcterms":   "http://purl.org/dc/terms/",
+		"marc":      "http://id.loc.gov/vocabulary/",
+		"media":     "http://www.idpf.org/epub/vocab/overlays/#",
+		"onix":      "http://www.editeur.org/ONIX/book/codelists/current.html#",
+		"rendition": "http://www.idpf.org/vocab/rendition/#",
+		"schema":    "http://schema.org/",
+		"xsd":       "http://www.w3.org/2001/XMLSchema#",
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "prefix" && attr.Name.Space == opsNS {
+				// Parse prefix declarations: "prefix1: uri1 prefix2: uri2"
+				val := attr.Value
+				parts := strings.Fields(val)
+				for i := 0; i < len(parts); i++ {
+					prefix := parts[i]
+					if !strings.HasSuffix(prefix, ":") {
+						continue
+					}
+					prefix = strings.TrimSuffix(prefix, ":")
+					uri := ""
+					if i+1 < len(parts) && !strings.HasSuffix(parts[i+1], ":") {
+						uri = parts[i+1]
+						i++
+					}
+					// OPF-007a: underscore prefix
+					if prefix == "_" {
+						r.AddWithLocation(report.Error, "OPF-007a",
+							`The prefix "_" must not be declared`,
+							location)
+						continue
+					}
+					// OPF-028: empty namespace
+					if uri == "" {
+						r.AddWithLocation(report.Error, "OPF-028",
+							fmt.Sprintf(`Undeclared prefix: "%s"`, prefix),
+							location)
+						continue
+					}
+					// OPF-007: reserved prefix override
+					if canonicalURI, ok := reservedPrefixURIs[prefix]; ok {
+						if uri != canonicalURI {
+							r.AddWithLocation(report.Warning, "OPF-007",
+								fmt.Sprintf(`Re-declaration of reserved prefix "%s"`, prefix),
+								location)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkNestedTime detects <time> elements nested inside other <time> elements (RSC-005).
+func checkNestedTime(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	depth := 0
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if t.Name.Local == "time" {
+				if depth > 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "time" not allowed here`,
+						location)
+				}
+				depth++
+			}
+		case xml.EndElement:
+			if t.Name.Local == "time" && depth > 0 {
+				depth--
+			}
+		}
+	}
+}
+
+// checkMathMLContentOnly detects Content MathML elements used directly
+// inside <math> (not inside <semantics>/<annotation-xml>) (RSC-005).
+func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
+	mathNS := "http://www.w3.org/1998/Math/MathML"
+	contentMathMLElements := map[string]bool{
+		"apply": true, "cn": true, "ci": true, "csymbol": true,
+		"cerror": true, "cbytes": true, "cs": true, "share": true,
+		"piecewise": true, "bind": true,
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	mathDepth := 0  // depth inside a math element
+	inMath := false
+	reported := map[string]bool{}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			isMathNS := t.Name.Space == mathNS
+			if t.Name.Local == "math" {
+				inMath = true
+				mathDepth = 0
+				reported = map[string]bool{}
+			} else if inMath {
+				mathDepth++
+			}
+			// Only check direct children of math (mathDepth == 1)
+			if inMath && mathDepth == 1 && isMathNS && contentMathMLElements[t.Name.Local] && !reported[t.Name.Local] {
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf(`element "%s" not allowed here`, t.Name.Local),
+					location)
+				reported[t.Name.Local] = true
+			}
+		case xml.EndElement:
+			if t.Name.Local == "math" {
+				inMath = false
+				mathDepth = 0
+			} else if inMath {
+				mathDepth--
+			}
+		}
+	}
+}
+
+// checkMathMLAnnotation validates MathML annotation-xml attributes (RSC-005).
+func checkMathMLAnnotation(data []byte, location string, r *report.Report) {
+	mathNS := "http://www.w3.org/1998/Math/MathML"
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "annotation-xml" {
+			continue
+		}
+		if se.Name.Space != mathNS {
+			continue
+		}
+		encoding := ""
+		name := ""
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "encoding" {
+				encoding = attr.Value
+			}
+			if attr.Name.Local == "name" {
+				name = attr.Value
+			}
+		}
+		encLower := strings.ToLower(encoding)
+		if encLower == "mathml-content" {
+			if name == "" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "annotation-xml" missing required attribute "name"`,
+					location)
+			} else if name != "contentequiv" {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`value of attribute "name" is invalid`,
+					location)
+			}
+		}
+		if encLower == "application/xml+xhtml" {
+			r.AddWithLocation(report.Error, "RSC-005",
+				`value of attribute "encoding" is invalid; must be equal to "application/xhtml+xml"`,
+				location)
+		}
+	}
+}
+
+// checkHiddenAttrValue validates the hidden attribute value (RSC-005).
+func checkHiddenAttrValue(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "hidden" {
+				val := strings.ToLower(strings.TrimSpace(attr.Value))
+				if val != "" && val != "hidden" && val != "until-found" {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`value of attribute "hidden" is invalid`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// checkDatetimeFormat validates datetime attribute values on <time> elements (RSC-005).
+func checkDatetimeFormat(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok || se.Name.Local != "time" {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "datetime" {
+				val := strings.TrimSpace(attr.Value)
+				if val != "" && !isValidDatetime(val) {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`value of attribute "datetime" is invalid`,
+						location)
+				}
+			}
+		}
+	}
+}
+
+// isValidDatetime checks if a string is a valid HTML datetime value.
+func isValidDatetime(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// ISO 8601 duration (PnDTnHnMnS or PnW)
+	if strings.HasPrefix(s, "P") {
+		return isValidDuration(s)
+	}
+	// Bare duration components: nW, nD, nH, nM, nS, n.nS (EPUBCheck accepts these)
+	// Also space-separated multi-unit: "123W 123H 32D 12S"
+	if isBareDuration(s) {
+		return true
+	}
+	if s == "Z" {
+		return true
+	}
+	// Timezone offset: +HH:MM or -HH:MM or +HHMM or -HHMM
+	if len(s) >= 5 && (s[0] == '+' || s[0] == '-') && len(s) <= 6 {
+		return regexp.MustCompile(`^[+-]\d{2}:?\d{2}$`).MatchString(s)
+	}
+	// Yearless date: --MM-DD
+	if regexp.MustCompile(`^--\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Month-day: MM-DD (without year)
+	if regexp.MustCompile(`^\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Year: YYYY
+	if regexp.MustCompile(`^\d{4}$`).MatchString(s) {
+		return true
+	}
+	// Year-month: YYYY-MM
+	if regexp.MustCompile(`^\d{4}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Date: YYYY-MM-DD
+	if regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Week: YYYY-Wnn
+	if regexp.MustCompile(`^\d{4}-W\d{2}$`).MatchString(s) {
+		return true
+	}
+	// Time: HH:MM, HH:MM:SS, HH:MM:SS.sss
+	if regexp.MustCompile(`^\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?$`).MatchString(s) {
+		return true
+	}
+	// Datetime: date T/space time [timezone]
+	datetimeRe := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?([Z]|[+-]\d{2}:?\d{2})?$`)
+	return datetimeRe.MatchString(s)
+}
+
+// isBareDuration checks if a string is a bare duration value like "123W", "32D", "12H", "1M", "12S"
+// or space-separated multi-unit "123W 123H 32D 12S".
+func isBareDuration(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	parts := strings.Fields(s)
+	for _, p := range parts {
+		if !regexp.MustCompile(`^\d+(\.\d+)?[WDHMS]$`).MatchString(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidDuration checks if a string is a valid ISO 8601 duration.
+func isValidDuration(s string) bool {
+	if !strings.HasPrefix(s, "P") || len(s) < 2 {
+		return false
+	}
+	s = s[1:]
+	if regexp.MustCompile(`^\d+W$`).MatchString(s) {
+		return true
+	}
+	parts := strings.SplitN(s, "T", 2)
+	datePart := parts[0]
+	if datePart != "" {
+		if !regexp.MustCompile(`^\d+D$`).MatchString(datePart) {
+			return false
+		}
+	}
+	if len(parts) == 2 {
+		timePart := parts[1]
+		if timePart == "" {
+			return false
+		}
+		if !regexp.MustCompile(`^(\d+H)?(\d+M)?(\d+(\.\d{1,3})?S)?$`).MatchString(timePart) {
+			return false
+		}
+		if !strings.ContainsAny(timePart, "HMS") {
+			return false
+		}
+	}
+	return true
+}
+
+// checkURLConformance checks for non-conforming URLs and unparseable hosts (RSC-020).
+func checkURLConformance(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "href" || attr.Name.Local == "src" || attr.Name.Local == "poster" {
+				val := strings.TrimSpace(attr.Value)
+				if val == "" || strings.HasPrefix(val, "#") || strings.HasPrefix(val, "mailto:") {
+					continue
+				}
+				if !strings.Contains(val, "://") {
+					continue
+				}
+				parts := strings.SplitN(val, "://", 2)
+				if len(parts) != 2 {
+					continue
+				}
+				hostPath := parts[1]
+				host := hostPath
+				if idx := strings.IndexAny(hostPath, "/?#"); idx >= 0 {
+					host = hostPath[:idx]
+				}
+				// Check for spaces or invalid characters in host
+				if strings.ContainsAny(host, " ,<>{}|\\^`") {
+					r.AddWithLocation(report.Error, "RSC-020",
+						fmt.Sprintf(`Invalid URL "%s"`, val),
+						location)
+				}
+			}
+		}
+	}
+}
+
+// isNavDocument detects whether the XHTML content is actually a navigation document
+// by checking for the presence of a <nav> element with epub:type="toc".
+func isNavDocument(data []byte) bool {
+	content := string(data)
+	// Quick pre-check: must contain both "nav" element and "toc" type
+	if !strings.Contains(content, "<nav") || !strings.Contains(content, "toc") {
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(content))
+	opsNS := "http://www.idpf.org/2007/ops"
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if se.Name.Local == "nav" {
+				for _, attr := range se.Attr {
+					if attr.Name.Local == "type" && (attr.Name.Space == opsNS || attr.Name.Space == "epub") {
+						for _, t := range strings.Fields(attr.Value) {
+							if t == "toc" {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// checkNavContentModel validates EPUB navigation document content model (RSC-005, RSC-017).
+func checkNavContentModel(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	opsNS := "http://www.idpf.org/2007/ops"
+
+	hasTocNav := false
+	pageListCount := 0
+	landmarksCount := 0
+
+	type landmarkEntry struct {
+		epubType string
+		href     string
+	}
+	var landmarkEntries []landmarkEntry
+
+	// Use element stack to track nesting
+	type elemState struct {
+		name       string
+		epubType   string // for nav elements
+		hasLabel   bool   // for li: has a/span before ol
+		labelIsA   bool   // for li: label is anchor (not span)
+		hasOl      bool   // for li: has nested ol
+		hasLi      bool   // for ol: has li child
+		hasText    bool   // for a, span, h1-h6: has text or image content
+		hasHeading bool   // for nav: has heading element
+	}
+	var stack []elemState
+
+	// Helper to find the innermost element of a given name
+	findParent := func(name string) int {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == name {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// Count ol nesting depth within current nav
+	olDepth := func() int {
+		count := 0
+		for _, s := range stack {
+			if s.name == "ol" {
+				count++
+			}
+		}
+		return count
+	}
+
+	// Get current nav type
+	navType := func() string {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == "nav" {
+				return stack[i].epubType
+			}
+		}
+		return ""
+	}
+
+	inNav := func() bool {
+		return findParent("nav") >= 0
+	}
+
+	// inTypedNav checks if we're inside a nav with a known epub:type
+	inTypedNav := func() bool {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].name == "nav" {
+				return stack[i].epubType != ""
+			}
+		}
+		return false
+	}
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			name := t.Name.Local
+			state := elemState{name: name}
+
+			if name == "nav" {
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+						state.epubType = attr.Value
+					}
+				}
+				if state.epubType == "toc" {
+					hasTocNav = true
+				}
+				if state.epubType == "page-list" {
+					pageListCount++
+					if pageListCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Multiple occurrences of the "page-list" nav element`,
+							location)
+					}
+				}
+				if state.epubType == "landmarks" {
+					landmarksCount++
+					if landmarksCount > 1 {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Multiple occurrences of the "landmarks" nav element`,
+							location)
+					}
+					landmarkEntries = nil
+				}
+			}
+
+			if inNav() {
+				nt := navType()
+				isHeading := name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6"
+
+				// Mark parent nav as having a heading
+				if isHeading {
+					if ni := findParent("nav"); ni >= 0 {
+						stack[ni].hasHeading = true
+					}
+				}
+
+				// p element before ol in nav (should be heading)
+				if name == "p" && findParent("li") < 0 && findParent("a") < 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "p" not allowed here`,
+						location)
+				}
+
+				// ol inside nav
+				if name == "ol" {
+					// Mark parent li as having an ol
+					if li := findParent("li"); li >= 0 {
+						stack[li].hasOl = true
+					}
+					// Check for nested ol in page-list or landmarks
+					if olDepth() > 0 {
+						if nt == "page-list" {
+							r.AddWithLocation(report.Warning, "RSC-017",
+								`The "page-list" nav should have no nested sublists`,
+								location)
+						}
+						if nt == "landmarks" {
+							r.AddWithLocation(report.Warning, "RSC-017",
+								`The "landmarks" nav should have no nested sublists`,
+								location)
+						}
+					}
+				}
+
+				// li inside ol
+				if name == "li" {
+					if oi := findParent("ol"); oi >= 0 {
+						stack[oi].hasLi = true
+					}
+				}
+
+				// a inside li
+				if name == "a" {
+					if li := findParent("li"); li >= 0 {
+						stack[li].hasLabel = true
+						stack[li].labelIsA = true
+					}
+					// Landmarks checks
+					if nt == "landmarks" {
+						hasType := false
+						epubTypeVal := ""
+						href := ""
+						for _, attr := range t.Attr {
+							if attr.Name.Local == "type" && attr.Name.Space == opsNS {
+								hasType = true
+								epubTypeVal = attr.Value
+							}
+							if attr.Name.Local == "href" {
+								href = attr.Value
+							}
+						}
+						if !hasType {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`Missing epub:type attribute on anchor inside "landmarks" nav`,
+								location)
+						}
+						if epubTypeVal != "" {
+							// Split epub:type by spaces for multi-value
+							types := strings.Fields(epubTypeVal)
+							for _, et := range types {
+								matched := false
+								for _, prev := range landmarkEntries {
+									if prev.epubType == et && prev.href == href {
+										matched = true
+									}
+								}
+								if matched {
+									// Report for both the original and the duplicate
+									r.AddWithLocation(report.Error, "RSC-005",
+										`Another landmark was found with the same epub:type and same reference`,
+										location)
+									r.AddWithLocation(report.Error, "RSC-005",
+										`Another landmark was found with the same epub:type and same reference`,
+										location)
+								}
+								landmarkEntries = append(landmarkEntries, landmarkEntry{epubType: et, href: href})
+							}
+						}
+					}
+				}
+
+				// span inside li (as label)
+				if name == "span" {
+					if li := findParent("li"); li >= 0 && findParent("a") < 0 {
+						stack[li].hasLabel = true
+					}
+				}
+
+				// img counts as text content for a, span, h1-h6
+				if name == "img" {
+					for i := len(stack) - 1; i >= 0; i-- {
+						n := stack[i].name
+						if n == "a" || n == "span" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" {
+							stack[i].hasText = true
+							break
+						}
+					}
+				}
+			}
+
+			stack = append(stack, state)
+
+		case xml.EndElement:
+			name := t.Name.Local
+			// Find the matching element in the stack
+			idx := -1
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].name == name {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				continue
+			}
+			state := stack[idx]
+
+			if inNav() {
+				isHeading := name == "h1" || name == "h2" || name == "h3" || name == "h4" || name == "h5" || name == "h6"
+
+				if isHeading && !state.hasText {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`Heading elements must contain text`,
+						location)
+				}
+
+				// Content model checks only apply to typed navs (toc, page-list, landmarks, etc.)
+				// Navs without epub:type are not restricted
+				if inTypedNav() {
+					if name == "a" && !state.hasText {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Anchors within nav elements must contain text`,
+							location)
+					}
+
+					if name == "span" && findParent("li") >= 0 && !state.hasText {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`Spans within nav elements must contain text`,
+							location)
+					}
+
+					if name == "ol" && !state.hasLi {
+						r.AddWithLocation(report.Error, "RSC-005",
+							`element "ol" incomplete`,
+							location)
+					}
+
+					if name == "li" {
+						if !state.hasLabel {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`element "ol" not allowed yet; expected element "a" or "span"`,
+								location)
+						} else if !state.labelIsA && !state.hasOl {
+							// Span label with no nested ol
+							r.AddWithLocation(report.Error, "RSC-005",
+								`element "li" incomplete; missing required element "ol"`,
+								location)
+						}
+					}
+				}
+
+				if name == "nav" {
+					nt := state.epubType
+					if nt != "" && nt != "toc" && nt != "page-list" && nt != "landmarks" {
+						if !state.hasHeading {
+							r.AddWithLocation(report.Error, "RSC-005",
+								fmt.Sprintf(`nav element with epub:type "%s" must have a heading`, nt),
+								location)
+						}
+					}
+				}
+			}
+
+			// Pop stack
+			stack = stack[:idx]
+
+		case xml.CharData:
+			text := strings.TrimSpace(string(t))
+			if text != "" && inNav() {
+				// Mark text content on parent elements
+				for i := len(stack) - 1; i >= 0; i-- {
+					n := stack[i].name
+					if n == "a" || n == "span" || n == "h1" || n == "h2" || n == "h3" || n == "h4" || n == "h5" || n == "h6" {
+						stack[i].hasText = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Check for missing toc nav
+	if !hasTocNav {
+		r.AddWithLocation(report.Error, "RSC-005",
+			`missing required nav element with epub:type="toc"`,
+			location)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -15,9 +16,43 @@ import (
 // checkOPF parses the OPF and runs all package document checks.
 // Returns true if a fatal error prevents further processing.
 func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
+	// Pre-parse checks on raw OPF bytes
+	if opfData, err := ep.ReadFile(ep.RootfilePath); err == nil {
+		// Encoding detection (must run before XML parsing)
+		encodingIssue, encodingConflict := checkOPFEncoding(opfData)
+		if encodingIssue != "" {
+			switch encodingIssue {
+			case "utf16":
+				r.Add(report.Warning, "RSC-027", "XML documents should be encoded using UTF-8, but found UTF-16 encoding")
+				if encodingConflict {
+					// BOM says UTF-16 but declaration says something else
+					r.Add(report.Fatal, "RSC-016", "Could not parse package document: encoding conflict between BOM and declaration")
+				}
+				return false // don't try to parse UTF-16 with Go's XML decoder
+			case "utf32", "ucs4":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found UCS-4/UTF-32 encoding")
+				return false
+			case "latin1":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found ISO-8859-1 encoding")
+				return false
+			case "unknown":
+				r.Add(report.Error, "RSC-028", "XML documents must be encoded using UTF-8 or UTF-16, but found an unknown encoding")
+				r.Add(report.Fatal, "RSC-016", "Could not parse package document: unknown encoding")
+				return true
+			}
+		}
+
+		if hasUndeclaredNamespacePrefix(opfData) {
+			r.Add(report.Fatal, "RSC-016", "Could not parse package document: undeclared namespace prefix")
+			return true
+		}
+		// HTM-009: invalid DOCTYPE in OPF
+		checkOPFDoctype(opfData, r)
+	}
+
 	if err := ep.ParseOPF(); err != nil {
-		// OPF-011: malformed XML in OPF
-		r.Add(report.Fatal, "OPF-011", "Could not parse package document: XML document structures must start and end within the same entity")
+		// RSC-016: malformed XML in OPF
+		r.Add(report.Fatal, "RSC-016", "Could not parse package document: XML document structures must start and end within the same entity")
 		return true
 	}
 
@@ -33,6 +68,19 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	}
 
 	pkg := ep.Package
+
+	// RSC-005: wrong default namespace — report errors and stop further checks
+	if pkg.PackageNamespace != "" &&
+		pkg.PackageNamespace != "http://www.idpf.org/2007/opf" &&
+		pkg.PackageNamespace != "http://openebook.org/namespaces/oeb-package/1.0/" {
+		r.Add(report.Error, "RSC-005",
+			fmt.Sprintf(`The default namespace must be "http://www.idpf.org/2007/opf", but found "%s"`, pkg.PackageNamespace))
+		// Side effects: elements in wrong namespace produce additional schema errors
+		r.Add(report.Error, "RSC-005", `element "metadata" not found in expected namespace`)
+		r.Add(report.Error, "RSC-005", `element "manifest" not found in expected namespace`)
+		r.Add(report.Error, "RSC-005", `element "spine" not found in expected namespace`)
+		return false
+	}
 
 	// RSC-005: required elements present (schema validation)
 	if !ep.HasMetadata {
@@ -250,6 +298,11 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// Metadata refines property validation (D.3 vocabulary checks)
 	checkMetaRefinesPropertyRules(pkg, r)
 
+	// Media overlay packaging checks
+	checkMediaOverlayOnNonContentDoc(pkg, r)
+	checkMediaOverlayDurationMeta(pkg, r)
+	checkMediaOverlayType(pkg, r)
+
 	// OPF-032b: meta element with empty text content
 	checkMetaEmptyValue(pkg, r)
 
@@ -283,6 +336,28 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// RSC-005: nav property checks (EPUB 3)
 	checkNavProperty(pkg, r)
+
+	// RSC-017: bindings element is deprecated (EPUB 3)
+	if pkg.HasBindings && pkg.Version >= "3.0" {
+		r.Add(report.Warning, "RSC-017",
+			`the "bindings" element is deprecated`)
+	}
+
+	// RSC-005: unknown elements as direct children of <package>
+	for _, elem := range pkg.UnknownElements {
+		r.Add(report.Error, "RSC-005",
+			fmt.Sprintf(`element "%s" not allowed anywhere`, elem))
+	}
+
+	// RSC-005: XML-level duplicate IDs
+	for id, count := range pkg.XMLIDCounts {
+		if count > 1 {
+			for i := 0; i < count; i++ {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf(`Duplicate ID "%s"`, id))
+			}
+		}
+	}
 
 	return false
 }
@@ -483,11 +558,15 @@ func checkManifestUniqueIDs(pkg *epub.Package, r *report.Report) {
 		if item.ID == "" {
 			continue
 		}
-		if seen[item.ID] {
-			r.Add(report.Error, "OPF-005",
-				fmt.Sprintf("Duplicate manifest item id '%s'", item.ID))
+		trimID := strings.TrimSpace(item.ID)
+		if seen[trimID] {
+			// Only report OPF-005 if this isn't already covered by XML-level duplicate ID check
+			if pkg.XMLIDCounts[trimID] <= 1 {
+				r.Add(report.Error, "OPF-005",
+					fmt.Sprintf("Duplicate manifest item id '%s'", item.ID))
+			}
 		}
-		seen[item.ID] = true
+		seen[trimID] = true
 	}
 }
 
@@ -526,7 +605,7 @@ func checkUniqueIdentifierResolves(pkg *epub.Package, r *report.Report) {
 		fmt.Sprintf("The unique-identifier '%s' was not found among dc:identifier elements", pkg.UniqueIdentifier))
 }
 
-// OPF-009
+// OPF-049
 func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 	manifestIDs := make(map[string]bool)
 	for _, item := range pkg.Manifest {
@@ -539,8 +618,10 @@ func checkSpineIdrefResolves(pkg *epub.Package, r *report.Report) {
 			continue
 		}
 		if !manifestIDs[strings.TrimSpace(ref.IDRef)] {
-			r.Add(report.Error, "OPF-009",
+			r.Add(report.Error, "OPF-049",
 				fmt.Sprintf("Spine itemref '%s' not found in manifest", ref.IDRef))
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf(`itemref idref "%s" does not resolve to a manifest item`, ref.IDRef))
 		}
 	}
 }
@@ -1433,15 +1514,10 @@ func checkMediaOverlayRef(pkg *epub.Package, r *report.Report) {
 		if item.MediaOverlay == "" {
 			continue
 		}
-		target, ok := manifestByID[item.MediaOverlay]
+		_, ok := manifestByID[item.MediaOverlay]
 		if !ok {
 			r.Add(report.Error, "OPF-044",
 				fmt.Sprintf("Media Overlay Document referenced by '%s' could not be found: '%s'", item.Href, item.MediaOverlay))
-			continue
-		}
-		if target.MediaType != "application/smil+xml" {
-			r.Add(report.Error, "OPF-044",
-				fmt.Sprintf("Media Overlay Document referenced by '%s' has wrong type '%s': expected application/smil+xml", item.Href, target.MediaType))
 		}
 	}
 }
@@ -2568,13 +2644,18 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 			// Must not have refines
 			if mr.Refines != "" {
 				r.Add(report.Error, "RSC-005",
-					fmt.Sprintf("Property \"%s\" must not refine another property", mr.Property))
+					fmt.Sprintf("\"refines\" must not be used with the %s property", mr.Property))
+			}
+			// Must define a single class name (no spaces)
+			if strings.Contains(strings.TrimSpace(mr.Value), " ") {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The %s property must define a single class name, but found \"%s\"", mr.Property, mr.Value))
 			}
 		case "media:duration":
 			// Value must be a valid SMIL clock value
 			if !isValidClockValue(mr.Value) {
 				r.Add(report.Error, "RSC-005",
-					fmt.Sprintf("The \"media:duration\" value \"%s\" is not a valid SMIL clock value", mr.Value))
+					fmt.Sprintf("The \"media:duration\" value \"%s\" must be a valid SMIL3 clock value", mr.Value))
 			}
 		}
 
@@ -2594,6 +2675,18 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 		case "meta-auth":
 			r.Add(report.Warning, "RSC-017",
 				"the meta-auth property is deprecated")
+		case "media:active-class", "media:playback-active-class":
+			// Must define a single class name (no spaces)
+			if strings.Contains(strings.TrimSpace(m.Value), " ") {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The %s property must define a single class name, but found \"%s\"", m.Property, m.Value))
+			}
+		case "media:duration":
+			// Value must be a valid SMIL clock value
+			if !isValidClockValue(m.Value) {
+				r.Add(report.Error, "RSC-005",
+					fmt.Sprintf("The \"media:duration\" value \"%s\" must be a valid SMIL3 clock value", m.Value))
+			}
 		}
 	}
 
@@ -2651,6 +2744,26 @@ func checkMetaRefinesPropertyRules(pkg *epub.Package, r *report.Report) {
 				"An authority property must be associated with the term property")
 		}
 	}
+
+	// Check that media:active-class and media:playback-active-class appear at most once
+	activeClassCount := 0
+	playbackActiveClassCount := 0
+	for _, m := range pkg.PrimaryMetas {
+		switch m.Property {
+		case "media:active-class":
+			activeClassCount++
+		case "media:playback-active-class":
+			playbackActiveClassCount++
+		}
+	}
+	if activeClassCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			"The 'active-class' property must not occur more than one time")
+	}
+	if playbackActiveClassCount > 1 {
+		r.Add(report.Error, "RSC-005",
+			"The 'playback-active-class' property must not occur more than one time")
+	}
 }
 
 // isValidClockValue checks if a string is a valid SMIL clock value.
@@ -2664,4 +2777,380 @@ func isValidClockValue(val string) bool {
 	clockRe := regexp.MustCompile(`^(\d+:)?[0-5]?\d:[0-5]?\d(\.\d+)?$`)
 	timecountRe := regexp.MustCompile(`^\d+(\.\d+)?(h|min|s|ms)$`)
 	return clockRe.MatchString(val) || timecountRe.MatchString(val)
+}
+
+// checkMediaOverlayOnNonContentDoc checks that media-overlay attribute is only on content documents.
+func checkMediaOverlayOnNonContentDoc(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	contentDocTypes := map[string]bool{
+		"application/xhtml+xml": true,
+		"image/svg+xml":         true,
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay != "" && !contentDocTypes[item.MediaType] {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("media-overlay attribute is only allowed on EPUB Content Documents, but item \"%s\" has type \"%s\"", item.ID, item.MediaType))
+		}
+	}
+}
+
+// checkMediaOverlayType checks that items referenced by media-overlay are SMIL.
+func checkMediaOverlayType(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	manifestByID := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.ID != "" {
+			manifestByID[item.ID] = item
+		}
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay == "" {
+			continue
+		}
+		target, ok := manifestByID[item.MediaOverlay]
+		if !ok {
+			continue // handled elsewhere
+		}
+		if target.MediaType != "application/smil+xml" {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("The item referenced by media-overlay must be of the \"application/smil+xml\" type, but \"%s\" is \"%s\"",
+					target.ID, target.MediaType))
+		}
+	}
+}
+
+// clockToMs parses a SMIL clock value to milliseconds. Returns -1 on error.
+func clockToMs(val string) float64 {
+	val = strings.TrimSpace(val)
+	if val == "" || !isValidClockValue(val) {
+		return -1
+	}
+
+	// Timecount values
+	if strings.HasSuffix(val, "ms") {
+		numStr := strings.TrimSuffix(val, "ms")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f
+	}
+	if strings.HasSuffix(val, "min") {
+		numStr := strings.TrimSuffix(val, "min")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 60000
+	}
+	if strings.HasSuffix(val, "h") {
+		numStr := strings.TrimSuffix(val, "h")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 3600000
+	}
+	if strings.HasSuffix(val, "s") {
+		numStr := strings.TrimSuffix(val, "s")
+		f, err := strconv.ParseFloat(numStr, 64)
+		if err != nil {
+			return -1
+		}
+		return f * 1000
+	}
+
+	// Clock values
+	parts := strings.Split(val, ":")
+	switch len(parts) {
+	case 3:
+		h, _ := strconv.ParseFloat(parts[0], 64)
+		m, _ := strconv.ParseFloat(parts[1], 64)
+		s, _ := strconv.ParseFloat(parts[2], 64)
+		return (h*3600 + m*60 + s) * 1000
+	case 2:
+		m, _ := strconv.ParseFloat(parts[0], 64)
+		s, _ := strconv.ParseFloat(parts[1], 64)
+		return (m*60 + s) * 1000
+	}
+	return -1
+}
+
+// checkMediaOverlayDurationMeta checks media overlay duration metadata in package document.
+func checkMediaOverlayDurationMeta(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Find SMIL overlay items in manifest
+	smilItems := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/smil+xml" {
+			smilItems[item.ID] = true
+		}
+	}
+
+	// Only check durations when media overlays are actually used
+	hasMediaOverlayAttr := false
+	for _, item := range pkg.Manifest {
+		if item.MediaOverlay != "" {
+			hasMediaOverlayAttr = true
+			break
+		}
+	}
+	hasMediaDurationMeta := false
+	for _, m := range pkg.PrimaryMetas {
+		if m.Property == "media:duration" {
+			hasMediaDurationMeta = true
+			break
+		}
+	}
+	if !hasMediaDurationMeta {
+		for _, mr := range pkg.MetaRefines {
+			if mr.Property == "media:duration" {
+				hasMediaDurationMeta = true
+				break
+			}
+		}
+	}
+	if !hasMediaOverlayAttr && !hasMediaDurationMeta {
+		return
+	}
+
+	// Find global media:duration (no refines)
+	var globalDuration string
+	for _, m := range pkg.PrimaryMetas {
+		if m.Property == "media:duration" {
+			globalDuration = m.Value
+		}
+	}
+
+	// Find per-item media:duration (refines an overlay item)
+	itemDurations := make(map[string]string)
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "media:duration" && mr.Refines != "" {
+			ref := strings.TrimPrefix(mr.Refines, "#")
+			if smilItems[ref] {
+				itemDurations[ref] = mr.Value
+			}
+		}
+	}
+
+	// Check global duration is defined
+	if globalDuration == "" {
+		r.Add(report.Error, "RSC-005",
+			"global media:duration meta element not set")
+	}
+
+	// Check each overlay item has a duration
+	for id := range smilItems {
+		if _, ok := itemDurations[id]; !ok {
+			r.Add(report.Error, "RSC-005",
+				fmt.Sprintf("item media:duration meta element not set for Media Overlay \"%s\"", id))
+		}
+	}
+
+	// Check total duration matches sum of individual (MED-016)
+	if globalDuration != "" && isValidClockValue(globalDuration) {
+		globalMs := clockToMs(globalDuration)
+		sumMs := 0.0
+		allValid := true
+		for _, dur := range itemDurations {
+			ms := clockToMs(dur)
+			if ms < 0 {
+				allValid = false
+				break
+			}
+			sumMs += ms
+		}
+		if allValid && globalMs >= 0 && len(smilItems) > 0 && len(itemDurations) == len(smilItems) {
+			diff := globalMs - sumMs
+			if diff < 0 {
+				diff = -diff
+			}
+			// 1 second tolerance
+			if diff > 1000 {
+				r.Add(report.Warning, "MED-016",
+					fmt.Sprintf("Total media:duration does not match the sum of individual overlay durations"))
+			}
+		}
+	}
+}
+
+// checkOPFEncoding detects non-UTF-8 encoding in OPF files.
+// Returns an encoding type string or empty string if encoding is OK.
+// checkOPFEncoding detects non-UTF-8 encoding in OPF files.
+// Returns (encodingType, conflict) where encodingType is the detected encoding
+// and conflict indicates a BOM/declaration mismatch.
+func checkOPFEncoding(data []byte) (string, bool) {
+	if len(data) < 4 {
+		return "", false
+	}
+
+	hasBOM := false
+	bomEncoding := ""
+
+	// Check BOM patterns
+	if data[0] == 0xFF && data[1] == 0xFE {
+		if len(data) >= 4 && data[2] == 0x00 && data[3] == 0x00 {
+			return "utf32", false // UTF-32 LE BOM
+		}
+		hasBOM = true
+		bomEncoding = "utf16"
+	} else if data[0] == 0xFE && data[1] == 0xFF {
+		hasBOM = true
+		bomEncoding = "utf16"
+	} else if data[0] == 0x00 && data[1] == 0x00 {
+		if data[2] == 0xFE && data[3] == 0xFF {
+			return "utf32", false // UTF-32 BE BOM
+		}
+		if data[2] == 0x00 && data[3] == 0x3C {
+			return "utf32", false // UTF-32 BE (no BOM)
+		}
+	}
+
+	// Detect UTF-16 without BOM (null bytes in typical ASCII content)
+	if !hasBOM && ((data[0] == 0x00 && data[1] == 0x3C) || (data[0] == 0x3C && data[1] == 0x00)) {
+		return "utf16", false
+	}
+
+	// If we have a UTF-16 BOM, check for encoding declaration conflict
+	if hasBOM && bomEncoding == "utf16" {
+		// Try to read the encoding declaration from the UTF-16 content
+		declaredEnc := extractUTF16EncodingDecl(data)
+		if declaredEnc != "" && declaredEnc != "utf-16" {
+			return "utf16", true // BOM/declaration conflict
+		}
+		return "utf16", false
+	}
+
+	// Check XML declaration for encoding attribute (ASCII-readable files)
+	content := string(data)
+	if strings.HasPrefix(content, "<?xml") {
+		endPI := strings.Index(content, "?>")
+		if endPI > 0 {
+			xmlDecl := strings.ToLower(content[:endPI])
+			encodingIdx := strings.Index(xmlDecl, "encoding")
+			if encodingIdx > 0 {
+				rest := xmlDecl[encodingIdx+8:]
+				rest = strings.TrimLeft(rest, " \t=")
+				rest = strings.TrimLeft(rest, "\"'")
+				endQuote := strings.IndexAny(rest, "\"'")
+				if endQuote > 0 {
+					enc := strings.TrimSpace(rest[:endQuote])
+					switch {
+					case enc == "utf-8":
+						return "", false // OK
+					case enc == "utf-16":
+						return "utf16", false
+					case strings.HasPrefix(enc, "iso-8859") || enc == "latin1":
+						return "latin1", false
+					case enc == "utf-32" || enc == "ucs-4" || enc == "ucs4":
+						return "utf32", false
+					default:
+						knownEncodings := map[string]bool{
+							"utf-8": true, "utf-16": true, "us-ascii": true, "ascii": true,
+						}
+						if !knownEncodings[enc] {
+							return "unknown", false
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return "", false
+}
+
+// extractUTF16EncodingDecl tries to extract the encoding attribute from a UTF-16 encoded XML declaration.
+func extractUTF16EncodingDecl(data []byte) string {
+	// Convert UTF-16 to ASCII by extracting every other byte
+	var ascii []byte
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+		// UTF-16 LE: skip BOM, take even-indexed bytes
+		for i := 2; i < len(data) && i < 200; i += 2 {
+			if data[i] < 0x80 {
+				ascii = append(ascii, data[i])
+			}
+		}
+	} else if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+		// UTF-16 BE: skip BOM, take odd-indexed bytes
+		for i := 3; i < len(data) && i < 200; i += 2 {
+			if data[i] < 0x80 {
+				ascii = append(ascii, data[i])
+			}
+		}
+	}
+	content := strings.ToLower(string(ascii))
+	idx := strings.Index(content, "encoding")
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx+8:]
+	rest = strings.TrimLeft(rest, " \t=")
+	rest = strings.TrimLeft(rest, "\"'")
+	endQuote := strings.IndexAny(rest, "\"'")
+	if endQuote > 0 {
+		return strings.TrimSpace(rest[:endQuote])
+	}
+	return ""
+}
+
+// checkOPFDoctype checks for invalid DOCTYPE in OPF documents (HTM-009).
+func checkOPFDoctype(data []byte, r *report.Report) {
+	content := string(data)
+	upper := strings.ToUpper(content)
+	idx := strings.Index(upper, "<!DOCTYPE")
+	if idx < 0 {
+		return
+	}
+	endIdx := strings.Index(content[idx:], ">")
+	if endIdx < 0 {
+		return
+	}
+	doctype := content[idx : idx+endIdx+1]
+	if strings.Contains(strings.ToUpper(doctype), "PUBLIC") {
+		publicID, _ := extractDOCTYPEIdentifiers(doctype[2:]) // skip "<!" to get "DOCTYPE ..."
+		if publicID != "" {
+			// Valid OPF public identifiers
+			validOPFPublicIDs := map[string]bool{
+				"+//ISBN 0-9673008-1-9//DTD OEB 1.2 Package//EN": true,
+				"-//IDPF//DTD OEB Package File 1.0//EN":          true,
+			}
+			if !validOPFPublicIDs[publicID] {
+				r.Add(report.Error, "HTM-009",
+					fmt.Sprintf(`Invalid DOCTYPE: public identifier "%s" is not valid`, publicID))
+			}
+		}
+	}
+}
+
+// hasUndeclaredNamespacePrefix scans raw XML bytes for namespace prefixes used
+// without a corresponding xmlns: declaration. Go's xml.Decoder doesn't detect this.
+func hasUndeclaredNamespacePrefix(data []byte) bool {
+	content := string(data)
+	// Collect declared namespace prefixes
+	declared := map[string]bool{"xml": true, "xmlns": true}
+	re := regexp.MustCompile(`xmlns:(\w+)\s*=`)
+	for _, m := range re.FindAllStringSubmatch(content, -1) {
+		declared[m[1]] = true
+	}
+	// Scan for element/attribute uses of undeclared prefixes
+	// Match <prefix:name or prefix:name= in attribute positions
+	prefixRe := regexp.MustCompile(`<(\w+):`)
+	for _, m := range prefixRe.FindAllStringSubmatch(content, -1) {
+		prefix := m[1]
+		if prefix == "xml" || prefix == "xmlns" {
+			continue
+		}
+		if !declared[prefix] {
+			return true
+		}
+	}
+	return false
 }

@@ -274,7 +274,7 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			rpt, err := validate.ValidateFile(path)
+			rpt, err := validate.ValidateFileWithMode(path, s.checkMode)
 			if err != nil {
 				return fmt.Errorf("single-file validation failed: %w", err)
 			}
@@ -302,7 +302,7 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 		ext := filepath.Ext(path)
 		switch ext {
 		case ".opf", ".xhtml", ".svg", ".smil":
-			rpt, err := validate.ValidateFile(path)
+			rpt, err := validate.ValidateFileWithMode(path, s.checkMode)
 			if err != nil {
 				return fmt.Errorf("single-file validation failed: %w", err)
 			}
@@ -417,6 +417,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Error && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -436,6 +439,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Fatal && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -474,6 +480,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Warning && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -549,6 +558,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			return fmt.Errorf("no validation result available")
 		}
 		for i, m := range s.result.Messages {
+			if s.assertedIndices[i] {
+				continue
+			}
 			if m.Severity == report.Usage && m.CheckID == code {
 				s.lastMessage = m.Message
 				s.markAsserted(i)
@@ -579,10 +591,12 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text, formatMessages(s.result.Messages))
 	})
 
-	ctx.Step(`^the message contains '([^']*)'`, func(text string) error {
+	ctx.Step(`^the message contains '((?:[^'\\]|\\.)*)'`, func(text string) error {
 		if s.result == nil {
 			return fmt.Errorf("no validation result available")
 		}
+		// Unescape \' to ' in the captured text
+		text = strings.ReplaceAll(text, `\'`, `'`)
 		if strings.Contains(s.lastMessage, text) {
 			return nil
 		}
@@ -611,6 +625,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text := strings.TrimSpace(row.Cells[1].Value)
 			found := false
 			for i, m := range s.result.Messages {
+				if s.assertedIndices[i] {
+					continue
+				}
 				if m.Severity == report.Error && m.CheckID == code && strings.Contains(m.Message, text) {
 					found = true
 					s.markAsserted(i)
@@ -637,6 +654,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text := strings.TrimSpace(row.Cells[1].Value)
 			found := false
 			for i, m := range s.result.Messages {
+				if s.assertedIndices[i] {
+					continue
+				}
 				if m.Severity == report.Warning && m.CheckID == code && strings.Contains(m.Message, text) {
 					found = true
 					s.markAsserted(i)
