@@ -41,9 +41,9 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 			continue // Missing file handled by RSC-005
 		}
 
-		// CSS-003: warn if CSS is UTF-16 encoded (detected by BOM)
-		if len(data) >= 2 && (data[0] == utf16BEBom[0] && data[1] == utf16BEBom[1] ||
-			data[0] == utf16LEBom[0] && data[1] == utf16LEBom[1]) {
+		// CSS-003: warn if CSS is UTF-16 encoded (detected by BOM); skip further checks
+		if len(data) >= 2 && (data[0] == 0xFE && data[1] == 0xFF ||
+			data[0] == 0xFF && data[1] == 0xFE) {
 			r.AddWithLocation(report.Warning, "CSS-003",
 				"CSS document is encoded in UTF-16; UTF-8 encoding is recommended",
 				fullPath)
@@ -459,18 +459,22 @@ func checkCSSRemoteFonts(ep *epub.EPUB, css string, location string, item epub.M
 
 // checkCSSFontFileExists: font file sources must exist in the container.
 // RSC-007: referenced resource not found in the container.
+// CSS-007: info when font uses a non-standard (non-core) media type.
 func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *report.Report) {
 	fontFaceRe := regexp.MustCompile(`@font-face\s*\{([^}]*)\}`)
 	urlRe := regexp.MustCompile(`url\(['"]?([^'")\s]+)['"]?\)`)
 
 	cssDir := path.Dir(location)
 
-	// Build manifest lookup by full path (to avoid duplicating RSC-001)
+	// Build manifest lookups
 	manifestPaths := make(map[string]bool)
+	manifestByPath := make(map[string]string) // path -> media-type
 	if ep.Package != nil {
 		for _, item := range ep.Package.Manifest {
 			if item.Href != "\x00MISSING" {
-				manifestPaths[ep.ResolveHref(item.Href)] = true
+				fp := ep.ResolveHref(item.Href)
+				manifestPaths[fp] = true
+				manifestByPath[fp] = item.MediaType
 			}
 		}
 	}
@@ -504,6 +508,15 @@ func checkCSSFontFileExists(ep *epub.EPUB, css string, location string, r *repor
 				r.AddWithLocation(report.Error, "RSC-007",
 					fmt.Sprintf("Referenced resource '%s' could not be found in the container", href),
 					location)
+			} else {
+				// CSS-007: info when font uses a non-standard (non-core) media type
+				if mt, ok := manifestByPath[target]; ok {
+					if isFontMediaType(mt) && !coreMediaTypes[mt] && !acceptedFontTypeAliases[mt] {
+						r.AddWithLocation(report.Info, "CSS-007",
+							fmt.Sprintf("Font '%s' uses a non-standard media type '%s'", href, mt),
+							location)
+					}
+				}
 			}
 		}
 	}

@@ -130,8 +130,8 @@ var divergenceChecks = map[string]bool{
 	"HTM-009":  true, // base element
 	"HTM-021":  true, // position:absolute in inline style
 	"NAV-009":  true, // hidden attribute on nav
-	"CSS-003":  true, // @font-face missing src
 	"CSS-005":  true, // @import rules
+	"CSS-011":  true, // @font-face missing src
 	"OPF-039":  true, // deprecated guide element in EPUB 3
 	"MED-012":  true, // video non-core media type
 	"E2-012":   true, // invalid guide reference type

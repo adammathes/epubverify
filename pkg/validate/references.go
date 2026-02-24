@@ -82,11 +82,7 @@ func checkManifestFilesExist(ep *epub.EPUB, r *report.Report) {
 		}
 		fullPath := ep.ResolveHref(item.Href)
 		if _, exists := ep.Files[fullPath]; !exists {
-			checkID := "RSC-001"
-			if item.MediaType == "text/css" {
-				checkID = "RSC-005"
-			}
-			r.Add(report.Error, checkID,
+			r.Add(report.Error, "RSC-001",
 				fmt.Sprintf("Referenced resource '%s' could not be found in the container", item.Href))
 		}
 	}
