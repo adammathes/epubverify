@@ -214,7 +214,10 @@ var rsc005Mapping = map[string]func(string) string{
 		return `element "dc:date" not allowed here`
 	},
 	"OPF-086b": func(msg string) string {
-		return `attribute "fallback-style" not allowed here`
+		if strings.Contains(msg, "fallback-style") {
+			return `attribute "fallback-style" not allowed here`
+		}
+		return "" // don't remap epub:type deprecation messages
 	},
 	"OPF-039b": func(msg string) string {
 		return `element "guide" incomplete; missing required element "reference"`
@@ -223,7 +226,19 @@ var rsc005Mapping = map[string]func(string) string{
 		return `value of attribute "property" is invalid; must be a string with length at least 1`
 	},
 	"OPF-088": func(msg string) string {
-		return msg // pass through the message as-is for RSC-005
+		if strings.Contains(msg, "epub:type value") {
+			return "" // don't remap content-level epub:type checks
+		}
+		return msg // pass through OPF-level messages for RSC-005
+	},
+	"HTM-004": func(msg string) string {
+		return msg // pass through for RSC-005 schema validation
+	},
+	"HTM-009": func(msg string) string {
+		if strings.Contains(msg, "Invalid DOCTYPE") {
+			return msg
+		}
+		return "" // don't remap base element warnings
 	},
 }
 

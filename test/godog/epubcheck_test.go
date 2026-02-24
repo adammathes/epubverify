@@ -611,6 +611,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text := strings.TrimSpace(row.Cells[1].Value)
 			found := false
 			for i, m := range s.result.Messages {
+				if s.assertedIndices[i] {
+					continue
+				}
 				if m.Severity == report.Error && m.CheckID == code && strings.Contains(m.Message, text) {
 					found = true
 					s.markAsserted(i)
@@ -637,6 +640,9 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 			text := strings.TrimSpace(row.Cells[1].Value)
 			found := false
 			for i, m := range s.result.Messages {
+				if s.assertedIndices[i] {
+					continue
+				}
 				if m.Severity == report.Warning && m.CheckID == code && strings.Contains(m.Message, text) {
 					found = true
 					s.markAsserted(i)
