@@ -2078,7 +2078,7 @@ func checkLangXMLLangMatch(data []byte, location string, r *report.Report) {
 		}
 		if hasLang && hasXMLLang && !strings.EqualFold(lang, xmlLang) {
 			r.AddWithLocation(report.Error, "RSC-005",
-				fmt.Sprintf("Attributes lang and xml:lang must have the same value when both are present, but found '%s' and '%s'", lang, xmlLang),
+				fmt.Sprintf("lang and xml:lang attributes must have the same value when both are present, but found '%s' and '%s'", lang, xmlLang),
 				location)
 			return
 		}
