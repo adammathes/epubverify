@@ -227,6 +227,7 @@ func (ep *EPUB) ParseOPF() error {
 
 	// XML-level fields
 	p.HasBindings = structInfo.hasBindings
+	p.BindingsTypes = structInfo.bindingsTypes
 	p.UnknownElements = structInfo.unknownElements
 	p.XMLIDCounts = structInfo.xmlIDCounts
 	p.PackageNamespace = structInfo.packageNamespace
@@ -263,6 +264,7 @@ type opfStructInfo struct {
 	metaListProps            []string // meta property attributes containing spaces
 	metaEmptyValues          int      // count of meta elements with empty text content
 	hasBindings              bool
+	bindingsTypes            map[string]bool
 	collections              []Collection
 	unknownElements          []string
 	xmlIDCounts              map[string]int
@@ -374,6 +376,16 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			info.elementOrder = append(info.elementOrder, "guide")
 		case "bindings":
 			info.hasBindings = true
+		case "mediaType":
+			// <mediaType> inside <bindings> maps a media-type to a handler
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "media-type" && attr.Value != "" {
+					if info.bindingsTypes == nil {
+						info.bindingsTypes = make(map[string]bool)
+					}
+					info.bindingsTypes[attr.Value] = true
+				}
+			}
 		case "collection":
 			var role string
 			for _, attr := range se.Attr {
@@ -415,10 +427,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			})
 		case "meta":
 			var prop, refines, val, metaID, scheme string
+			hasProperty := false
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
 					prop = attr.Value
+					hasProperty = true
 				case "refines":
 					refines = attr.Value
 				case "id":
@@ -431,8 +445,10 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				info.metaSchemes = append(info.metaSchemes, MetaScheme{Scheme: scheme, Property: prop})
 			}
 			// Track empty/invalid property attributes
+			// Only count as empty if the property attribute was actually present
+			// (e.g. <meta property="">) — NOT for legacy <meta name="cover"> elements
 			trimmedProp := strings.TrimSpace(prop)
-			if trimmedProp == "" {
+			if hasProperty && trimmedProp == "" {
 				info.metaEmptyProps++
 			} else if strings.Contains(trimmedProp, " ") {
 				info.metaListProps = append(info.metaListProps, prop)

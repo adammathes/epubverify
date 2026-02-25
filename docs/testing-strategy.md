@@ -199,3 +199,23 @@ These exposed **5 new false-positive bug categories**, all fixed:
 | RSC-004 | ERROR | Remote `<video>`/`<audio>` sources flagged even when content doc has `remote-resources` property | Check `remote-resources` property before flagging |
 
 After all fixes: **133/133 real-world + 29/29 synthetic = 162/162 match.**
+
+### Round 11 (expanded to 77 new EPUBs: +65 Gutenberg, +10 IDPF, +2 Gutenberg EPUB2)
+
+Independent stress test downloading 77 fresh EPUBs and comparing against
+epubcheck 5.1.0. This round focused on volume (50 Gutenberg books) plus
+exotic IDPF samples (FXL, MathML, SVG, media overlays, CJK, scripted
+content, bindings). Three bugs found and fixed:
+
+| Check ID | Severity | Description | Fix |
+|----------|----------|-------------|-----|
+| OPF-025b | ERROR | `<meta name="cover">` (no `property` attr) counted as empty property — **49/50 books flagged invalid** | Track `hasProperty` boolean; only count as empty when `property=""` is explicitly present |
+| RSC-005 | ERROR (missed) | `checkObsoleteAttrs()` only called in single-file mode; deprecated HTML5 attributes (`align`, `valign`, `bgcolor`, etc.) never checked in normal EPUB validation | Call `checkObsoleteAttrs` from `checkContentWithSkips` for EPUB3; add comprehensive element-specific deprecated attribute map |
+| RSC-032 | ERROR | `<object>` with inline HTML fallback content and/or `<bindings>` handler not recognized as having valid fallback | Defer RSC-032 check; track child HTML content inside `<object>`; parse `<bindings>` mediaType mappings from OPF |
+
+After all fixes: **77/77 new EPUBs match epubcheck's validity verdict**
+(75 valid, 2 invalid). All 902 godog BDD scenarios still pass.
+
+This round also created reusable stress test infrastructure in `stress-test/`:
+download scripts, comparison runner, analysis tools, and a URL catalog.
+See `stress-test/README.md` for usage.

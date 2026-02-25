@@ -6,9 +6,11 @@ Status as of February 2026.
 
 **Godog BDD tests**: 901 passing, 0 failing, 1 pending (902 total scenarios; 100% pass rate on non-pending)
 **Unit tests**: all passing
+**Real-world stress tests**: 77/77 EPUBs match epubcheck verdict (stress-test round 11)
 **External dependencies removed**: tests no longer require `epubverify-spec`
 
 Progress: started at 605/903 (67%), reached 826/903 (91.6%), then 867/902, now **901/902 (100% non-pending pass rate)**.
+Run `make stress-test` to validate against real-world EPUBs (requires Java + epubcheck).
 
 ### All previously-failing scenarios now fixed
 
@@ -87,7 +89,122 @@ All 41 previously-failing scenarios have been resolved across two sessions. Key 
 
 ## Next Steps
 
-### 1. Doctor mode BDD tests
+### 1. Increase real-world EPUB test coverage
+
+The stress test infrastructure (`make stress-test`) currently covers ~77
+independently-downloaded EPUBs plus ~162 from prior rounds. To increase
+confidence, expand with diverse sources and edge cases:
+
+**More EPUB sources to test:**
+
+- **Standard Ebooks** (~700 titles): Very high quality EPUB3 with rich
+  accessibility metadata, custom `se:*` vocabulary, complex `<meta refines>`
+  chains. Download manually from https://standardebooks.org (blocks automated
+  fetch) or via their GitHub releases. Previously tested 17 in round 8.
+
+- **OAPEN scholarly books** (https://library.oapen.org): Open access academic
+  EPUBs with complex structure, footnotes, indexes, cross-references, math.
+  Good source for testing professional publishing tool output.
+
+- **Internet Archive** (https://archive.org): Massive collection but
+  inconsistent quality. Many EPUB2. Good for testing legacy/malformed content.
+  Use with care — many downloads are blocked or rate-limited.
+
+- **Calibre-generated EPUBs**: Generate EPUBs from various input formats
+  (HTML, DOCX, PDF) using Calibre to test tool-specific output quirks.
+  `ebook-convert input.html output.epub` with various options.
+
+- **Sigil-edited EPUBs**: Create/edit EPUBs with Sigil to test its output
+  patterns (Sigil adds specific metadata, structures code differently).
+
+- **Commercial publisher samples**: EPUBs from major publishers often have
+  vendor-specific extensions, DRM remnants, or non-standard practices. Look
+  for DRM-free samples from Tor.com, Smashwords, or similar.
+
+- **Non-English EPUBs**: Expand CJK, Arabic/RTL, Cyrillic, Indic script
+  coverage. Gutenberg has books in 60+ languages. The current corpus is
+  heavily English-biased.
+
+**Targeted testing strategies:**
+
+- **EPUB2 depth**: Most test corpus is EPUB3. Download more EPUB2-only books
+  (use `.epub.images` URLs from Gutenberg) to exercise E2-*, NCX-*, and
+  legacy OPF paths.
+
+- **Very large EPUBs**: Test with 50MB+ books (Gutenberg's complete
+  Shakespeare at 2.9MB is relatively small). Use image-heavy books or
+  compile multiple volumes.
+
+- **Deliberately broken EPUBs**: The w3c/epubcheck repo has test fixtures
+  under `src/test/resources/` with intentionally invalid EPUBs. Extract and
+  test these to verify error detection (false negative coverage).
+
+- **Fuzzing**: Generate random variations of valid EPUBs (corrupt ZIP
+  headers, truncate files, inject invalid XML, remove required elements)
+  to test robustness and crash resistance.
+
+### 2. Synthetic test EPUB generation
+
+Build a tool/script to programmatically generate EPUBs exercising specific
+validation paths. This complements real-world testing by targeting exact
+edge cases:
+
+- **Minimal EPUB generator**: Parameterized Go helper that creates EPUBs
+  with specific features (FXL, MathML, SVG, media overlays, bindings,
+  multiple renditions, collections, etc.).
+
+- **Mutation testing**: Take a valid EPUB and introduce specific mutations
+  (remove required elements, add deprecated attributes, use wrong media
+  types) to verify each check ID fires correctly.
+
+- **epubcheck test fixture extraction**: The upstream epubcheck repo has
+  ~2000 test fixtures. Many are already ported to our godog tests, but
+  extracting and testing the raw EPUBs directly would catch integration
+  issues the BDD tests miss.
+
+### 3. Known false-negative gaps (epubcheck errors we don't detect)
+
+These are error categories where epubcheck uses RelaxNG/Schematron schema
+validation that epubverify doesn't implement:
+
+- **RSC-005 schema validation**: Full HTML5 element/attribute content model
+  checking. We now catch deprecated presentation attributes, but don't
+  validate the full element nesting model (e.g., `<h2>` inside `<p>`).
+
+- **RSC-007 mailto links**: Links to `mailto:` URIs in EPUB content.
+  epubcheck flags these; we don't.
+
+- **RSC-020 CFI URLs**: EPUB Canonical Fragment Identifier URLs in content.
+
+- **OPF-007c prefix redeclaration**: Redeclaring reserved prefixes.
+
+- **PKG-026 obfuscation**: Font obfuscation validation.
+
+- **OPF-043 fallback chain requirements**: Complex manifest fallback chain
+  validation for certain content types.
+
+### 4. Doctor mode BDD tests
 
 Currently doctor mode is only tested via Go unit tests. Consider adding
 Gherkin scenarios for doctor mode.
+
+### 5. Performance benchmarking at scale
+
+Extend `make bench` to run against the full stress test corpus and produce
+timing comparisons. Track:
+
+- Per-book validation time (epubverify vs epubcheck)
+- Memory usage for large EPUBs
+- Startup overhead (JVM vs native Go binary)
+- Throughput (books per second in batch mode)
+
+### 6. CI integration for stress tests
+
+Add a CI job that:
+
+1. Downloads a cached set of test EPUBs (or uses pre-committed small ones)
+2. Runs epubverify on all of them
+3. Compares against cached epubcheck results
+4. Fails if any new disagreements appear
+
+This would catch regressions in real-world compatibility.

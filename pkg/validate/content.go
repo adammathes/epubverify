@@ -116,6 +116,11 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-004: no obsolete elements
 		checkNoObsoleteElements(data, fullPath, r)
 
+		// RSC-005: no deprecated/obsolete HTML attributes
+		if ep.Package.Version >= "3.0" {
+			checkObsoleteAttrs(data, fullPath, r)
+		}
+
 		// HTM-009: base element not allowed
 		checkNoBaseElement(data, fullPath, r)
 
@@ -279,6 +284,18 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 	mediaParent := "" // "audio" or "video" or ""
 	var bufferedSources []sourceRef
 
+	// Track object nesting for HTML inline fallback detection
+	type objectCtx struct {
+		data       string // data attribute
+		objectType string // type attribute
+		depth      int    // nesting depth (how many elements deep inside)
+		hasFallback bool  // whether child HTML fallback content was found
+	}
+	var objectStack []objectCtx
+
+	// Build bindings media type set (deprecated but still valid fallback)
+	bindingsTypes := ep.Package.BindingsTypes
+
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -298,6 +315,21 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 					mediaParent = ""
 					bufferedSources = nil
 				}
+			case "object":
+				if len(objectStack) > 0 {
+					ctx := objectStack[len(objectStack)-1]
+					objectStack = objectStack[:len(objectStack)-1]
+					// Only check RSC-032 if no HTML fallback and no bindings handler
+					if ctx.data != "" && !ctx.hasFallback {
+						if !checkTypeMismatch(ctx.data, ctx.objectType, itemDir, location, manifestByHref, r) {
+							checkForeignRef(ep, ctx.data, itemDir, location, manifestByHref, "object", r)
+						}
+					}
+				}
+			}
+			// Track nesting depth in object context
+			if len(objectStack) > 0 {
+				objectStack[len(objectStack)-1].depth--
 			}
 			continue
 		}
@@ -305,6 +337,16 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
+		}
+
+		// Track HTML fallback inside <object> — any child element that isn't
+		// <param> or another <object> counts as inline HTML fallback content
+		if len(objectStack) > 0 && se.Name.Local != "object" {
+			idx := len(objectStack) - 1
+			objectStack[idx].depth++
+			if se.Name.Local != "param" && !objectStack[idx].hasFallback {
+				objectStack[idx].hasFallback = true
+			}
 		}
 
 		switch se.Name.Local {
@@ -383,11 +425,14 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 					objectType = attr.Value
 				}
 			}
-			if objectData != "" {
-				if !checkTypeMismatch(objectData, objectType, itemDir, location, manifestByHref, r) {
-					checkForeignRef(ep, objectData, itemDir, location, manifestByHref, "object", r)
-				}
-			}
+			// Check if this media type has a bindings handler (deprecated but valid fallback)
+			hasBindingsFallback := bindingsTypes != nil && bindingsTypes[objectType]
+			// Push object context — defer RSC-032 until we know if HTML fallback exists
+			objectStack = append(objectStack, objectCtx{
+				data:        objectData,
+				objectType:  objectType,
+				hasFallback: hasBindingsFallback,
+			})
 		case "input":
 			var inputType, src string
 			for _, attr := range se.Attr {
@@ -4293,6 +4338,39 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 	obsoleteMenuAttrs := map[string]bool{
 		"type": true, "label": true,
 	}
+	// Deprecated HTML presentation attributes per element (HTML5 obsoletes these)
+	deprecatedPresAttrs := map[string]map[string]bool{
+		"col":      {"align": true, "valign": true, "width": true, "char": true, "charoff": true},
+		"colgroup": {"align": true, "valign": true, "char": true, "charoff": true},
+		"tbody":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"thead":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"tfoot":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"tr":       {"align": true, "valign": true, "bgcolor": true, "char": true, "charoff": true},
+		"td":       {"align": true, "valign": true, "bgcolor": true, "width": true, "height": true, "char": true, "charoff": true, "nowrap": true, "axis": true, "abbr": true},
+		"th":       {"align": true, "valign": true, "bgcolor": true, "width": true, "height": true, "char": true, "charoff": true, "nowrap": true, "axis": true, "abbr": true},
+		"table":    {"align": true, "bgcolor": true, "cellpadding": true, "cellspacing": true, "frame": true, "rules": true, "summary": true},
+		"caption":  {"align": true},
+		"div":      {"align": true},
+		"p":        {"align": true},
+		"h1":       {"align": true},
+		"h2":       {"align": true},
+		"h3":       {"align": true},
+		"h4":       {"align": true},
+		"h5":       {"align": true},
+		"h6":       {"align": true},
+		"hr":       {"align": true, "noshade": true, "size": true, "width": true, "color": true},
+		"body":     {"bgcolor": true, "text": true, "link": true, "vlink": true, "alink": true, "background": true},
+		"br":       {"clear": true},
+		"img":      {"align": true, "border": true, "hspace": true, "vspace": true, "longdesc": true},
+		"object":   {"align": true, "border": true, "hspace": true, "vspace": true},
+		"embed":    {"align": true},
+		"iframe":   {"align": true, "frameborder": true, "marginwidth": true, "marginheight": true, "scrolling": true, "longdesc": true},
+		"input":    {"align": true},
+		"legend":   {"align": true},
+		"li":       {"type": true},
+		"ul":       {"type": true},
+		"pre":      {"width": true},
+	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	menuDepth := 0  // depth inside a menu element (1 = direct child)
 	inMenu := false
@@ -4320,6 +4398,7 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 					`element "button" not allowed here`,
 					location)
 			}
+			elemAttrs := deprecatedPresAttrs[t.Name.Local]
 			for _, attr := range t.Attr {
 				if obsoleteAttrs[attr.Name.Local] {
 					r.AddWithLocation(report.Error, "RSC-005",
@@ -4330,6 +4409,13 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 				if t.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
 					r.AddWithLocation(report.Error, "RSC-005",
 						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+				// Deprecated HTML presentation attributes (element-specific)
+				// Only match non-namespaced attributes (skip epub:type, xml:lang, etc.)
+				if elemAttrs != nil && attr.Name.Space == "" && elemAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here; expected attribute`, attr.Name.Local),
 						location)
 				}
 			}
