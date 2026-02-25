@@ -7,3 +7,4 @@ testdata/synthetic/synth_*.epub
 testdata/synthetic/manifest.json
 testdata/synthetic/comparison_results.json
 .cache/
+__pycache__/
