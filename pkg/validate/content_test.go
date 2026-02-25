@@ -473,6 +473,285 @@ func TestCheckRestrictedChildren_HgroupValidChildren(t *testing.T) {
 	}
 }
 
+// --- Interactive Nesting Tests ---
+
+func TestCheckInteractiveNesting_ButtonInA(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <a href="#"><button>click me</button></a>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkInteractiveNesting([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <button> inside <a>")
+	}
+}
+
+func TestCheckInteractiveNesting_InputInButton(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <button><input type="text"/></button>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkInteractiveNesting([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <input> inside <button>")
+	}
+}
+
+func TestCheckInteractiveNesting_NoFalsePositive(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <a href="#">link</a>
+  <button>button</button>
+  <div><a href="#">link in div</a><button>button in div</button></div>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkInteractiveNesting([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for non-nested interactive: %s", m.Message)
+		}
+	}
+}
+
+// --- Transparent Content Model Tests ---
+
+func TestCheckTransparentContentModel_DivInAInP(t *testing.T) {
+	// <p><a><div>...</div></a></p> — <a> inherits phrasing from <p>
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p><a href="#"><div>block in transparent a in p</div></a></p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTransparentContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <div> inside <a> inside <p> (transparent inheritance)")
+	}
+}
+
+func TestCheckTransparentContentModel_DivInInsInSpan(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p><ins><div>block in ins in p</div></ins></p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTransparentContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <div> inside <ins> inside <p> (transparent inheritance)")
+	}
+}
+
+func TestCheckTransparentContentModel_NoFalsePositive(t *testing.T) {
+	// <div><a><div>...</div></a></div> — <a> inherits flow from <div>, so block is OK
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <div><a href="#"><div>block in a in div is OK</div></a></div>
+  <section><ins><p>paragraph in ins in section is OK</p></ins></section>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTransparentContentModel([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005: %s", m.Message)
+		}
+	}
+}
+
+// --- Figcaption Position Tests ---
+
+func TestCheckFigcaptionPosition_MiddleFigcaption(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <figure>
+    <p>Before</p>
+    <figcaption>Caption in middle</figcaption>
+    <p>After</p>
+  </figure>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkFigcaptionPosition([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <figcaption> in middle of <figure>")
+	}
+}
+
+func TestCheckFigcaptionPosition_FirstOrLast(t *testing.T) {
+	// Valid positions: first child or last child
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <figure>
+    <figcaption>Caption first</figcaption>
+    <p>Content</p>
+  </figure>
+  <figure>
+    <p>Content</p>
+    <figcaption>Caption last</figcaption>
+  </figure>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkFigcaptionPosition([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid figcaption position: %s", m.Message)
+		}
+	}
+}
+
+// --- Picture Content Model Tests ---
+
+func TestCheckPictureContentModel_InvalidChild(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <picture>
+    <div>invalid child</div>
+    <img src="test.png" alt="test"/>
+  </picture>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkPictureContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <div> inside <picture>")
+	}
+}
+
+func TestCheckPictureContentModel_SourceAfterImg(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <picture>
+    <img src="test.png" alt="test"/>
+    <source srcset="test2.png"/>
+  </picture>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkPictureContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <source> after <img> in <picture>")
+	}
+}
+
+func TestCheckPictureContentModel_ValidStructure(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <picture>
+    <source srcset="large.png" media="(min-width: 800px)"/>
+    <source srcset="small.png"/>
+    <img src="fallback.png" alt="test"/>
+  </picture>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkPictureContentModel([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid picture structure: %s", m.Message)
+		}
+	}
+}
+
 func TestCheckEpubTypeValid_InvalidEpubType(t *testing.T) {
 	// A proper epub:type attribute with an invalid value SHOULD trigger HTM-015
 	xhtml := `<?xml version="1.0" encoding="UTF-8"?>

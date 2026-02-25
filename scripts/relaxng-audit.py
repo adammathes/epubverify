@@ -282,11 +282,13 @@ KNOWN_CHECKS: dict[str, dict] = {
         "note": "Partially checks media source types but not full content model",
     },
     "picture-img-required": {
-        "status": "missing",
-        "note": "<picture> must contain <img> after all <source> elements",
+        "status": "implemented",
+        "go": "content.go:checkPictureContentModel",
+        "note": "<picture> validated: source* then img, no other children",
     },
     "figure-figcaption-position": {
-        "status": "missing",
+        "status": "implemented",
+        "go": "content.go:checkFigcaptionPosition",
         "note": "<figcaption> must be first or last child of <figure>",
     },
 
@@ -374,23 +376,26 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- Transparent content model ---
     "a-transparent-flow": {
-        "status": "missing",
-        "note": "<a> without href has transparent flow content model (inherits parent context)",
+        "status": "implemented",
+        "go": "content.go:checkTransparentContentModel",
+        "note": "<a> transparent content model inherits phrasing restriction from parent",
     },
     "ins-del-transparent": {
-        "status": "missing",
-        "note": "<ins>/<del> have transparent content models",
+        "status": "implemented",
+        "go": "content.go:checkTransparentContentModel",
+        "note": "<ins>/<del> transparent content model inherits parent restriction",
     },
     "object-transparent": {
-        "status": "missing",
-        "note": "<object> has transparent content model (fallback content)",
+        "status": "implemented",
+        "go": "content.go:checkTransparentContentModel",
+        "note": "<object> transparent content model inherits parent restriction",
     },
 
-    # --- Interactive content restrictions (Schematron but originally from content model) ---
+    # --- Interactive content restrictions ---
     "interactive-in-interactive": {
-        "status": "partial",
-        "go": "content.go:checkNestedAnchors",
-        "note": "Only checks nested <a>; doesn't check button/input/select/textarea in <a>",
+        "status": "implemented",
+        "go": "content.go:checkInteractiveNesting",
+        "note": "All interactive elements (a, button, input, select, textarea, label, etc.) checked",
     },
 
     # --- Required attributes ---
@@ -710,8 +715,11 @@ def analyze_gaps(
             ))
 
     # 4. Transparent content model
+    # checkTransparentContentModel covers all transparent elements
+    transparent_implemented = KNOWN_CHECKS.get("a-transparent-flow", {}).get("status") == "implemented"
     for elem in ["a", "ins", "del", "object", "video", "audio", "map"]:
-        rule_id = f"{elem}-transparent"
+        if transparent_implemented:
+            continue
         known_t = None
         for k, v in KNOWN_CHECKS.items():
             if elem in k and "transparent" in k:

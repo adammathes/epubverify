@@ -5,13 +5,13 @@
         "phrasing_elements": 49,
         "void_elements": 11,
         "known_checks": 44,
-        "implemented": 33,
-        "partial": 5,
-        "missing": 6,
-        "gaps": 11,
+        "implemented": 39,
+        "partial": 4,
+        "missing": 1,
+        "gaps": 1,
         "high_priority_gaps": 0,
-        "medium_priority_gaps": 1,
-        "low_priority_gaps": 10
+        "medium_priority_gaps": 0,
+        "low_priority_gaps": 1
     },
     "content_model": {
         "phrasing_only_parents": [
@@ -220,107 +220,6 @@
     },
     "gaps": [
         {
-            "category": "element-nesting",
-            "description": "Interactive elements (<a>, <button>, <input>, <select>, <textarea>, <label>, <embed>, <iframe>) cannot be nested inside other interactive elements.",
-            "priority": "medium",
-            "schema_source": "mod/html5/phrase.rnc",
-            "affected_elements": [
-                "a",
-                "button",
-                "input",
-                "select",
-                "textarea",
-                "label"
-            ],
-            "epubverify_status": "partial",
-            "go_file": "content.go:checkNestedAnchors",
-            "note": "Only nested <a> is currently checked"
-        },
-        {
-            "category": "content-model",
-            "description": "<a> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <a> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/phrase.rnc",
-            "affected_elements": [
-                "a"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<ins> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <ins> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "ins"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<del> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <del> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "del"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<object> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <object> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "object"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<video> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <video> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "video"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<audio> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <audio> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "audio"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<map> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <map> must also contain only phrasing content.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "map"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
             "category": "attribute",
             "description": "<input> type attribute constrains which other attributes are allowed. For example, 'checked' is only valid on type='checkbox' and type='radio'. The schema defines 13+ input type variants with distinct attribute sets.",
             "priority": "low",
@@ -331,39 +230,13 @@
             "epubverify_status": "missing",
             "go_file": "",
             "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<picture> must contain <source> elements followed by exactly one <img>. The <img> must be the last child.",
-            "priority": "low",
-            "schema_source": "mod/html5/embed.rnc",
-            "affected_elements": [
-                "picture",
-                "source",
-                "img"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
-        },
-        {
-            "category": "content-model",
-            "description": "<figcaption> must be the first or last child of <figure>. It cannot appear in the middle.",
-            "priority": "low",
-            "schema_source": "mod/html5/media.rnc",
-            "affected_elements": [
-                "figure",
-                "figcaption"
-            ],
-            "epubverify_status": "missing",
-            "go_file": "",
-            "note": ""
         }
     ],
     "known_checks": {
         "a-transparent-flow": {
-            "status": "missing",
-            "note": "<a> without href has transparent flow content model (inherits parent context)"
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<a> transparent content model inherits phrasing restriction from parent"
         },
         "block-in-phrasing": {
             "status": "implemented",
@@ -396,7 +269,8 @@
             "go": "content.go:checkEpubTypeAttributes"
         },
         "figure-figcaption-position": {
-            "status": "missing",
+            "status": "implemented",
+            "go": "content.go:checkFigcaptionPosition",
             "note": "<figcaption> must be first or last child of <figure>"
         },
         "h1-h6-phrasing-only": {
@@ -426,13 +300,14 @@
             "note": "<input> type attribute constrains allowed attributes (schema validates this)"
         },
         "ins-del-transparent": {
-            "status": "missing",
-            "note": "<ins>/<del> have transparent content models"
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<ins>/<del> transparent content model inherits parent restriction"
         },
         "interactive-in-interactive": {
-            "status": "partial",
-            "go": "content.go:checkNestedAnchors",
-            "note": "Only checks nested <a>; doesn't check button/input/select/textarea in <a>"
+            "status": "implemented",
+            "go": "content.go:checkInteractiveNesting",
+            "note": "All interactive elements (a, button, input, select, textarea, label, etc.) checked"
         },
         "mathml-content-model": {
             "status": "partial",
@@ -461,8 +336,9 @@
             "go": "content.go:checkNestedTime"
         },
         "object-transparent": {
-            "status": "missing",
-            "note": "<object> has transparent content model (fallback content)"
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<object> transparent content model inherits parent restriction"
         },
         "obsolete-attributes": {
             "status": "implemented",
@@ -489,8 +365,9 @@
             "note": "<p> allows only phrasing content; block children flagged as RSC-005"
         },
         "picture-img-required": {
-            "status": "missing",
-            "note": "<picture> must contain <img> after all <source> elements"
+            "status": "implemented",
+            "go": "content.go:checkPictureContentModel",
+            "note": "<picture> validated: source* then img, no other children"
         },
         "pre-phrasing-only": {
             "status": "implemented",

@@ -263,6 +263,14 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkVoidElementChildren(data, fullPath, r)
 			// RSC-005: HTML5 content model — table direct children
 			checkTableContentModel(data, fullPath, r)
+			// RSC-005: HTML5 content model — interactive nesting
+			checkInteractiveNesting(data, fullPath, r)
+			// RSC-005: HTML5 content model — transparent content model inheritance
+			checkTransparentContentModel(data, fullPath, r)
+			// RSC-005: HTML5 content model — figcaption position in figure
+			checkFigcaptionPosition(data, fullPath, r)
+			// RSC-005: HTML5 content model — picture element structure
+			checkPictureContentModel(data, fullPath, r)
 		}
 	}
 }
@@ -3001,6 +3009,10 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkRestrictedChildren(data, fullPath, r)
 			checkVoidElementChildren(data, fullPath, r)
 			checkTableContentModel(data, fullPath, r)
+			checkInteractiveNesting(data, fullPath, r)
+			checkTransparentContentModel(data, fullPath, r)
+			checkFigcaptionPosition(data, fullPath, r)
+			checkPictureContentModel(data, fullPath, r)
 
 			// DOCTYPE check: mode-specific
 			if opts.CheckMode == "xhtml" {
@@ -3569,6 +3581,364 @@ func checkTableContentModel(data []byte, location string, r *report.Report) {
 			}
 			if len(stack) > 0 {
 				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// interactiveElements are HTML elements that are classified as interactive content.
+// These elements cannot be nested inside other interactive elements.
+var interactiveElements = map[string]bool{
+	"a": true, "button": true, "input": true, "select": true,
+	"textarea": true, "label": true, "embed": true, "iframe": true,
+	"audio": true, "video": true, // when they have controls attribute
+	"details": true, "summary": true,
+}
+
+// checkInteractiveNesting reports RSC-005 when interactive elements are nested
+// inside other interactive elements. For example, <a> containing <button>,
+// <button> containing <input>, etc. This extends the simpler checkNestedAnchors.
+func checkInteractiveNesting(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Stack of interactive element names we're inside
+	var interactiveStack []string
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if interactiveElements[name] {
+				if len(interactiveStack) > 0 {
+					parent := interactiveStack[len(interactiveStack)-1]
+					// Don't re-report nested <a> — checkNestedAnchors handles that
+					if !(name == "a" && parent == "a") {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf("element \"%s\" not allowed inside interactive element \"%s\"",
+								name, parent),
+							location)
+						return
+					}
+				}
+				interactiveStack = append(interactiveStack, name)
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if len(interactiveStack) > 0 && interactiveStack[len(interactiveStack)-1] == name {
+				interactiveStack = interactiveStack[:len(interactiveStack)-1]
+			}
+		}
+	}
+}
+
+// transparentElements have a transparent content model — they inherit the
+// content model of their parent. If the parent allows only phrasing content,
+// these elements must also contain only phrasing content.
+var transparentElements = map[string]bool{
+	"a": true, "ins": true, "del": true, "object": true,
+	"video": true, "audio": true, "map": true, "canvas": true,
+}
+
+// checkTransparentContentModel reports RSC-005 when a transparent element
+// contains flow content but is inside a phrasing-only parent.
+// For example: <p><a><div>block in transparent a in p</div></a></p>
+//
+// Note: checkBlockInPhrasing already catches direct block-in-phrasing violations.
+// This check specifically handles the case where a transparent element sits between
+// the phrasing-only parent and the block-level child, which checkBlockInPhrasing
+// would also catch since it tracks ancestor context. So this function specifically
+// handles cases where a transparent element is the direct child of a phrasing parent,
+// and the transparent element contains block content — the block content should be
+// flagged because the transparent model inherits the phrasing restriction.
+//
+// In practice, checkBlockInPhrasing already handles the most important cases because
+// it tracks the entire ancestor chain. This function adds explicit transparent model
+// awareness for cases where intermediate non-phrasing-only elements appear.
+func checkTransparentContentModel(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	type stackEntry struct {
+		name         string
+		phrasingOnly bool // true if this element or an ancestor restricts to phrasing
+	}
+	var stack []stackEntry
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Determine if this context requires phrasing-only content
+			parentPhrasing := false
+			if len(stack) > 0 {
+				parentPhrasing = stack[len(stack)-1].phrasingOnly
+			}
+
+			isPhrasing := phrasingOnlyElements[name]
+			// Transparent elements inherit parent's phrasing restriction
+			if transparentElements[name] && parentPhrasing {
+				isPhrasing = true
+			}
+
+			// Check: block element inside inherited phrasing context
+			if flowOnlyElements[name] && parentPhrasing && !isPhrasing {
+				// Find the originating phrasing ancestor
+				ancestor := ""
+				for i := len(stack) - 1; i >= 0; i-- {
+					if phrasingOnlyElements[stack[i].name] {
+						ancestor = stack[i].name
+						break
+					}
+				}
+				if ancestor == "" {
+					ancestor = "transparent parent"
+				}
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf("element \"%s\" not allowed here; transparent content model inherits phrasing-only restriction from \"%s\"",
+						name, ancestor),
+					location)
+				return
+			}
+
+			stack = append(stack, stackEntry{
+				name:         name,
+				phrasingOnly: isPhrasing || parentPhrasing,
+			})
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// checkFigcaptionPosition reports RSC-005 when <figcaption> is not the first
+// or last child element of <figure>. Per the HTML5 spec, figcaption must be
+// either the first or last child of figure, not in the middle.
+func checkFigcaptionPosition(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// We need to collect children of each <figure> element, then check
+	// that any <figcaption> is first or last.
+	type figureCtx struct {
+		children []string // element names of direct children
+		depth    int      // nesting depth for child tracking
+	}
+	var figStack []*figureCtx
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Track direct children of figure contexts
+			if len(figStack) > 0 {
+				ctx := figStack[len(figStack)-1]
+				if ctx.depth == 0 {
+					// Direct child of <figure>
+					ctx.children = append(ctx.children, name)
+				}
+				ctx.depth++
+			}
+
+			if name == "figure" {
+				figStack = append(figStack, &figureCtx{depth: 0})
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+
+			if len(figStack) > 0 {
+				ctx := figStack[len(figStack)-1]
+				ctx.depth--
+			}
+
+			if name == "figure" && len(figStack) > 0 {
+				ctx := figStack[len(figStack)-1]
+				figStack = figStack[:len(figStack)-1]
+
+				// Check figcaption position
+				for i, child := range ctx.children {
+					if child == "figcaption" {
+						if i != 0 && i != len(ctx.children)-1 {
+							r.AddWithLocation(report.Error, "RSC-005",
+								"\"figcaption\" must be the first or last child of \"figure\"",
+								location)
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// checkPictureContentModel reports RSC-005 when <picture> does not contain
+// the correct structure: zero or more <source> elements followed by one <img>.
+func checkPictureContentModel(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	type pictureCtx struct {
+		children []string
+		depth    int
+	}
+	var picStack []*pictureCtx
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if len(picStack) > 0 {
+				ctx := picStack[len(picStack)-1]
+				if ctx.depth == 0 {
+					ctx.children = append(ctx.children, name)
+				}
+				ctx.depth++
+			}
+
+			if name == "picture" {
+				picStack = append(picStack, &pictureCtx{depth: 0})
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+
+			if len(picStack) > 0 {
+				ctx := picStack[len(picStack)-1]
+				ctx.depth--
+			}
+
+			if name == "picture" && len(picStack) > 0 {
+				ctx := picStack[len(picStack)-1]
+				picStack = picStack[:len(picStack)-1]
+
+				// Validate: source* then img, with optional script-supporting
+				hasImg := false
+				imgSeen := false
+				for _, child := range ctx.children {
+					if child == "img" {
+						if hasImg {
+							r.AddWithLocation(report.Error, "RSC-005",
+								"\"picture\" must contain exactly one \"img\" element",
+								location)
+							return
+						}
+						hasImg = true
+						imgSeen = true
+					} else if child == "source" {
+						if imgSeen {
+							r.AddWithLocation(report.Error, "RSC-005",
+								"\"source\" must appear before \"img\" in \"picture\"",
+								location)
+							return
+						}
+					} else if !scriptSupportingElements[child] {
+						r.AddWithLocation(report.Error, "RSC-005",
+							fmt.Sprintf("element \"%s\" not allowed as child of \"picture\"", child),
+							location)
+						return
+					}
+				}
 			}
 		}
 	}

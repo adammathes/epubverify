@@ -27,7 +27,7 @@ February 25, 2026
 
 ### Where We Have Less Confidence
 
-**Medium confidence — Full HTML5 content model (RSC-005).** We now detect block-in-phrasing violations (e.g., `<div>` inside `<p>`, `<table>` inside `<span>`) and restricted children violations (e.g., `<div>` inside `<ul>`, `<p>` inside `<tr>`). The Tier 1 RelaxNG gap analysis (`scripts/relaxng-audit.py`) identified 63 content model rules; the highest-priority gaps (block-in-inline, restricted children) are implemented. Remaining gaps: void element children, transparent content models, interactive nesting beyond `<a>`, input type-specific attributes.
+**High confidence — HTML5 content model (RSC-005).** The Tier 1 RelaxNG gap analysis closed 62 of 63 identified gaps. We now enforce: block-in-phrasing (div inside p/h1-h6/span/etc.), restricted children (ul/ol/table/select/dl/hgroup), void element children, table content model, interactive nesting, transparent content model inheritance, figcaption position, and picture structure. Only remaining gap: `<input>` type-specific attribute validation (low priority).
 
 **Medium confidence — Edge-case error codes.** A handful of epubcheck error codes rely on schema validation or features we haven't implemented: RSC-007 (mailto links), RSC-020 (CFI URLs), OPF-007c (prefix redeclaration), PKG-026 (font obfuscation), OPF-043 (complex fallback chains).
 
@@ -244,18 +244,27 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 
 ## COMPLETED
 
-### Tier 1 RelaxNG Gap Analysis (Proposal 2, Phase 1)
+### Tier 1 RelaxNG Gap Analysis — Complete (Proposal 2)
 
-- RelaxNG schema audit script (`scripts/relaxng-audit.py`) — parses epubcheck's 34 RelaxNG .rnc schemas, extracts 115 element definitions and content model rules, compares against epubverify implementation
-- Initial audit identified 63 content model gaps → **reduced to 11** (0 high, 1 medium, 10 low priority)
-- Implemented block-in-phrasing detection (`checkBlockInPhrasing`) — catches block elements (div, table, ul, etc.) inside phrasing-only parents (p, h1-h6, span, em, strong, etc.)
-- Implemented restricted children validation (`checkRestrictedChildren`) — catches invalid children of ul/ol, dl, hgroup, tr, thead/tbody/tfoot, select, optgroup, colgroup, datalist
-- Implemented void element children (`checkVoidElementChildren`) — catches child elements inside br, hr, img, input, etc.
-- Implemented table content model (`checkTableContentModel`) — catches non-table children (p, div, span) directly inside table
-- 18 new unit tests for content model checks, all passing
+RelaxNG schema audit script (`scripts/relaxng-audit.py`) — parses epubcheck's 34 RelaxNG .rnc schemas, extracts 115 element definitions and content model rules, compares against epubverify implementation. Initial audit identified **63 content model gaps → reduced to 1** (input type-specific attribute validation, low priority).
+
+**8 new content model check functions:**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkBlockInPhrasing` | Block elements in phrasing-only parents (p, h1-h6, span, em, etc.) |
+| `checkRestrictedChildren` | Invalid children of ul/ol, dl, hgroup, tr, thead/tbody/tfoot, select, etc. |
+| `checkVoidElementChildren` | Child elements inside void elements (br, hr, img, input, etc.) |
+| `checkTableContentModel` | Non-table children directly inside table |
+| `checkInteractiveNesting` | Interactive elements nested in other interactive elements |
+| `checkTransparentContentModel` | Transparent content model inheritance (a, ins, del, object, etc.) |
+| `checkFigcaptionPosition` | Figcaption not first or last child of figure |
+| `checkPictureContentModel` | Picture element structure (source* then img) |
+
+- 29 unit tests for content model checks, all passing
 - 16 test fixtures in `testdata/fixtures/relaxng-gaps/xhtml/`
-- JSON gap analysis report in `testdata/fixtures/relaxng-gaps/gap-analysis.json`
 - 0 regressions: 901/902 BDD scenarios still passing
+- Only remaining gap: `<input>` type-specific attribute validation (low priority, 13+ type variants)
 
 ### Validation Engine (PRs #17–#22)
 
