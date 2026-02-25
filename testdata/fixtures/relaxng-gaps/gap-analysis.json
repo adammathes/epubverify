@@ -1,0 +1,1219 @@
+{
+    "summary": {
+        "total_elements": 115,
+        "flow_elements": 40,
+        "phrasing_elements": 49,
+        "void_elements": 11,
+        "known_checks": 44,
+        "implemented": 22,
+        "partial": 5,
+        "missing": 17,
+        "gaps": 63,
+        "high_priority_gaps": 11,
+        "medium_priority_gaps": 42,
+        "low_priority_gaps": 10
+    },
+    "content_model": {
+        "phrasing_only_parents": [
+            "a",
+            "abbr",
+            "b",
+            "bdi",
+            "bdo",
+            "cite",
+            "code",
+            "data",
+            "dfn",
+            "dt",
+            "em",
+            "figcaption",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "i",
+            "kbd",
+            "label",
+            "legend",
+            "mark",
+            "output",
+            "p",
+            "pre",
+            "q",
+            "s",
+            "samp",
+            "small",
+            "span",
+            "strong",
+            "sub",
+            "summary",
+            "sup",
+            "time",
+            "u",
+            "var"
+        ],
+        "flow_elements": [
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "details",
+            "dialog",
+            "div",
+            "dl",
+            "fieldset",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "hgroup",
+            "hr",
+            "main",
+            "menu",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "search",
+            "section",
+            "table",
+            "ul"
+        ],
+        "phrasing_elements": [
+            "a",
+            "abbr",
+            "area",
+            "audio",
+            "b",
+            "bdi",
+            "bdo",
+            "br",
+            "button",
+            "cite",
+            "code",
+            "data",
+            "dfn",
+            "em",
+            "embed",
+            "i",
+            "iframe",
+            "img",
+            "input",
+            "kbd",
+            "label",
+            "map",
+            "mark",
+            "math",
+            "meter",
+            "object",
+            "output",
+            "picture",
+            "progress",
+            "q",
+            "ruby",
+            "s",
+            "samp",
+            "select",
+            "small",
+            "span",
+            "strong",
+            "sub",
+            "sup",
+            "svg",
+            "textarea",
+            "time",
+            "u",
+            "var",
+            "video",
+            "wbr"
+        ],
+        "void_elements": [
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr"
+        ],
+        "restricted_children": {
+            "colgroup": [
+                "col"
+            ],
+            "datalist": [
+                "option"
+            ],
+            "dl": [
+                "dd",
+                "div",
+                "dt"
+            ],
+            "hgroup": [
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "p"
+            ],
+            "ol": [
+                "li"
+            ],
+            "optgroup": [
+                "option"
+            ],
+            "picture": [
+                "img",
+                "source"
+            ],
+            "ruby": [
+                "rb",
+                "rp",
+                "rt",
+                "rtc"
+            ],
+            "select": [
+                "optgroup",
+                "option"
+            ],
+            "table": [
+                "caption",
+                "colgroup",
+                "tbody",
+                "tfoot",
+                "thead",
+                "tr"
+            ],
+            "tbody": [
+                "tr"
+            ],
+            "tfoot": [
+                "tr"
+            ],
+            "thead": [
+                "tr"
+            ],
+            "tr": [
+                "td",
+                "th"
+            ],
+            "ul": [
+                "li"
+            ]
+        }
+    },
+    "gaps": [
+        {
+            "category": "content-model",
+            "description": "<h1> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h1>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h1"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<h2> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h2>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h2"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<h3> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h3>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h3"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<h4> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h4>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h4"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<h5> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h5>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h5"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<h6> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <h6>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "h6"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<p> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <p>.",
+            "priority": "high",
+            "schema_source": "mod/html5/block.rnc",
+            "affected_elements": [
+                "p"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<span> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <span>.",
+            "priority": "high",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "span"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<select> can only contain: <optgroup>, <option>. Other elements are not allowed as direct children.",
+            "priority": "high",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "select",
+                "optgroup",
+                "option"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<table> can only contain: <caption>, <colgroup>, <tbody>, <tfoot>, <thead>, <tr>. Other elements are not allowed as direct children.",
+            "priority": "high",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "table",
+                "caption",
+                "colgroup",
+                "tbody",
+                "tfoot",
+                "thead",
+                "tr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<ul> can only contain: <li>. Other elements are not allowed as direct children.",
+            "priority": "high",
+            "schema_source": "mod/html5/block.rnc",
+            "affected_elements": [
+                "ul",
+                "li"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<a> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <a>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "a"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<abbr> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <abbr>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "abbr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<b> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <b>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "b"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<bdi> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <bdi>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "bdi"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<bdo> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <bdo>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "bdo"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<cite> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <cite>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "cite"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<code> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <code>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "code"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<data> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <data>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "data"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<dfn> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <dfn>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "dfn"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<dt> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <dt>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "dt"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<em> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <em>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "em"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<figcaption> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <figcaption>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "figcaption"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<i> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <i>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "i"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<kbd> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <kbd>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "kbd"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<label> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <label>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "label"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<legend> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <legend>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "legend"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<mark> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <mark>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "mark"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<output> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <output>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "output"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<pre> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <pre>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/block.rnc",
+            "affected_elements": [
+                "pre"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<q> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <q>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "q"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<s> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <s>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "s"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<samp> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <samp>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "samp"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<small> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <small>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "small"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<strong> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <strong>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "strong"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<sub> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <sub>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "sub"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<summary> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <summary>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "summary"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<sup> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <sup>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "sup"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<time> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <time>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "time"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<u> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <u>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "u"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<var> allows only phrasing content (text and inline elements). Block elements like <div>, <p>, <table>, <ul> must not appear inside <var>.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "var"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "Void elements cannot have children. Elements like <br>, <hr>, <img>, <input>, <meta>, <link> must be empty.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "area",
+                "base",
+                "br",
+                "col",
+                "embed",
+                "hr",
+                "img",
+                "input",
+                "link",
+                "meta",
+                "param",
+                "source",
+                "track",
+                "wbr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<colgroup> can only contain: <col>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "colgroup",
+                "col"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<datalist> can only contain: <option>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "datalist",
+                "option"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<dl> can only contain: <dd>, <div>, <dt>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/block.rnc",
+            "affected_elements": [
+                "dl",
+                "dd",
+                "div",
+                "dt"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<hgroup> can only contain: <h1>, <h2>, <h3>, <h4>, <h5>, <h6>, <p>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "hgroup",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "p"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<optgroup> can only contain: <option>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "optgroup",
+                "option"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<picture> can only contain: <img>, <source>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "picture",
+                "img",
+                "source"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<ruby> can only contain: <rb>, <rp>, <rt>, <rtc>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "ruby",
+                "rb",
+                "rp",
+                "rt",
+                "rtc"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<tbody> can only contain: <tr>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "tbody",
+                "tr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<tfoot> can only contain: <tr>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "tfoot",
+                "tr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "<thead> can only contain: <tr>. Other elements are not allowed as direct children.",
+            "priority": "medium",
+            "schema_source": "mod/html5/tables.rnc",
+            "affected_elements": [
+                "thead",
+                "tr"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "element-nesting",
+            "description": "Interactive elements (<a>, <button>, <input>, <select>, <textarea>, <label>, <embed>, <iframe>) cannot be nested inside other interactive elements.",
+            "priority": "medium",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "a",
+                "button",
+                "input",
+                "select",
+                "textarea",
+                "label"
+            ],
+            "epubverify_status": "partial",
+            "go_file": "content.go:checkNestedAnchors",
+            "note": "Only nested <a> is currently checked"
+        },
+        {
+            "category": "content-model",
+            "description": "<a> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <a> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/phrase.rnc",
+            "affected_elements": [
+                "a"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<ins> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <ins> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "ins"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<del> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <del> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "del"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<object> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <object> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "object"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<video> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <video> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "video"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<audio> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <audio> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "audio"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<map> has a transparent content model \u2014 it inherits the content model of its parent. If parent allows only phrasing, <map> must also contain only phrasing content.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "map"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "attribute",
+            "description": "<input> type attribute constrains which other attributes are allowed. For example, 'checked' is only valid on type='checkbox' and type='radio'. The schema defines 13+ input type variants with distinct attribute sets.",
+            "priority": "low",
+            "schema_source": "mod/html5/web-forms.rnc",
+            "affected_elements": [
+                "input"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<picture> must contain <source> elements followed by exactly one <img>. The <img> must be the last child.",
+            "priority": "low",
+            "schema_source": "mod/html5/embed.rnc",
+            "affected_elements": [
+                "picture",
+                "source",
+                "img"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        },
+        {
+            "category": "content-model",
+            "description": "<figcaption> must be the first or last child of <figure>. It cannot appear in the middle.",
+            "priority": "low",
+            "schema_source": "mod/html5/media.rnc",
+            "affected_elements": [
+                "figure",
+                "figcaption"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        }
+    ],
+    "known_checks": {
+        "a-transparent-flow": {
+            "status": "missing",
+            "note": "<a> without href has transparent flow content model (inherits parent context)"
+        },
+        "block-in-phrasing": {
+            "status": "missing",
+            "note": "Block elements (div, p, table, ul, ol, etc.) inside phrasing-only parents"
+        },
+        "dl-structure": {
+            "status": "missing",
+            "note": "<dl> must follow (dt+, dd+)* | (div+) pattern"
+        },
+        "doctype-html5": {
+            "status": "implemented",
+            "go": "content.go:checkDoctypeHTML5"
+        },
+        "duplicate-ids": {
+            "status": "implemented",
+            "go": "content.go:checkDuplicateIDs"
+        },
+        "encoding-declaration": {
+            "status": "implemented",
+            "go": "content.go:checkEncodingDecl"
+        },
+        "epub-switch-content": {
+            "status": "implemented",
+            "go": "content.go:checkEpubSwitchTrigger"
+        },
+        "epub-type-attr": {
+            "status": "implemented",
+            "go": "content.go:checkEpubTypeAttributes"
+        },
+        "figure-figcaption-position": {
+            "status": "missing",
+            "note": "<figcaption> must be first or last child of <figure>"
+        },
+        "h1-h6-phrasing-only": {
+            "status": "missing",
+            "note": "Headings allow only phrasing content"
+        },
+        "head-required": {
+            "status": "implemented",
+            "go": "content.go:checkContentHasHead"
+        },
+        "html-root": {
+            "status": "implemented",
+            "go": "content.go:checkHTMLRootElement"
+        },
+        "id-references": {
+            "status": "implemented",
+            "go": "content.go:checkIDReferences"
+        },
+        "img-alt": {
+            "status": "partial",
+            "go": "accessibility.go",
+            "note": "Checked via accessibility checks, not schema validation"
+        },
+        "input-type": {
+            "status": "missing",
+            "note": "<input> type attribute constrains allowed attributes (schema validates this)"
+        },
+        "ins-del-transparent": {
+            "status": "missing",
+            "note": "<ins>/<del> have transparent content models"
+        },
+        "interactive-in-interactive": {
+            "status": "partial",
+            "go": "content.go:checkNestedAnchors",
+            "note": "Only checks nested <a>; doesn't check button/input/select/textarea in <a>"
+        },
+        "mathml-content-model": {
+            "status": "partial",
+            "go": "content.go:checkMathMLContentOnly",
+            "note": "Basic MathML child element checking implemented"
+        },
+        "media-overlay-schema": {
+            "status": "implemented",
+            "go": "media.go"
+        },
+        "nav-content-model": {
+            "status": "implemented",
+            "go": "content.go:checkNavContentModel",
+            "note": "Full nav content model validated (most complete implementation)"
+        },
+        "nested-a": {
+            "status": "implemented",
+            "go": "content.go:checkNestedAnchors"
+        },
+        "nested-dfn": {
+            "status": "implemented",
+            "go": "content.go:checkNestedDFN"
+        },
+        "nested-time": {
+            "status": "implemented",
+            "go": "content.go:checkNestedTime"
+        },
+        "object-transparent": {
+            "status": "missing",
+            "note": "<object> has transparent content model (fallback content)"
+        },
+        "obsolete-attributes": {
+            "status": "implemented",
+            "go": "content.go:checkObsoleteAttrs",
+            "note": "Deprecated presentation attributes per element"
+        },
+        "obsolete-elements": {
+            "status": "implemented",
+            "go": "content.go:checkNoObsoleteElements",
+            "note": "center, font, basefont, big, blink, marquee, etc."
+        },
+        "ocf-container-schema": {
+            "status": "implemented",
+            "go": "ocf.go"
+        },
+        "opf-schema": {
+            "status": "implemented",
+            "go": "opf.go",
+            "note": "Full OPF schema validation via targeted Go checks"
+        },
+        "p-phrasing-only": {
+            "status": "missing",
+            "note": "<p> allows only phrasing content, not block elements like <div>"
+        },
+        "picture-img-required": {
+            "status": "missing",
+            "note": "<picture> must contain <img> after all <source> elements"
+        },
+        "pre-phrasing-only": {
+            "status": "missing",
+            "note": "<pre> allows only phrasing content"
+        },
+        "select-children": {
+            "status": "missing",
+            "note": "<select> can only contain <option>, <optgroup>"
+        },
+        "single-body": {
+            "status": "implemented",
+            "go": "content.go:checkSingleBody"
+        },
+        "span-phrasing-only": {
+            "status": "missing",
+            "note": "<span> allows only phrasing content"
+        },
+        "ssml-attrs": {
+            "status": "implemented",
+            "go": "content.go"
+        },
+        "svg-content-model": {
+            "status": "partial",
+            "go": "content.go",
+            "note": "SVG property checking and foreignObject done; full SVG content model not validated"
+        },
+        "table-structure": {
+            "status": "missing",
+            "note": "Table must follow caption?, colgroup*, thead?, (tbody+|tr+), tfoot? ordering"
+        },
+        "title-required": {
+            "status": "implemented",
+            "go": "content.go:checkContentHasTitle"
+        },
+        "tr-children": {
+            "status": "missing",
+            "note": "<tr> can only contain <td> or <th>"
+        },
+        "ul-ol-children": {
+            "status": "missing",
+            "note": "<ul>/<ol> can only contain <li> (and script-supporting elements)"
+        },
+        "valid-html-elements": {
+            "status": "implemented",
+            "go": "content.go:checkInvalidHTMLElements",
+            "note": "Validates against validHTMLElements map with 100+ elements"
+        },
+        "video-audio-source-or-src": {
+            "status": "partial",
+            "go": "content.go:checkForeignResourceFallbacks",
+            "note": "Partially checks media source types but not full content model"
+        },
+        "void-elements-no-children": {
+            "status": "missing",
+            "note": "Void elements (br, hr, img, input, etc.) cannot have children"
+        },
+        "xhtml-namespace": {
+            "status": "implemented",
+            "go": "content.go:checkMissingNamespace"
+        }
+    }
+}

@@ -13,7 +13,7 @@ February 25, 2026
 | Suite | Result | Notes |
 |-------|--------|-------|
 | **Godog BDD scenarios** | 901/902 passing (1 pending) | 100% pass rate on non-pending scenarios |
-| **Unit tests** | All passing | 35 doctor tests, epub/validate tests |
+| **Unit tests** | All passing | 35 doctor tests, 11 content model tests, epub/validate tests |
 | **Stress tests** | 77/77 match epubcheck | Independent real-world EPUBs |
 | **Synthetic EPUBs** | 29/29 match epubcheck | Purpose-built edge cases |
 
@@ -27,7 +27,7 @@ February 25, 2026
 
 ### Where We Have Less Confidence
 
-**Medium confidence — Full HTML5 content model (RSC-005).** We catch deprecated presentation attributes and many structural issues, but don't validate the complete HTML5 element nesting model (e.g., `<h2>` inside `<p>`). Epubcheck uses RelaxNG schemas for this; we use targeted Go checks.
+**Medium confidence — Full HTML5 content model (RSC-005).** We now detect block-in-phrasing violations (e.g., `<div>` inside `<p>`, `<table>` inside `<span>`) and restricted children violations (e.g., `<div>` inside `<ul>`, `<p>` inside `<tr>`). The Tier 1 RelaxNG gap analysis (`scripts/relaxng-audit.py`) identified 63 content model rules; the highest-priority gaps (block-in-inline, restricted children) are implemented. Remaining gaps: void element children, transparent content models, interactive nesting beyond `<a>`, input type-specific attributes.
 
 **Medium confidence — Edge-case error codes.** A handful of epubcheck error codes rely on schema validation or features we haven't implemented: RSC-007 (mailto links), RSC-020 (CFI URLs), OPF-007c (prefix redeclaration), PKG-026 (font obfuscation), OPF-043 (complex fallback chains).
 
@@ -156,23 +156,22 @@ Epubcheck validates EPUBs using three complementary mechanisms:
 
 **Approach:**
 
-**Tier 1: RelaxNG Schema Analysis**
+**Tier 1: RelaxNG Schema Analysis** ✅ DONE (Phase 1)
 
-The RelaxNG schemas are the biggest gap. Epubcheck uses them for RSC-005 (schema validation) which covers the full HTML5 content model — element nesting rules, required/forbidden attributes, content categories (flow, phrasing, metadata, etc.).
+Audit script (`scripts/relaxng-audit.py`) parses epubcheck's 34 .rnc schemas, extracts 115 element definitions and 305 patterns, identifies 63 content model gaps. High-priority gaps (block-in-phrasing, restricted children) are implemented. See `testdata/fixtures/relaxng-gaps/gap-analysis.json` for the full machine-readable report.
 
-Steps:
-1. **Inventory the schemas.** List every `.rnc` and `.rng` file in epubcheck's schema directory. Map each to the EPUB version and document type it validates.
-2. **Extract element/attribute rules.** Parse the RelaxNG schemas to build a map of: which elements are allowed, where, with what attributes, containing what content.
-3. **Compare against our checks.** For each rule in the schema, determine whether epubverify currently enforces it. Flag gaps.
-4. **Prioritize by frequency.** Using real-world EPUBs, determine which RelaxNG violations actually occur in practice. Focus on common violations first.
-5. **Implement incrementally.** For each gap, add a targeted Go check and a corresponding test fixture/scenario.
+**Completed:**
+- Schema inventory and parser (34 files, 115 elements, 87 content rules)
+- Block-in-phrasing detection: `<div>` in `<p>`, `<table>` in `<span>`, etc.
+- Restricted children: `<ul>`/`<ol>` → `<li>`, `<tr>` → `<td>`/`<th>`, `<select>` → `<option>`, etc.
+- 8 unit tests, 16 test fixtures, gap analysis JSON report
 
-The most impactful RelaxNG gaps are likely:
-- HTML5 element nesting (block-in-inline errors like `<p><div>`)
-- Required attributes on specific elements
-- Forbidden attributes on specific elements (beyond what `checkObsoleteAttrs` already catches)
-- SVG content model validation
-- MathML content model validation
+**Remaining (Tier 1 Phase 2):**
+- Void element children (br/hr/img with content)
+- Transparent content model inheritance (a, ins, del, object)
+- Interactive nesting beyond `<a>` (button, input, select in `<a>`)
+- SVG/MathML full content model
+- Input type-specific attribute validation
 
 **Tier 2: Schematron Rule Analysis (extending existing audit)**
 
@@ -244,6 +243,17 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 ---
 
 ## COMPLETED
+
+### Tier 1 RelaxNG Gap Analysis (Proposal 2, Phase 1)
+
+- RelaxNG schema audit script (`scripts/relaxng-audit.py`) — parses epubcheck's 34 RelaxNG .rnc schemas, extracts 115 element definitions and content model rules, compares against epubverify implementation
+- Identified 63 content model gaps: 11 high priority, 42 medium, 10 low
+- Implemented block-in-phrasing detection (`checkBlockInPhrasing`) — catches block elements (div, table, ul, etc.) inside phrasing-only parents (p, h1-h6, span, em, strong, etc.)
+- Implemented restricted children validation (`checkRestrictedChildren`) — catches invalid children of ul/ol, tr, thead/tbody/tfoot, select, optgroup, colgroup, datalist
+- 8 new unit tests for content model checks, all passing
+- 16 test fixtures in `testdata/fixtures/relaxng-gaps/xhtml/`
+- JSON gap analysis report in `testdata/fixtures/relaxng-gaps/gap-analysis.json`
+- 0 regressions: 901/902 BDD scenarios still passing
 
 ### Validation Engine (PRs #17–#22)
 

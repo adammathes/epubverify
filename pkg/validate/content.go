@@ -255,6 +255,10 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkInvalidHTMLElements(data, fullPath, r)
 			// RSC-005: Schematron-like checks (e.g., nested dfn)
 			checkNestedDFN(data, fullPath, r)
+			// RSC-005: HTML5 content model — block elements in phrasing-only parents
+			checkBlockInPhrasing(data, fullPath, r)
+			// RSC-005: HTML5 content model — restricted children (ul/ol/table/select)
+			checkRestrictedChildren(data, fullPath, r)
 		}
 	}
 }
@@ -2989,6 +2993,8 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkDuplicateIDs(data, fullPath, r)
 			checkIDReferences(data, fullPath, r)
 			checkObsoleteAttrs(data, fullPath, r)
+			checkBlockInPhrasing(data, fullPath, r)
+			checkRestrictedChildren(data, fullPath, r)
 
 			// DOCTYPE check: mode-specific
 			if opts.CheckMode == "xhtml" {
@@ -3212,6 +3218,215 @@ func checkNestedAnchors(data []byte, location string, r *report.Report) {
 		case xml.EndElement:
 			if t.Name.Local == "a" && depth > 0 {
 				depth--
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HTML5 Content Model Validation (RSC-005)
+//
+// These checks enforce the HTML5 content model rules from the RelaxNG schemas.
+// Epubcheck uses Jing + RelaxNG to validate these rules; epubverify uses
+// targeted Go checks that cover the most common violations.
+// ---------------------------------------------------------------------------
+
+// phrasingOnlyElements contains HTML elements whose content model allows
+// only phrasing content (text and inline elements). Block-level elements
+// like <div>, <p>, <table>, <ul>, <ol>, etc. must not appear inside these.
+var phrasingOnlyElements = map[string]bool{
+	"p": true, "h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+	"pre": true, "span": true, "em": true, "strong": true, "small": true, "mark": true,
+	"abbr": true, "dfn": true, "i": true, "b": true, "s": true, "u": true,
+	"code": true, "var": true, "samp": true, "kbd": true, "sup": true, "sub": true,
+	"q": true, "cite": true, "bdo": true, "bdi": true, "label": true, "legend": true,
+	"dt": true, "summary": true, "output": true, "data": true, "time": true,
+}
+
+// flowOnlyElements contains elements that are flow content but NOT phrasing
+// content — i.e., block-level elements that cannot appear inside phrasing-only parents.
+var flowOnlyElements = map[string]bool{
+	"div": true, "p": true, "hr": true, "blockquote": true,
+	"section": true, "nav": true, "article": true, "aside": true,
+	"header": true, "footer": true, "main": true, "search": true,
+	"address": true, "hgroup": true,
+	"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true,
+	"ul": true, "ol": true, "dl": true, "menu": true,
+	"figure": true, "table": true, "form": true, "fieldset": true,
+	"details": true, "dialog": true, "pre": true,
+}
+
+// checkBlockInPhrasing reports RSC-005 when a flow-only (block) element appears
+// inside a phrasing-only parent element. This is the most common content model
+// violation — e.g., <p><div>...</div></p> or <span><ul>...</ul></span>.
+func checkBlockInPhrasing(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+	const svgNS = "http://www.w3.org/2000/svg"
+	const mathNS = "http://www.w3.org/1998/Math/MathML"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0 // non-zero inside svg/math subtrees
+
+	// Stack tracks whether we're inside a phrasing-only parent.
+	// Each entry is the element name; the bool tracks if it's phrasing-only.
+	type stackEntry struct {
+		name          string
+		phrasingOnly  bool
+	}
+	var stack []stackEntry
+
+	// Helper: are we currently inside a phrasing-only context?
+	inPhrasingContext := func() bool {
+		for i := len(stack) - 1; i >= 0; i-- {
+			if stack[i].phrasingOnly {
+				return true
+			}
+		}
+		return false
+	}
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns == svgNS || ns == mathNS {
+				foreignDepth = 1
+				continue
+			}
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Check: is this a block element inside a phrasing-only context?
+			if flowOnlyElements[name] && inPhrasingContext() {
+				// Find the nearest phrasing-only ancestor for the error message
+				ancestor := ""
+				for i := len(stack) - 1; i >= 0; i-- {
+					if stack[i].phrasingOnly {
+						ancestor = stack[i].name
+						break
+					}
+				}
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf("element \"%s\" not allowed here; \"%s\" accepts only phrasing content", name, ancestor),
+					location)
+				return // report only first error per file
+			}
+
+			stack = append(stack, stackEntry{
+				name:         name,
+				phrasingOnly: phrasingOnlyElements[name],
+			})
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// restrictedChildElements maps parent elements to the set of allowed direct children.
+// Elements not in this set are not valid as direct children of the parent.
+var restrictedChildElements = map[string]map[string]bool{
+	"ul":       {"li": true},
+	"ol":       {"li": true},
+	"select":   {"option": true, "optgroup": true},
+	"optgroup": {"option": true},
+	"tr":       {"td": true, "th": true},
+	"thead":    {"tr": true},
+	"tbody":    {"tr": true},
+	"tfoot":    {"tr": true},
+	"colgroup": {"col": true},
+	"datalist": {"option": true},
+}
+
+// scriptSupportingElements are allowed as children in restricted contexts.
+var scriptSupportingElements = map[string]bool{
+	"script": true, "template": true, "noscript": true,
+}
+
+// checkRestrictedChildren reports RSC-005 when an element that has restricted
+// allowed children contains an element that is not in the allowed set.
+// For example, <ul> can only contain <li>, <tr> can only contain <td>/<th>.
+func checkRestrictedChildren(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Stack of element names for parent tracking
+	var stack []string
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Check if the parent has restricted children
+			if len(stack) > 0 {
+				parent := stack[len(stack)-1]
+				allowed, hasRestriction := restrictedChildElements[parent]
+				if hasRestriction && !allowed[name] && !scriptSupportingElements[name] {
+					allowedList := ""
+					for k := range allowed {
+						if allowedList != "" {
+							allowedList += ", "
+						}
+						allowedList += "\"" + k + "\""
+					}
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf("element \"%s\" not allowed as child of \"%s\"; only %s allowed",
+							name, parent, allowedList),
+						location)
+					return // report only first error per file
+				}
+			}
+
+			stack = append(stack, name)
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
 			}
 		}
 	}
