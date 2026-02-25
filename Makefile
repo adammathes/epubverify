@@ -1,6 +1,6 @@
 EPUBCHECK_JAR ?= $(HOME)/tools/epubcheck-5.3.0/epubcheck.jar
 
-.PHONY: build test godog-test bench clean help
+.PHONY: build test godog-test bench stress-test clean help
 
 build:                       ## Build the binary
 	go build -o epubverify .
@@ -12,6 +12,11 @@ godog-test:                  ## Run Gherkin/godog spec compliance tests
 	go test ./test/godog/ -v -count=1
 
 test-all: test godog-test    ## Run all tests (unit + godog)
+
+stress-test: build           ## Run stress test against epubcheck on real EPUBs
+	bash stress-test/download-epubs.sh --all
+	bash stress-test/run-comparison.sh
+	bash stress-test/analyze-results.sh
 
 bench: build                 ## Benchmark vs reference epubcheck
 	@echo "=== epubverify ===" && time ./epubverify testdata/fixtures/epub3/00-minimal/minimal.epub --json /dev/null 2>/dev/null
