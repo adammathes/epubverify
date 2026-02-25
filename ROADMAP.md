@@ -4,11 +4,11 @@ Status as of February 2026.
 
 ## Current State
 
-**Godog BDD tests**: 867 passing, 0 failing, 35 pending, 14 undefined (902 total scenarios; 100% pass rate on non-pending)
+**Godog BDD tests**: 901 passing, 0 failing, 1 pending (902 total scenarios; 100% pass rate on non-pending)
 **Unit tests**: all passing
 **External dependencies removed**: tests no longer require `epubverify-spec`
 
-Progress: started at 605/903 (67%), reached 826/903 (91.6%), now **867/902 (100% non-pending pass rate)**.
+Progress: started at 605/903 (67%), reached 826/903 (91.6%), then 867/902, now **901/902 (100% non-pending pass rate)**.
 
 ### All previously-failing scenarios now fixed
 
@@ -78,17 +78,16 @@ All 41 previously-failing scenarios have been resolved across two sessions. Key 
   - media-overlay attribute cross-referencing
 - [x] Add AGENTS.md with TDD workflow and reference documentation
 - [x] Move ROADMAP.md to repo root
+- [x] Viewport meta tag parsing step definitions
+  - Exported `ParseViewport` function in `pkg/validate/viewport.go`
+  - Implements EPUB 3.3 viewport meta syntax parsing algorithm
+  - Error detection: NULL_OR_EMPTY, ASSIGN_UNEXPECTED, VALUE_EMPTY, NAME_EMPTY, LEADING_SEPARATOR, TRAILING_SEPARATOR
+  - Normalized output: semicolon-separated properties, comma-joined multi-values
+  - All 34 viewport-syntax.feature scenarios now pass (20 valid + 14 invalid)
 
 ## Next Steps
 
-### 1. Viewport meta tag parsing step definitions (pending, not failing)
-
-The `F-viewport-meta-tag/viewport-syntax.feature` scenarios remain PENDING:
-- `parsing viewport <vp>` -- expose viewport parser as standalone function
-- `the parsed viewport equals <vp>` -- assert parsed result
-- `error <error> is returned` / `no error is returned`
-
-### 6. Doctor mode BDD tests
+### 1. Doctor mode BDD tests
 
 Currently doctor mode is only tested via Go unit tests. Consider adding
 Gherkin scenarios for doctor mode.

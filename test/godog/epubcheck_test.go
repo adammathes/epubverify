@@ -75,6 +75,9 @@ type scenarioState struct {
 	checkMode      string // "epub", "package", "xhtml", "svg", "nav"
 	profile        string
 	reportingLevel string // "INFO", "USAGE", etc.
+
+	// viewport parser state
+	viewportResult validate.ViewportResult
 }
 
 // resolveFixturePath maps a feature-file path like '/epub3/04-ocf/files/'
@@ -710,20 +713,33 @@ func initializeScenario(ctx *godog.ScenarioContext, fixturesDir string) {
 	})
 
 	// ----------------------------------------------------------------
-	// Viewport parser steps (pending — viewport parser not yet implemented)
+	// Viewport parser steps
 	// ----------------------------------------------------------------
 
 	ctx.Step(`^parsing viewport (.+)$`, func(vp string) error {
-		return godog.ErrPending
+		vp = strings.Trim(vp, `"`)
+		s.viewportResult = validate.ParseViewport(vp)
+		return nil
 	})
-	ctx.Step(`^the parsed viewport equals (.+)$`, func(vp string) error {
-		return godog.ErrPending
+	ctx.Step(`^the parsed viewport equals (.+)$`, func(expected string) error {
+		expected = strings.Trim(expected, `"`)
+		actual := s.viewportResult.String()
+		if actual != expected {
+			return fmt.Errorf("expected viewport %q, got %q", expected, actual)
+		}
+		return nil
 	})
-	ctx.Step(`^error <error> is returned$`, func() error {
-		return godog.ErrPending
+	ctx.Step(`^error (\w+) is returned$`, func(errName string) error {
+		if string(s.viewportResult.Err) != errName {
+			return fmt.Errorf("expected error %s, got %q", errName, string(s.viewportResult.Err))
+		}
+		return nil
 	})
 	ctx.Step(`^no error is returned$`, func() error {
-		return godog.ErrPending
+		if s.viewportResult.Err != "" {
+			return fmt.Errorf("expected no error, got %s", s.viewportResult.Err)
+		}
+		return nil
 	})
 }
 
