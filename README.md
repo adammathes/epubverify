@@ -1,80 +1,43 @@
 # epubverify
 
-A Go-based EPUB validator that checks EPUB files for compliance with standards.
+A fast, native Go EPUB validator that checks EPUB 2.0.1 and 3.3 files for compliance with W3C/IDPF standards.
 
-## ⚠️ WARNING: Vibe-coded Experiment, WIP
+## Status
 
-**This is an experimental project created with AI agents by Adam Mathes to make an additional non-Java epub validator.**
+**Experimental.** This project was created by Adam Mathes with AI agents as an alternative non-Java EPUB validator. It is not affiliated with any standards body or vendor.
 
-**It is not production-ready and is not affiliated with any standards body or vendor. It definitely flags books wrongly right now -- if you get different output trust epubcheck, not this. Use at your own risk!**
+epubverify passes 901 of 902 BDD scenarios ported from the [w3c/epubcheck](https://github.com/w3c/epubcheck) test suite (100% of non-pending scenarios) and matches epubcheck's validity verdict on 77/77 independently-tested real-world EPUBs. When in doubt, trust epubcheck over epubverify.
+
+See [ROADMAP.md](ROADMAP.md) for detailed status and confidence assessment.
 
 ## Installation
-
-### go install
 
 ```bash
 go install github.com/adammathes/epubverify@latest
 ```
 
-This installs the `epubverify` binary to `$GOPATH/bin` (or `$HOME/go/bin`).
-
-### Building from source
+Or build from source:
 
 ```bash
 git clone https://github.com/adammathes/epubverify.git
 cd epubverify
-go build -o epubverify .
-```
-
-The compiled binary will be created as `epubverify` in the current directory.
-
-### Verify installation
-
-```bash
-./epubverify --version
+make build
 ```
 
 ## Usage
 
-### Basic validation
-
 ```bash
-./epubverify path/to/book.epub
+# Validate an EPUB
+epubverify book.epub
+
+# JSON output
+epubverify book.epub --json -          # to stdout
+epubverify book.epub --json out.json   # to file
+
+# Doctor mode: auto-repair common errors (writes to new file)
+epubverify book.epub --doctor
+epubverify book.epub --doctor -o repaired.epub
 ```
-
-### JSON output
-
-```bash
-./epubverify path/to/book.epub --json -          # to stdout
-./epubverify path/to/book.epub --json out.json   # to file
-```
-
-### Doctor mode (experimental)
-
-Doctor mode automatically repairs common EPUB validation errors. It applies safe, mechanical fixes — things like missing mimetype files, wrong media types, bad date formats, obsolete HTML elements, encoding issues, and more (24 fix types total across 4 tiers).
-
-```bash
-# Repair an EPUB (writes to book.epub.fixed.epub)
-./epubverify book.epub --doctor
-
-# Specify output path
-./epubverify book.epub --doctor -o repaired.epub
-```
-
-Doctor mode always writes to a new file — it never modifies the original. After applying fixes, it re-validates the output and reports before/after error counts.
-
-```
-Applied 3 fixes:
-  [OCF-003] Fixed mimetype content
-  [OPF-004] Added dcterms:modified
-  [HTM-010] Replaced non-HTML5 DOCTYPE with <!DOCTYPE html>
-
-Before: 3 errors, 0 warnings
-After:  0 errors, 0 warnings
-Output: book.epub.fixed.epub
-```
-
-See [docs/epub-doctor-mode.md](docs/epub-doctor-mode.md) for the full list of supported fixes, architecture details, and known limitations.
 
 ### Exit codes
 
@@ -84,34 +47,23 @@ See [docs/epub-doctor-mode.md](docs/epub-doctor-mode.md) for the full list of su
 | 1 | Invalid — errors found |
 | 2 | Fatal error or invalid arguments |
 
+### Doctor mode
+
+Doctor mode automatically repairs 24 types of common EPUB validation errors across 4 tiers (ZIP structure, OPF metadata, XHTML content, CSS/encoding). It always writes to a new file and re-validates the output.
+
+See [docs/epub-doctor-mode.md](docs/epub-doctor-mode.md) for details.
+
 ## Testing
 
-### Unit tests
-
 ```bash
-go test ./pkg/...
-# or
-make test
+make test        # Unit tests (pkg/...)
+make godog-test  # BDD spec compliance tests (godog/Gherkin)
+make test-all    # Both
+make stress-test # Real-world EPUB comparison vs epubcheck (requires Java)
+make bench       # Benchmark vs epubcheck
 ```
 
-### Spec compliance tests (godog/Gherkin)
-
-Spec compliance tests use [godog](https://github.com/cucumber/godog) to run Gherkin feature files against the validator. Feature files and EPUB fixtures live in `testdata/` within this repo — no external dependencies needed.
-
-```bash
-make godog-test
-```
-
-### All make targets
-
-```
-make build       Build the binary
-make test        Run unit tests (pkg/...)
-make godog-test  Run Gherkin/godog spec compliance tests
-make test-all    Run all tests (unit + godog)
-make bench       Benchmark epubverify vs reference epubcheck
-make clean       Remove built binary
-```
+All tests are self-contained — no external dependencies or repos needed.
 
 ## Project Structure
 
@@ -119,15 +71,21 @@ make clean       Remove built binary
 epubverify/
 ├── main.go               # CLI entry point
 ├── pkg/
-│   ├── epub/          # EPUB file parsing and zip handling
-│   ├── validate/      # Validation logic (OCF, OPF, HTML, CSS, nav, etc.)
-│   ├── doctor/        # Experimental auto-repair (--doctor mode)
-│   └── report/        # Report generation (text and JSON output)
-├── test/
-│   └── godog/         # Godog step definitions and test runner
-└── testdata/
-    ├── features/      # Gherkin feature files (epub2/, epub3/)
-    └── fixtures/      # EPUB test fixtures
+│   ├── epub/             # EPUB file parsing and zip handling
+│   ├── validate/         # Validation logic (OCF, OPF, HTML, CSS, nav, etc.)
+│   ├── doctor/           # Auto-repair (--doctor mode)
+│   └── report/           # Report generation (text and JSON output)
+├── cmd/
+│   ├── epubcompare/      # Tool to compare epubverify vs epubcheck output
+│   └── epubfuzz/         # Fuzzing tool for robustness testing
+├── test/godog/           # Godog step definitions and test runner
+├── testdata/
+│   ├── features/         # Gherkin feature files (epub2/, epub3/)
+│   ├── fixtures/         # EPUB test fixtures
+│   └── synthetic/        # Synthetic edge-case EPUBs
+├── stress-test/          # Real-world EPUB stress testing infrastructure
+├── scripts/              # Audit and analysis scripts
+└── docs/                 # Design docs and testing strategy
 ```
 
 ## License

@@ -1,8 +1,8 @@
-# EPUB Doctor Mode — Proposal & Feasibility Report
+# EPUB Doctor Mode — Proposal & Implementation
 
 ## Summary
 
-**Verdict: This is a promising direction.** The implementation covers 24 fix types across four tiers. Tier 1 handles 8 ZIP/OPF/content structural issues; Tier 2 adds 5 more (obsolete elements, bad dates, orphan files, empty hrefs, deprecated guide); Tier 3 handles CSS @import inlining and encoding transcoding (ISO-8859-1, Windows-1252, UTF-16); Tier 4 adds 8 cleanup/consistency fixes (duplicate metadata, fragment hrefs, duplicate spine entries, invalid linear values, base elements, processing instructions, lang mismatches, missing titles). All tiers take broken EPUBs to 0 errors in integration tests.
+Doctor mode is implemented with 24 fix types across four tiers. Tier 1 handles 8 ZIP/OPF/content structural issues; Tier 2 adds 5 more (obsolete elements, bad dates, orphan files, empty hrefs, deprecated guide); Tier 3 handles CSS @import inlining and encoding transcoding (ISO-8859-1, Windows-1252, UTF-16); Tier 4 adds 8 cleanup/consistency fixes (duplicate metadata, fragment hrefs, duplicate spine entries, invalid linear values, base elements, processing instructions, lang mismatches, missing titles). All tiers take broken EPUBs to 0 errors in integration tests.
 
 ## How It Works
 
