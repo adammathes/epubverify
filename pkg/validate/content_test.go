@@ -776,3 +776,607 @@ func TestCheckEpubTypeValid_InvalidEpubType(t *testing.T) {
 		t.Error("invalid epub:type value should trigger HTM-015")
 	}
 }
+
+// --- Disallowed Descendants Tests ---
+
+func TestCheckDisallowedDescendants_AddressInAddress(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <address>
+    <address>nested address</address>
+  </address>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <address> inside <address>")
+	}
+}
+
+func TestCheckDisallowedDescendants_HeaderInAddress(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <address>
+    <header>header in address</header>
+  </address>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <header> inside <address>")
+	}
+}
+
+func TestCheckDisallowedDescendants_FormInForm(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <form>
+    <form>nested form</form>
+  </form>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <form> inside <form>")
+	}
+}
+
+func TestCheckDisallowedDescendants_TableInCaption(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <table>
+    <caption>
+      <table><tr><td>nested table in caption</td></tr></table>
+    </caption>
+  </table>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <table> inside <caption>")
+	}
+}
+
+func TestCheckDisallowedDescendants_FooterInHeader(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <header>
+    <footer>footer in header</footer>
+  </header>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <footer> inside <header>")
+	}
+}
+
+func TestCheckDisallowedDescendants_ValidNesting(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <address><p>valid content</p></address>
+  <header><p>valid header</p></header>
+  <footer><p>valid footer</p></footer>
+  <form><input type="text"/></form>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid nesting: %s", m.Message)
+		}
+	}
+}
+
+func TestCheckDisallowedDescendants_LabelInLabel(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <label>outer <label>inner label</label></label>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <label> inside <label>")
+	}
+}
+
+func TestCheckDisallowedDescendants_ProgressInProgress(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <progress><progress>nested</progress></progress>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <progress> inside <progress>")
+	}
+}
+
+func TestCheckDisallowedDescendants_MeterInMeter(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <meter value="1"><meter value="2">nested</meter></meter>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDisallowedDescendants([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <meter> inside <meter>")
+	}
+}
+
+// --- Required Ancestor Tests ---
+
+func TestCheckRequiredAncestor_AreaWithoutMap(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <area shape="default" href="#"/>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRequiredAncestor([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <area> without <map> ancestor")
+	}
+}
+
+func TestCheckRequiredAncestor_AreaInsideMap(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <map name="test"><area shape="default" href="#"/></map>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRequiredAncestor([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for <area> inside <map>: %s", m.Message)
+		}
+	}
+}
+
+func TestCheckRequiredAncestor_ImgIsmapWithoutAHref(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <img src="map.png" ismap="ismap" alt="map"/>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRequiredAncestor([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <img ismap> without <a href> ancestor")
+	}
+}
+
+func TestCheckRequiredAncestor_ImgIsmapInsideAHref(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <a href="map-handler"><img src="map.png" ismap="ismap" alt="map"/></a>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRequiredAncestor([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for <img ismap> inside <a href>: %s", m.Message)
+		}
+	}
+}
+
+// --- BDO Dir Test ---
+
+func TestCheckBdoDir_MissingDir(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p><bdo>missing dir attribute</bdo></p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkBdoDir([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <bdo> without dir attribute")
+	}
+}
+
+func TestCheckBdoDir_WithDir(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p><bdo dir="rtl">right to left text</bdo></p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkBdoDir([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for <bdo dir='rtl'>: %s", m.Message)
+		}
+	}
+}
+
+// --- SSML Ph Nesting Tests ---
+
+func TestCheckSSMLPhNesting_Nested(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ssml="http://www.w3.org/2001/10/synthesis">
+<head><title>Test</title></head>
+<body>
+  <p ssml:ph="outer">
+    <span ssml:ph="inner">Nested ssml:ph is not allowed</span>
+  </p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkSSMLPhNesting([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for nested ssml:ph attributes")
+	}
+}
+
+func TestCheckSSMLPhNesting_Siblings(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ssml="http://www.w3.org/2001/10/synthesis">
+<head><title>Test</title></head>
+<body>
+  <p ssml:alphabet="ipa">
+    <span ssml:ph="first">word1</span>
+    <span ssml:ph="second">word2</span>
+  </p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkSSMLPhNesting([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for sibling ssml:ph attributes: %s", m.Message)
+		}
+	}
+}
+
+// --- Duplicate Map Name Tests ---
+
+func TestCheckDuplicateMapName_Duplicate(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <map name="dup"><area shape="default" href="#a" alt="a"/></map>
+  <map name="dup"><area shape="default" href="#b" alt="b"/></map>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDuplicateMapName([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for duplicate map names")
+	}
+}
+
+func TestCheckDuplicateMapName_Unique(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <map name="map1"><area shape="default" href="#a" alt="a"/></map>
+  <map name="map2"><area shape="default" href="#b" alt="b"/></map>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkDuplicateMapName([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for unique map names: %s", m.Message)
+		}
+	}
+}
+
+// --- Select Multiple Tests ---
+
+func TestCheckSelectMultiple_MultipleSelectedWithoutMultiple(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <select>
+    <option selected="selected">A</option>
+    <option selected="selected">B</option>
+  </select>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkSelectMultiple([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for multiple selected without @multiple")
+	}
+}
+
+func TestCheckSelectMultiple_MultipleSelectedWithMultiple(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <select multiple="multiple">
+    <option selected="selected">A</option>
+    <option selected="selected">B</option>
+  </select>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkSelectMultiple([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 with @multiple attribute: %s", m.Message)
+		}
+	}
+}
+
+// --- Meta Charset Tests ---
+
+func TestCheckMetaCharset_Duplicate(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8"/>
+  <meta charset="utf-8"/>
+  <title>Test</title>
+</head>
+<body><p>test</p></body>
+</html>`
+
+	r := report.NewReport()
+	checkMetaCharset([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for duplicate meta charset")
+	}
+}
+
+func TestCheckMetaCharset_Single(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8"/>
+  <title>Test</title>
+</head>
+<body><p>test</p></body>
+</html>`
+
+	r := report.NewReport()
+	checkMetaCharset([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for single meta charset: %s", m.Message)
+		}
+	}
+}
+
+// --- Link Sizes Tests ---
+
+func TestCheckLinkSizes_SizesWithoutRelIcon(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Test</title>
+  <link rel="stylesheet" sizes="16x16" href="style.css"/>
+</head>
+<body><p>test</p></body>
+</html>`
+
+	r := report.NewReport()
+	checkLinkSizes([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for link sizes without rel=icon")
+	}
+}
+
+func TestCheckLinkSizes_SizesWithRelIcon(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>Test</title>
+  <link rel="icon" sizes="16x16" href="icon.png"/>
+</head>
+<body><p>test</p></body>
+</html>`
+
+	r := report.NewReport()
+	checkLinkSizes([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for link sizes with rel=icon: %s", m.Message)
+		}
+	}
+}

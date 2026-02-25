@@ -146,6 +146,59 @@ KNOWN_CHECKS: dict[str, dict] = {
     "map.id":                               {"status": "implemented", "go": "content.go:checkImageMapValid"},
     "descendant-dfn-dfn":                   {"status": "implemented", "go": "content.go:checkNestedDFN"},
 
+    # --- epub-xhtml-30.sch: disallowed-descendants (Tier 2) ---
+    "descendant-a-interactive":             {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-button-interactive":        {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-audio-audio":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-audio-video":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-video-video":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-video-audio":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-address-address":           {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-address-header":            {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-address-footer":            {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-form-form":                 {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-progress-progress":         {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-meter-meter":               {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-caption-table":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-header-header":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-header-footer":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-footer-footer":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-footer-header":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-label-label":               {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+
+    # --- epub-xhtml-30.sch: required-ancestor (Tier 2) ---
+    "ancestor-area-map":                    {"status": "implemented", "go": "content.go:checkRequiredAncestor"},
+    "ancestor-imgismap-ahref":              {"status": "implemented", "go": "content.go:checkRequiredAncestor"},
+
+    # --- epub-xhtml-30.sch: required-attr (Tier 2) ---
+    "bdo-dir":                              {"status": "implemented", "go": "content.go:checkBdoDir"},
+
+    # --- epub-xhtml-30.sch: IDREF/IDREFS validation (Tier 2) ---
+    "idref-aria-activedescendant":          {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-label-for":                      {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-input-list":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-forms-form":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-headers":                       {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-describedby":              {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-output-for":                    {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-flowto":                   {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-labelledby":               {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-owns":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-controls":                 {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-trigger-observer":               {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-trigger-ref":                    {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-mathml-xref":                    {"status": "partial",     "go": "content.go:checkIDReferences", "note": "MathML xref not tracked by checkIDReferences (only XHTML namespace)"},
+    "idref-mathml-indenttarget":            {"status": "partial",     "go": "content.go:checkIDReferences", "note": "MathML indenttarget not tracked by checkIDReferences (only XHTML namespace)"},
+
+    # --- epub-xhtml-30.sch: concrete patterns (Tier 2) ---
+    "ssml-ph":                              {"status": "implemented", "go": "content.go:checkSSMLPhNesting"},
+    "map.name":                             {"status": "implemented", "go": "content.go:checkDuplicateMapName"},
+    "select-multiple":                      {"status": "implemented", "go": "content.go:checkSelectMultiple"},
+    "meta-charset":                         {"status": "implemented", "go": "content.go:checkMetaCharset"},
+    "link-sizes":                           {"status": "implemented", "go": "content.go:checkLinkSizes"},
+    "track":                                {"status": "partial",     "go": "", "note": "track label uniqueness not yet implemented"},
+    "md-media":                             {"status": "partial",     "go": "content.go:checkMicrodataAttrs", "note": "microdata media element checks not yet complete"},
+
     # --- epub-nav-30.sch ---
     "nav-ocurrence":                        {"status": "implemented", "go": "content.go:checkNavContentModel"},
     "span-no-sublist":                      {"status": "partial",     "go": "content.go:checkNavContentModel", "note": "checks li+span must have ol child, but not the reverse"},
