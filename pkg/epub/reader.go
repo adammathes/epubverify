@@ -227,6 +227,7 @@ func (ep *EPUB) ParseOPF() error {
 
 	// XML-level fields
 	p.HasBindings = structInfo.hasBindings
+	p.BindingsTypes = structInfo.bindingsTypes
 	p.UnknownElements = structInfo.unknownElements
 	p.XMLIDCounts = structInfo.xmlIDCounts
 	p.PackageNamespace = structInfo.packageNamespace
@@ -263,6 +264,7 @@ type opfStructInfo struct {
 	metaListProps            []string // meta property attributes containing spaces
 	metaEmptyValues          int      // count of meta elements with empty text content
 	hasBindings              bool
+	bindingsTypes            map[string]bool
 	collections              []Collection
 	unknownElements          []string
 	xmlIDCounts              map[string]int
@@ -374,6 +376,16 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			info.elementOrder = append(info.elementOrder, "guide")
 		case "bindings":
 			info.hasBindings = true
+		case "mediaType":
+			// <mediaType> inside <bindings> maps a media-type to a handler
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "media-type" && attr.Value != "" {
+					if info.bindingsTypes == nil {
+						info.bindingsTypes = make(map[string]bool)
+					}
+					info.bindingsTypes[attr.Value] = true
+				}
+			}
 		case "collection":
 			var role string
 			for _, attr := range se.Attr {

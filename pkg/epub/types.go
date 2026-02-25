@@ -63,6 +63,7 @@ type Package struct {
 	MetaListProps    []string       // meta property attributes that contain spaces (multiple values)
 	MetaEmptyValues  int            // count of meta elements with empty text content
 	HasBindings      bool           // whether a <bindings> element was present
+	BindingsTypes    map[string]bool // media types with bindings handlers
 	Collections      []Collection   // <collection> elements in the package document
 	UnknownElements  []string       // unknown child elements of <package>
 	XMLIDCounts      map[string]int // counts of all id attributes in the OPF

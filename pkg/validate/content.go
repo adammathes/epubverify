@@ -284,6 +284,18 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 	mediaParent := "" // "audio" or "video" or ""
 	var bufferedSources []sourceRef
 
+	// Track object nesting for HTML inline fallback detection
+	type objectCtx struct {
+		data       string // data attribute
+		objectType string // type attribute
+		depth      int    // nesting depth (how many elements deep inside)
+		hasFallback bool  // whether child HTML fallback content was found
+	}
+	var objectStack []objectCtx
+
+	// Build bindings media type set (deprecated but still valid fallback)
+	bindingsTypes := ep.Package.BindingsTypes
+
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -303,6 +315,21 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 					mediaParent = ""
 					bufferedSources = nil
 				}
+			case "object":
+				if len(objectStack) > 0 {
+					ctx := objectStack[len(objectStack)-1]
+					objectStack = objectStack[:len(objectStack)-1]
+					// Only check RSC-032 if no HTML fallback and no bindings handler
+					if ctx.data != "" && !ctx.hasFallback {
+						if !checkTypeMismatch(ctx.data, ctx.objectType, itemDir, location, manifestByHref, r) {
+							checkForeignRef(ep, ctx.data, itemDir, location, manifestByHref, "object", r)
+						}
+					}
+				}
+			}
+			// Track nesting depth in object context
+			if len(objectStack) > 0 {
+				objectStack[len(objectStack)-1].depth--
 			}
 			continue
 		}
@@ -310,6 +337,16 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 		se, ok := tok.(xml.StartElement)
 		if !ok {
 			continue
+		}
+
+		// Track HTML fallback inside <object> — any child element that isn't
+		// <param> or another <object> counts as inline HTML fallback content
+		if len(objectStack) > 0 && se.Name.Local != "object" {
+			idx := len(objectStack) - 1
+			objectStack[idx].depth++
+			if se.Name.Local != "param" && !objectStack[idx].hasFallback {
+				objectStack[idx].hasFallback = true
+			}
 		}
 
 		switch se.Name.Local {
@@ -388,11 +425,14 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 					objectType = attr.Value
 				}
 			}
-			if objectData != "" {
-				if !checkTypeMismatch(objectData, objectType, itemDir, location, manifestByHref, r) {
-					checkForeignRef(ep, objectData, itemDir, location, manifestByHref, "object", r)
-				}
-			}
+			// Check if this media type has a bindings handler (deprecated but valid fallback)
+			hasBindingsFallback := bindingsTypes != nil && bindingsTypes[objectType]
+			// Push object context — defer RSC-032 until we know if HTML fallback exists
+			objectStack = append(objectStack, objectCtx{
+				data:        objectData,
+				objectType:  objectType,
+				hasFallback: hasBindingsFallback,
+			})
 		case "input":
 			var inputType, src string
 			for _, attr := range se.Attr {
