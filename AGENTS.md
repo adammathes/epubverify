@@ -56,6 +56,20 @@ Commit frequently. Good commit cadence:
 Commit message format: describe what was fixed and how many scenarios improved.
 Example: `Fix OPF-012 nav property check: 41 → 38 failing scenarios`
 
+## Roadmap Management
+
+Work items in `ROADMAP.md` are categorized as:
+
+- **APPROVED** — prioritized and ready to start. Only work on approved items.
+- **PROPOSED** — pending human approval. Do not self-approve proposals.
+- **COMPLETED** — finished work, kept for reference.
+
+Update the roadmap when:
+- **Starting work**: move the item from APPROVED to in-progress (note it in STATUS).
+- **Completing work**: move the item to COMPLETED with a brief summary of what was done.
+- **After making changes**: update test counts, confidence levels, and progress history in STATUS.
+- **Discovering new work**: add it to PROPOSED (never to APPROVED).
+
 ## After Making Changes
 
 1. Run `make test` — all unit tests must pass

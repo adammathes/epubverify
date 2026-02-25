@@ -25,9 +25,9 @@ February 25, 2026
 
 **High confidence — Doctor mode.** 24 fix types across 4 tiers, all with unit tests and integration tests that take broken EPUBs to 0 errors.
 
-### Where We Have Less Confidence
-
 **High confidence — HTML5 content model (RSC-005).** The Tier 1 RelaxNG gap analysis closed 62 of 63 identified gaps. We now enforce: block-in-phrasing (div inside p/h1-h6/span/etc.), restricted children (ul/ol/table/select/dl/hgroup), void element children, table content model, interactive nesting, transparent content model inheritance, figcaption position, and picture structure. Only remaining gap: `<input>` type-specific attribute validation (low priority).
+
+### Where We Have Less Confidence
 
 **Medium confidence — Edge-case error codes.** A handful of epubcheck error codes rely on schema validation or features we haven't implemented: RSC-007 (mailto links), RSC-020 (CFI URLs), OPF-007c (prefix redeclaration), PKG-026 (font obfuscation), OPF-043 (complex fallback chains).
 
@@ -156,22 +156,26 @@ Epubcheck validates EPUBs using three complementary mechanisms:
 
 **Approach:**
 
-**Tier 1: RelaxNG Schema Analysis** ✅ DONE (Phase 1)
+**Tier 1: RelaxNG Schema Analysis** ✅ DONE
 
-Audit script (`scripts/relaxng-audit.py`) parses epubcheck's 34 .rnc schemas, extracts 115 element definitions and 305 patterns, identifies 63 content model gaps. High-priority gaps (block-in-phrasing, restricted children) are implemented. See `testdata/fixtures/relaxng-gaps/gap-analysis.json` for the full machine-readable report.
+Audit script (`scripts/relaxng-audit.py`) parses epubcheck's 34 .rnc schemas, extracts 115 element definitions and 305 patterns, identified 63 content model gaps — **62 of 63 closed** (PR #27). See `testdata/fixtures/relaxng-gaps/gap-analysis.json` for the full machine-readable report.
 
-**Completed:**
+**Completed (Phase 1 + Phase 2):**
 - Schema inventory and parser (34 files, 115 elements, 87 content rules)
 - Block-in-phrasing detection: `<div>` in `<p>`, `<table>` in `<span>`, etc.
 - Restricted children: `<ul>`/`<ol>` → `<li>`, `<tr>` → `<td>`/`<th>`, `<select>` → `<option>`, etc.
-- 8 unit tests, 16 test fixtures, gap analysis JSON report
-
-**Remaining (Tier 1 Phase 2):**
 - Void element children (br/hr/img with content)
+- Table content model checks
+- dl/hgroup restricted children
+- Interactive nesting (button, input, select nested in `<a>`, etc.)
 - Transparent content model inheritance (a, ins, del, object)
-- Interactive nesting beyond `<a>` (button, input, select in `<a>`)
+- Figcaption position checks
+- Picture element structure (source* then img)
+- 29 unit tests, 16 test fixtures, gap analysis JSON report
+
+**Remaining (low priority):**
 - SVG/MathML full content model
-- Input type-specific attribute validation
+- `<input>` type-specific attribute validation (13+ type variants)
 
 **Tier 2: Schematron Rule Analysis (extending existing audit)**
 
