@@ -211,6 +211,32 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- ocf-encryption-30.sch ---
     "ocf-enc.id-unique":                    {"status": "implemented", "go": "ocf.go:checkEncryptionXMLFull"},
+
+    # --- ocf-metadata-30.sch (multi-rendition metadata.xml) ---
+    # These apply to META-INF/metadata.xml in multi-rendition EPUBs.
+    # The equivalent OPF-level checks are fully implemented in opf.go.
+    # Multi-rendition EPUBs are extremely rare in practice.
+    "ocf.uid":                              {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.dcterms.modified":                 {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.dcterms.modified.syntax":          {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.refines.relative":                 {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.source-of":                   {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.link.record":                      {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.belongs-to-collection":       {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.collection-type":             {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.rendition.globals":                {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+
+    # --- collection-do-30.sch (distributable-object collections) ---
+    "do.collection":                        {"status": "wontfix", "note": "distributable-object collection structure; very rare in practice"},
+
+    # --- collection-manifest-30.sch ---
+    "manifest.collection":                  {"status": "partial",  "go": "opf.go:checkCollections", "note": "top-level check done; child content/link count checks not yet implemented"},
+
+    # --- multiple-renditions/container.sch ---
+    "selection.accessModes":                {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "selection.mandatingOneSelectionAttribute": {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "mapping.atMostOne":                    {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "mapping.mediaType":                    {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
 }
 
 
