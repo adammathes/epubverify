@@ -1,7 +1,12 @@
 # Testing Strategy
 
-epubverify uses a two-tier testing approach: unit tests for internal logic and
-godog/Gherkin BDD tests for spec compliance.
+epubverify uses a multi-tier testing approach: unit tests for internal logic,
+godog/Gherkin BDD tests for spec compliance, and stress tests for real-world
+EPUB validation against the reference epubcheck implementation.
+
+**Current state (February 2026):** 901/902 godog scenarios passing (1 pending),
+all unit tests passing, 77/77 stress test EPUBs match epubcheck, 29 synthetic
+edge-case EPUBs validated.
 
 ## Running Tests
 

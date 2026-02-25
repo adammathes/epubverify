@@ -108,47 +108,10 @@ Key design decisions:
 
 4. **Date parsing**: The OPF-036 date reformatter handles common patterns (US dates, European dates, month names) but won't parse every possible format.
 
-## Testing Against an Implementation-Independent Spec
+## Testing
 
-The [epubverify-spec](https://github.com/adammathes/epubverify-spec) repository contains implementation-independent validation test fixtures (EPUB files + expected JSON outcomes). The doctor tests are currently **not** in that repo — they live as Go unit and integration tests in `pkg/doctor/`.
+Doctor mode is tested via Go unit tests and integration tests in `pkg/doctor/`:
 
-### Why keep doctor tests internal for now
-
-- Doctor mode is experimental and the fix behavior may change
-- Repair tests are inherently more opinionated than validation tests (there's often more than one reasonable way to fix something)
-- The current tests construct EPUBs programmatically, which is faster to iterate on than maintaining binary fixture files
-- Once the feature stabilizes, adding doctor fixtures to epubverify-spec would make sense — with expectations that assert "these check IDs should be absent after repair" rather than dictating how the fix was applied
-
-### What shared doctor test fixtures could look like
-
-If/when doctor tests move to the spec repo, a practical format would be:
-
-- `fixtures/epub/doctor/` — broken EPUB files (one per fix type, plus multi-issue combos)
-- `expected/doctor/` — JSON files specifying which check IDs should be present *before* repair and absent *after* repair
-- No structural assertions (like "the `<base>` tag was removed") — those belong in implementation-specific unit tests
-
-This gives other implementers the "what" without dictating the "how."
-
-## Research: Existing EPUB Test Suites and Repair Tools
-
-### W3C/IDPF test suites
-
-There are three W3C/IDPF test suite efforts, none of which target validators or repair tools:
-
-- **[IDPF/epub-testsuite](https://github.com/IDPF/epub-testsuite)** — Reading system conformance tests (human-evaluated pass/fail for rendering)
-- **[w3c/epub-tests](https://github.com/w3c/epub-tests)** — Newer W3C reading system tests for EPUB 3.3
-- **[w3c/epub-structural-tests](https://github.com/w3c/epub-structural-tests)** — Maps EPUBCheck's Gherkin tests to the EPUB 3.3/3.4 spec (coverage analysis, not a test suite)
-
-**No official shared validator test suite exists.** EPUBCheck's Gherkin/Cucumber tests are the closest thing, but they're tightly coupled to EPUBCheck's Java API.
-
-### EPUBCheck's test approach
-
-EPUBCheck uses Gherkin `.feature` files executed with Cucumber. The scenarios are human-readable ("When checking EPUB 'minimal', Then no errors or warnings are reported") but the step definitions, type registry, and test runner are all Java-specific. Another implementation can't reuse the `.feature` files without reimplementing all the glue code.
-
-### Other EPUB repair tools
-
-- **[antiwong/epubrepairtool](https://github.com/antiwong/epubrepairtool)** — Python toolkit, own tests, no shared format
-- **Commercial services** (Ebookifi, Epubfixnow, Filestar) — proprietary, no shared test infrastructure
-- **FlightDeck** by Firebrand Technologies — proprietary checks beyond EPUBCheck
-
-**No shared EPUB repair test suite exists anywhere.** The epubverify doctor tests are, as far as we can find, the most comprehensive open-source EPUB repair test suite.
+- **35 unit tests** covering all 4 tiers, encoding transcoding, date parsing, and round-trip
+- **5 integration tests** exercising multi-problem scenarios per tier
+- Tests construct EPUBs programmatically for fast iteration
