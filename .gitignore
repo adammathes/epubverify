@@ -1,3 +1,8 @@
 /epubverify
+/epubfuzz
+/epubcompare
 stress-test/epubs/
 stress-test/results/
+testdata/synthetic/synth_*.epub
+testdata/synthetic/manifest.json
+testdata/synthetic/comparison_results.json
