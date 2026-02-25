@@ -1,0 +1,439 @@
+{
+    "summary": {
+        "total_elements": 115,
+        "flow_elements": 40,
+        "phrasing_elements": 49,
+        "void_elements": 11,
+        "known_checks": 44,
+        "implemented": 39,
+        "partial": 4,
+        "missing": 1,
+        "gaps": 1,
+        "high_priority_gaps": 0,
+        "medium_priority_gaps": 0,
+        "low_priority_gaps": 1
+    },
+    "content_model": {
+        "phrasing_only_parents": [
+            "a",
+            "abbr",
+            "b",
+            "bdi",
+            "bdo",
+            "cite",
+            "code",
+            "data",
+            "dfn",
+            "dt",
+            "em",
+            "figcaption",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "i",
+            "kbd",
+            "label",
+            "legend",
+            "mark",
+            "output",
+            "p",
+            "pre",
+            "q",
+            "s",
+            "samp",
+            "small",
+            "span",
+            "strong",
+            "sub",
+            "summary",
+            "sup",
+            "time",
+            "u",
+            "var"
+        ],
+        "flow_elements": [
+            "address",
+            "article",
+            "aside",
+            "blockquote",
+            "details",
+            "dialog",
+            "div",
+            "dl",
+            "fieldset",
+            "figure",
+            "footer",
+            "form",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "header",
+            "hgroup",
+            "hr",
+            "main",
+            "menu",
+            "nav",
+            "ol",
+            "p",
+            "pre",
+            "search",
+            "section",
+            "table",
+            "ul"
+        ],
+        "phrasing_elements": [
+            "a",
+            "abbr",
+            "area",
+            "audio",
+            "b",
+            "bdi",
+            "bdo",
+            "br",
+            "button",
+            "cite",
+            "code",
+            "data",
+            "dfn",
+            "em",
+            "embed",
+            "i",
+            "iframe",
+            "img",
+            "input",
+            "kbd",
+            "label",
+            "map",
+            "mark",
+            "math",
+            "meter",
+            "object",
+            "output",
+            "picture",
+            "progress",
+            "q",
+            "ruby",
+            "s",
+            "samp",
+            "select",
+            "small",
+            "span",
+            "strong",
+            "sub",
+            "sup",
+            "svg",
+            "textarea",
+            "time",
+            "u",
+            "var",
+            "video",
+            "wbr"
+        ],
+        "void_elements": [
+            "area",
+            "base",
+            "br",
+            "col",
+            "embed",
+            "hr",
+            "img",
+            "input",
+            "link",
+            "meta",
+            "param",
+            "source",
+            "track",
+            "wbr"
+        ],
+        "restricted_children": {
+            "colgroup": [
+                "col"
+            ],
+            "datalist": [
+                "option"
+            ],
+            "dl": [
+                "dd",
+                "div",
+                "dt"
+            ],
+            "hgroup": [
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "h5",
+                "h6",
+                "p"
+            ],
+            "ol": [
+                "li"
+            ],
+            "optgroup": [
+                "option"
+            ],
+            "picture": [
+                "img",
+                "source"
+            ],
+            "ruby": [
+                "rb",
+                "rp",
+                "rt",
+                "rtc"
+            ],
+            "select": [
+                "optgroup",
+                "option"
+            ],
+            "table": [
+                "caption",
+                "colgroup",
+                "tbody",
+                "tfoot",
+                "thead",
+                "tr"
+            ],
+            "tbody": [
+                "tr"
+            ],
+            "tfoot": [
+                "tr"
+            ],
+            "thead": [
+                "tr"
+            ],
+            "tr": [
+                "td",
+                "th"
+            ],
+            "ul": [
+                "li"
+            ]
+        }
+    },
+    "gaps": [
+        {
+            "category": "attribute",
+            "description": "<input> type attribute constrains which other attributes are allowed. For example, 'checked' is only valid on type='checkbox' and type='radio'. The schema defines 13+ input type variants with distinct attribute sets.",
+            "priority": "low",
+            "schema_source": "mod/html5/web-forms.rnc",
+            "affected_elements": [
+                "input"
+            ],
+            "epubverify_status": "missing",
+            "go_file": "",
+            "note": ""
+        }
+    ],
+    "known_checks": {
+        "a-transparent-flow": {
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<a> transparent content model inherits phrasing restriction from parent"
+        },
+        "block-in-phrasing": {
+            "status": "implemented",
+            "go": "content.go:checkBlockInPhrasing",
+            "note": "Block elements (div, p, table, ul, ol, etc.) inside phrasing-only parents"
+        },
+        "dl-structure": {
+            "status": "implemented",
+            "go": "content.go:checkRestrictedChildren",
+            "note": "<dl> can only contain <dt>, <dd>, <div> as direct children"
+        },
+        "doctype-html5": {
+            "status": "implemented",
+            "go": "content.go:checkDoctypeHTML5"
+        },
+        "duplicate-ids": {
+            "status": "implemented",
+            "go": "content.go:checkDuplicateIDs"
+        },
+        "encoding-declaration": {
+            "status": "implemented",
+            "go": "content.go:checkEncodingDecl"
+        },
+        "epub-switch-content": {
+            "status": "implemented",
+            "go": "content.go:checkEpubSwitchTrigger"
+        },
+        "epub-type-attr": {
+            "status": "implemented",
+            "go": "content.go:checkEpubTypeAttributes"
+        },
+        "figure-figcaption-position": {
+            "status": "implemented",
+            "go": "content.go:checkFigcaptionPosition",
+            "note": "<figcaption> must be first or last child of <figure>"
+        },
+        "h1-h6-phrasing-only": {
+            "status": "implemented",
+            "go": "content.go:checkBlockInPhrasing",
+            "note": "Headings allow only phrasing content; block children flagged as RSC-005"
+        },
+        "head-required": {
+            "status": "implemented",
+            "go": "content.go:checkContentHasHead"
+        },
+        "html-root": {
+            "status": "implemented",
+            "go": "content.go:checkHTMLRootElement"
+        },
+        "id-references": {
+            "status": "implemented",
+            "go": "content.go:checkIDReferences"
+        },
+        "img-alt": {
+            "status": "partial",
+            "go": "accessibility.go",
+            "note": "Checked via accessibility checks, not schema validation"
+        },
+        "input-type": {
+            "status": "missing",
+            "note": "<input> type attribute constrains allowed attributes (schema validates this)"
+        },
+        "ins-del-transparent": {
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<ins>/<del> transparent content model inherits parent restriction"
+        },
+        "interactive-in-interactive": {
+            "status": "implemented",
+            "go": "content.go:checkInteractiveNesting",
+            "note": "All interactive elements (a, button, input, select, textarea, label, etc.) checked"
+        },
+        "mathml-content-model": {
+            "status": "partial",
+            "go": "content.go:checkMathMLContentOnly",
+            "note": "Basic MathML child element checking implemented"
+        },
+        "media-overlay-schema": {
+            "status": "implemented",
+            "go": "media.go"
+        },
+        "nav-content-model": {
+            "status": "implemented",
+            "go": "content.go:checkNavContentModel",
+            "note": "Full nav content model validated (most complete implementation)"
+        },
+        "nested-a": {
+            "status": "implemented",
+            "go": "content.go:checkNestedAnchors"
+        },
+        "nested-dfn": {
+            "status": "implemented",
+            "go": "content.go:checkNestedDFN"
+        },
+        "nested-time": {
+            "status": "implemented",
+            "go": "content.go:checkNestedTime"
+        },
+        "object-transparent": {
+            "status": "implemented",
+            "go": "content.go:checkTransparentContentModel",
+            "note": "<object> transparent content model inherits parent restriction"
+        },
+        "obsolete-attributes": {
+            "status": "implemented",
+            "go": "content.go:checkObsoleteAttrs",
+            "note": "Deprecated presentation attributes per element"
+        },
+        "obsolete-elements": {
+            "status": "implemented",
+            "go": "content.go:checkNoObsoleteElements",
+            "note": "center, font, basefont, big, blink, marquee, etc."
+        },
+        "ocf-container-schema": {
+            "status": "implemented",
+            "go": "ocf.go"
+        },
+        "opf-schema": {
+            "status": "implemented",
+            "go": "opf.go",
+            "note": "Full OPF schema validation via targeted Go checks"
+        },
+        "p-phrasing-only": {
+            "status": "implemented",
+            "go": "content.go:checkBlockInPhrasing",
+            "note": "<p> allows only phrasing content; block children flagged as RSC-005"
+        },
+        "picture-img-required": {
+            "status": "implemented",
+            "go": "content.go:checkPictureContentModel",
+            "note": "<picture> validated: source* then img, no other children"
+        },
+        "pre-phrasing-only": {
+            "status": "implemented",
+            "go": "content.go:checkBlockInPhrasing",
+            "note": "<pre> allows only phrasing content; block children flagged as RSC-005"
+        },
+        "select-children": {
+            "status": "implemented",
+            "go": "content.go:checkRestrictedChildren",
+            "note": "<select> can only contain <option>, <optgroup>"
+        },
+        "single-body": {
+            "status": "implemented",
+            "go": "content.go:checkSingleBody"
+        },
+        "span-phrasing-only": {
+            "status": "implemented",
+            "go": "content.go:checkBlockInPhrasing",
+            "note": "<span> allows only phrasing content; block children flagged as RSC-005"
+        },
+        "ssml-attrs": {
+            "status": "implemented",
+            "go": "content.go"
+        },
+        "svg-content-model": {
+            "status": "partial",
+            "go": "content.go",
+            "note": "SVG property checking and foreignObject done; full SVG content model not validated"
+        },
+        "table-structure": {
+            "status": "implemented",
+            "go": "content.go:checkTableContentModel",
+            "note": "Table direct children validated: caption, colgroup, thead, tbody, tfoot, tr only"
+        },
+        "title-required": {
+            "status": "implemented",
+            "go": "content.go:checkContentHasTitle"
+        },
+        "tr-children": {
+            "status": "implemented",
+            "go": "content.go:checkRestrictedChildren",
+            "note": "<tr> can only contain <td> or <th>"
+        },
+        "ul-ol-children": {
+            "status": "implemented",
+            "go": "content.go:checkRestrictedChildren",
+            "note": "<ul>/<ol> can only contain <li> (and script-supporting elements)"
+        },
+        "valid-html-elements": {
+            "status": "implemented",
+            "go": "content.go:checkInvalidHTMLElements",
+            "note": "Validates against validHTMLElements map with 100+ elements"
+        },
+        "video-audio-source-or-src": {
+            "status": "partial",
+            "go": "content.go:checkForeignResourceFallbacks",
+            "note": "Partially checks media source types but not full content model"
+        },
+        "void-elements-no-children": {
+            "status": "implemented",
+            "go": "content.go:checkVoidElementChildren",
+            "note": "Void elements (br, hr, img, input, etc.) cannot have child elements"
+        },
+        "xhtml-namespace": {
+            "status": "implemented",
+            "go": "content.go:checkMissingNamespace"
+        }
+    }
+}
