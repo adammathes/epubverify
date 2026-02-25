@@ -237,6 +237,242 @@ func TestCheckRestrictedChildren_NoFalsePositive(t *testing.T) {
 	}
 }
 
+// --- Void Element Children Tests ---
+
+func TestCheckVoidElementChildren_ChildInBr(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p>text <br><span>child inside br</span></br> more</p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkVoidElementChildren([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for child element inside <br>")
+	}
+}
+
+func TestCheckVoidElementChildren_ChildInHr(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <hr><p>content inside hr</p></hr>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkVoidElementChildren([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for child element inside <hr>")
+	}
+}
+
+func TestCheckVoidElementChildren_NoFalsePositive(t *testing.T) {
+	// Self-closing void elements should not trigger errors
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <p>text <br/> more <img src="test.png" alt="test"/> end</p>
+  <hr/>
+  <p><input type="text"/></p>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkVoidElementChildren([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for self-closing void elements: %s", m.Message)
+		}
+	}
+}
+
+// --- Table Content Model Tests ---
+
+func TestCheckTableContentModel_PInTable(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <table><p>paragraph directly in table</p></table>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTableContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <p> as direct child of <table>")
+	}
+}
+
+func TestCheckTableContentModel_DivInTable(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <table><div>div directly in table</div></table>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTableContentModel([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <div> as direct child of <table>")
+	}
+}
+
+func TestCheckTableContentModel_NoFalsePositive(t *testing.T) {
+	// Valid table structure: only valid children
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <table>
+    <caption>A table</caption>
+    <thead><tr><th>Header</th></tr></thead>
+    <tbody><tr><td>Cell</td></tr></tbody>
+    <tfoot><tr><td>Footer</td></tr></tfoot>
+  </table>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkTableContentModel([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid table structure: %s", m.Message)
+		}
+	}
+}
+
+// --- DL/Hgroup Restricted Children Tests ---
+
+func TestCheckRestrictedChildren_SpanInDl(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <dl><span>span inside dl</span></dl>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRestrictedChildren([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <span> inside <dl>")
+	}
+}
+
+func TestCheckRestrictedChildren_DlValidChildren(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <dl><dt>Term</dt><dd>Definition</dd></dl>
+  <dl><div><dt>Term</dt><dd>Definition</dd></div></dl>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRestrictedChildren([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid dl structure: %s", m.Message)
+		}
+	}
+}
+
+func TestCheckRestrictedChildren_DivInHgroup(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <hgroup><div>div inside hgroup</div></hgroup>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRestrictedChildren([]byte(xhtml), "test.xhtml", r)
+
+	found := false
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected RSC-005 for <div> inside <hgroup>")
+	}
+}
+
+func TestCheckRestrictedChildren_HgroupValidChildren(t *testing.T) {
+	xhtml := `<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><title>Test</title></head>
+<body>
+  <hgroup><h1>Title</h1><p>Subtitle</p></hgroup>
+</body>
+</html>`
+
+	r := report.NewReport()
+	checkRestrictedChildren([]byte(xhtml), "test.xhtml", r)
+
+	for _, m := range r.Messages {
+		if m.CheckID == "RSC-005" {
+			t.Errorf("unexpected RSC-005 for valid hgroup: %s", m.Message)
+		}
+	}
+}
+
 func TestCheckEpubTypeValid_InvalidEpubType(t *testing.T) {
 	// A proper epub:type attribute with an invalid value SHOULD trigger HTM-015
 	xhtml := `<?xml version="1.0" encoding="UTF-8"?>

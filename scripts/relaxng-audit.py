@@ -178,25 +178,30 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- Content model: elements checked ---
     "p-phrasing-only": {
-        "status": "missing",
-        "note": "<p> allows only phrasing content, not block elements like <div>",
+        "status": "implemented",
+        "go": "content.go:checkBlockInPhrasing",
+        "note": "<p> allows only phrasing content; block children flagged as RSC-005",
     },
     "h1-h6-phrasing-only": {
-        "status": "missing",
-        "note": "Headings allow only phrasing content",
+        "status": "implemented",
+        "go": "content.go:checkBlockInPhrasing",
+        "note": "Headings allow only phrasing content; block children flagged as RSC-005",
     },
     "span-phrasing-only": {
-        "status": "missing",
-        "note": "<span> allows only phrasing content",
+        "status": "implemented",
+        "go": "content.go:checkBlockInPhrasing",
+        "note": "<span> allows only phrasing content; block children flagged as RSC-005",
     },
     "pre-phrasing-only": {
-        "status": "missing",
-        "note": "<pre> allows only phrasing content",
+        "status": "implemented",
+        "go": "content.go:checkBlockInPhrasing",
+        "note": "<pre> allows only phrasing content; block children flagged as RSC-005",
     },
 
     # --- Block-in-inline nesting ---
     "block-in-phrasing": {
-        "status": "missing",
+        "status": "implemented",
+        "go": "content.go:checkBlockInPhrasing",
         "note": "Block elements (div, p, table, ul, ol, etc.) inside phrasing-only parents",
     },
 
@@ -216,8 +221,9 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- Empty/void elements ---
     "void-elements-no-children": {
-        "status": "missing",
-        "note": "Void elements (br, hr, img, input, etc.) cannot have children",
+        "status": "implemented",
+        "go": "content.go:checkVoidElementChildren",
+        "note": "Void elements (br, hr, img, input, etc.) cannot have child elements",
     },
 
     # --- Structural requirements ---
@@ -240,27 +246,32 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- Table content model ---
     "table-structure": {
-        "status": "missing",
-        "note": "Table must follow caption?, colgroup*, thead?, (tbody+|tr+), tfoot? ordering",
+        "status": "implemented",
+        "go": "content.go:checkTableContentModel",
+        "note": "Table direct children validated: caption, colgroup, thead, tbody, tfoot, tr only",
     },
     "tr-children": {
-        "status": "missing",
+        "status": "implemented",
+        "go": "content.go:checkRestrictedChildren",
         "note": "<tr> can only contain <td> or <th>",
     },
 
     # --- List content model ---
     "ul-ol-children": {
-        "status": "missing",
+        "status": "implemented",
+        "go": "content.go:checkRestrictedChildren",
         "note": "<ul>/<ol> can only contain <li> (and script-supporting elements)",
     },
     "dl-structure": {
-        "status": "missing",
-        "note": "<dl> must follow (dt+, dd+)* | (div+) pattern",
+        "status": "implemented",
+        "go": "content.go:checkRestrictedChildren",
+        "note": "<dl> can only contain <dt>, <dd>, <div> as direct children",
     },
 
     # --- Form content model ---
     "select-children": {
-        "status": "missing",
+        "status": "implemented",
+        "go": "content.go:checkRestrictedChildren",
         "note": "<select> can only contain <option>, <optgroup>",
     },
 
@@ -631,16 +642,15 @@ def analyze_gaps(
     gaps: list[GapItem] = []
 
     # 1. Content model gaps: phrasing-only parents
-    phrasing_parents_checked = set()
-    for rule_id, info in KNOWN_CHECKS.items():
-        if info["status"] == "implemented" and "phrasing" in rule_id:
-            phrasing_parents_checked.add(rule_id.split("-")[0])
+    # The general "block-in-phrasing" check covers ALL phrasing-only parents
+    general_check = KNOWN_CHECKS.get("block-in-phrasing", {})
+    general_implemented = general_check.get("status") == "implemented"
 
     # Check each phrasing-content parent
     for elem in sorted(PHRASING_CONTENT_PARENTS):
         rule_id = f"{elem}-phrasing-only"
         known = KNOWN_CHECKS.get(rule_id)
-        if known and known["status"] == "implemented":
+        if (known and known["status"] == "implemented") or general_implemented:
             continue
 
         # This is a gap
@@ -670,17 +680,22 @@ def analyze_gaps(
         ))
 
     # 3. Restricted children
-    for parent, allowed in sorted(RESTRICTED_CHILDREN.items()):
-        rule_id = f"{parent}-children"
-        known_r = KNOWN_CHECKS.get(rule_id) or KNOWN_CHECKS.get(f"ul-ol-children") or \
-                  KNOWN_CHECKS.get(f"table-structure") or KNOWN_CHECKS.get(f"select-children")
+    # checkRestrictedChildren and checkTableContentModel cover these elements.
+    # Check if the general restricted-children checks are implemented.
+    restricted_children_implemented = (
+        KNOWN_CHECKS.get("ul-ol-children", {}).get("status") == "implemented"
+        and KNOWN_CHECKS.get("tr-children", {}).get("status") == "implemented"
+        and KNOWN_CHECKS.get("dl-structure", {}).get("status") == "implemented"
+    )
 
+    for parent, allowed in sorted(RESTRICTED_CHILDREN.items()):
         # Check if this specific parent's children are validated
-        is_checked = False
-        for k, v in KNOWN_CHECKS.items():
-            if parent in k and v["status"] == "implemented":
-                is_checked = True
-                break
+        is_checked = restricted_children_implemented
+        if not is_checked:
+            for k, v in KNOWN_CHECKS.items():
+                if parent in k and v["status"] == "implemented":
+                    is_checked = True
+                    break
 
         if not is_checked:
             priority = "high" if parent in ("ul", "ol", "table", "tr", "select") else "medium"
@@ -826,8 +841,10 @@ def print_text_report(
     print("-" * 70)
     print()
     print("Elements that allow ONLY PHRASING content (no block elements):")
+    general_ok = KNOWN_CHECKS.get("block-in-phrasing", {}).get("status") == "implemented"
     for elem in sorted(PHRASING_CONTENT_PARENTS):
-        marker = "  [OK]" if KNOWN_CHECKS.get(f"{elem}-phrasing-only", {}).get("status") == "implemented" else "  [GAP]"
+        elem_ok = KNOWN_CHECKS.get(f"{elem}-phrasing-only", {}).get("status") == "implemented"
+        marker = "  [OK]" if (elem_ok or general_ok) else "  [GAP]"
         print(f"  {marker} <{elem}>")
     print()
 

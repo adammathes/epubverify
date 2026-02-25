@@ -247,10 +247,12 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 ### Tier 1 RelaxNG Gap Analysis (Proposal 2, Phase 1)
 
 - RelaxNG schema audit script (`scripts/relaxng-audit.py`) — parses epubcheck's 34 RelaxNG .rnc schemas, extracts 115 element definitions and content model rules, compares against epubverify implementation
-- Identified 63 content model gaps: 11 high priority, 42 medium, 10 low
+- Initial audit identified 63 content model gaps → **reduced to 11** (0 high, 1 medium, 10 low priority)
 - Implemented block-in-phrasing detection (`checkBlockInPhrasing`) — catches block elements (div, table, ul, etc.) inside phrasing-only parents (p, h1-h6, span, em, strong, etc.)
-- Implemented restricted children validation (`checkRestrictedChildren`) — catches invalid children of ul/ol, tr, thead/tbody/tfoot, select, optgroup, colgroup, datalist
-- 8 new unit tests for content model checks, all passing
+- Implemented restricted children validation (`checkRestrictedChildren`) — catches invalid children of ul/ol, dl, hgroup, tr, thead/tbody/tfoot, select, optgroup, colgroup, datalist
+- Implemented void element children (`checkVoidElementChildren`) — catches child elements inside br, hr, img, input, etc.
+- Implemented table content model (`checkTableContentModel`) — catches non-table children (p, div, span) directly inside table
+- 18 new unit tests for content model checks, all passing
 - 16 test fixtures in `testdata/fixtures/relaxng-gaps/xhtml/`
 - JSON gap analysis report in `testdata/fixtures/relaxng-gaps/gap-analysis.json`
 - 0 regressions: 901/902 BDD scenarios still passing

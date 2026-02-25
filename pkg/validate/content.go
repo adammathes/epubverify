@@ -257,8 +257,12 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkNestedDFN(data, fullPath, r)
 			// RSC-005: HTML5 content model — block elements in phrasing-only parents
 			checkBlockInPhrasing(data, fullPath, r)
-			// RSC-005: HTML5 content model — restricted children (ul/ol/table/select)
+			// RSC-005: HTML5 content model — restricted children (ul/ol/select/tr/etc.)
 			checkRestrictedChildren(data, fullPath, r)
+			// RSC-005: HTML5 content model — void elements cannot have children
+			checkVoidElementChildren(data, fullPath, r)
+			// RSC-005: HTML5 content model — table direct children
+			checkTableContentModel(data, fullPath, r)
 		}
 	}
 }
@@ -2995,6 +2999,8 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkObsoleteAttrs(data, fullPath, r)
 			checkBlockInPhrasing(data, fullPath, r)
 			checkRestrictedChildren(data, fullPath, r)
+			checkVoidElementChildren(data, fullPath, r)
+			checkTableContentModel(data, fullPath, r)
 
 			// DOCTYPE check: mode-specific
 			if opts.CheckMode == "xhtml" {
@@ -3349,6 +3355,8 @@ func checkBlockInPhrasing(data []byte, location string, r *report.Report) {
 var restrictedChildElements = map[string]map[string]bool{
 	"ul":       {"li": true},
 	"ol":       {"li": true},
+	"dl":       {"dt": true, "dd": true, "div": true},
+	"hgroup":   {"h1": true, "h2": true, "h3": true, "h4": true, "h5": true, "h6": true, "p": true},
 	"select":   {"option": true, "optgroup": true},
 	"optgroup": {"option": true},
 	"tr":       {"td": true, "th": true},
@@ -3415,6 +3423,140 @@ func checkRestrictedChildren(data []byte, location string, r *report.Report) {
 							name, parent, allowedList),
 						location)
 					return // report only first error per file
+				}
+			}
+
+			stack = append(stack, name)
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			if len(stack) > 0 {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// voidElements are HTML elements that cannot have children.
+// Per the HTML5 spec, these elements have an "empty" content model.
+var voidElements = map[string]bool{
+	"area": true, "base": true, "br": true, "col": true, "embed": true,
+	"hr": true, "img": true, "input": true, "link": true, "meta": true,
+	"param": true, "source": true, "track": true, "wbr": true,
+}
+
+// checkVoidElementChildren reports RSC-005 when a void element has child elements.
+// Void elements (br, hr, img, input, etc.) must be empty — they cannot contain
+// any child elements. Text content inside void elements is also invalid but is
+// harder to detect with a streaming parser, so we focus on child elements.
+func checkVoidElementChildren(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Track when we're inside a void element
+	var voidStack []string // stack of void element names (usually 0 or 1 deep)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if len(voidStack) > 0 {
+				// We're inside a void element and found a child element
+				parent := voidStack[len(voidStack)-1]
+				r.AddWithLocation(report.Error, "RSC-005",
+					fmt.Sprintf("element \"%s\" not allowed as child of void element \"%s\"", name, parent),
+					location)
+				return
+			}
+
+			if voidElements[name] {
+				voidStack = append(voidStack, name)
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if len(voidStack) > 0 && voidStack[len(voidStack)-1] == name {
+				voidStack = voidStack[:len(voidStack)-1]
+			}
+		}
+	}
+}
+
+// tableDirectChildren are the only elements allowed as direct children of <table>.
+var tableDirectChildren = map[string]bool{
+	"caption": true, "colgroup": true, "thead": true,
+	"tbody": true, "tfoot": true, "tr": true,
+}
+
+// checkTableContentModel reports RSC-005 when <table> has direct children
+// that are not one of: caption, colgroup, thead, tbody, tfoot, tr.
+// This is separate from checkRestrictedChildren because table has a more
+// complex content model (ordering matters) and we want a specific error message.
+func checkTableContentModel(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Stack tracks element depth; we care about direct children of <table>
+	var stack []string
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Check if parent is <table> and child is invalid
+			if len(stack) > 0 && stack[len(stack)-1] == "table" {
+				if !tableDirectChildren[name] && !scriptSupportingElements[name] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf("element \"%s\" not allowed as child of \"table\"", name),
+						location)
+					return
 				}
 			}
 
