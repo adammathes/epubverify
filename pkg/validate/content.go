@@ -116,6 +116,11 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-004: no obsolete elements
 		checkNoObsoleteElements(data, fullPath, r)
 
+		// RSC-005: no deprecated/obsolete HTML attributes
+		if ep.Package.Version >= "3.0" {
+			checkObsoleteAttrs(data, fullPath, r)
+		}
+
 		// HTM-009: base element not allowed
 		checkNoBaseElement(data, fullPath, r)
 
@@ -4293,6 +4298,39 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 	obsoleteMenuAttrs := map[string]bool{
 		"type": true, "label": true,
 	}
+	// Deprecated HTML presentation attributes per element (HTML5 obsoletes these)
+	deprecatedPresAttrs := map[string]map[string]bool{
+		"col":      {"align": true, "valign": true, "width": true, "char": true, "charoff": true},
+		"colgroup": {"align": true, "valign": true, "char": true, "charoff": true},
+		"tbody":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"thead":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"tfoot":    {"align": true, "valign": true, "char": true, "charoff": true},
+		"tr":       {"align": true, "valign": true, "bgcolor": true, "char": true, "charoff": true},
+		"td":       {"align": true, "valign": true, "bgcolor": true, "width": true, "height": true, "char": true, "charoff": true, "nowrap": true, "axis": true, "abbr": true},
+		"th":       {"align": true, "valign": true, "bgcolor": true, "width": true, "height": true, "char": true, "charoff": true, "nowrap": true, "axis": true, "abbr": true},
+		"table":    {"align": true, "bgcolor": true, "cellpadding": true, "cellspacing": true, "frame": true, "rules": true, "summary": true},
+		"caption":  {"align": true},
+		"div":      {"align": true},
+		"p":        {"align": true},
+		"h1":       {"align": true},
+		"h2":       {"align": true},
+		"h3":       {"align": true},
+		"h4":       {"align": true},
+		"h5":       {"align": true},
+		"h6":       {"align": true},
+		"hr":       {"align": true, "noshade": true, "size": true, "width": true, "color": true},
+		"body":     {"bgcolor": true, "text": true, "link": true, "vlink": true, "alink": true, "background": true},
+		"br":       {"clear": true},
+		"img":      {"align": true, "border": true, "hspace": true, "vspace": true, "longdesc": true},
+		"object":   {"align": true, "border": true, "hspace": true, "vspace": true},
+		"embed":    {"align": true},
+		"iframe":   {"align": true, "frameborder": true, "marginwidth": true, "marginheight": true, "scrolling": true, "longdesc": true},
+		"input":    {"align": true},
+		"legend":   {"align": true},
+		"li":       {"type": true},
+		"ul":       {"type": true},
+		"pre":      {"width": true},
+	}
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	menuDepth := 0  // depth inside a menu element (1 = direct child)
 	inMenu := false
@@ -4320,6 +4358,7 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 					`element "button" not allowed here`,
 					location)
 			}
+			elemAttrs := deprecatedPresAttrs[t.Name.Local]
 			for _, attr := range t.Attr {
 				if obsoleteAttrs[attr.Name.Local] {
 					r.AddWithLocation(report.Error, "RSC-005",
@@ -4330,6 +4369,13 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 				if t.Name.Local == "menu" && obsoleteMenuAttrs[attr.Name.Local] {
 					r.AddWithLocation(report.Error, "RSC-005",
 						fmt.Sprintf(`attribute "%s" not allowed here`, attr.Name.Local),
+						location)
+				}
+				// Deprecated HTML presentation attributes (element-specific)
+				// Only match non-namespaced attributes (skip epub:type, xml:lang, etc.)
+				if elemAttrs != nil && attr.Name.Space == "" && elemAttrs[attr.Name.Local] {
+					r.AddWithLocation(report.Error, "RSC-005",
+						fmt.Sprintf(`attribute "%s" not allowed here; expected attribute`, attr.Name.Local),
 						location)
 				}
 			}

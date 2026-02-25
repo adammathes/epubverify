@@ -415,10 +415,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			})
 		case "meta":
 			var prop, refines, val, metaID, scheme string
+			hasProperty := false
 			for _, attr := range se.Attr {
 				switch attr.Name.Local {
 				case "property":
 					prop = attr.Value
+					hasProperty = true
 				case "refines":
 					refines = attr.Value
 				case "id":
@@ -431,8 +433,10 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				info.metaSchemes = append(info.metaSchemes, MetaScheme{Scheme: scheme, Property: prop})
 			}
 			// Track empty/invalid property attributes
+			// Only count as empty if the property attribute was actually present
+			// (e.g. <meta property="">) — NOT for legacy <meta name="cover"> elements
 			trimmedProp := strings.TrimSpace(prop)
-			if trimmedProp == "" {
+			if hasProperty && trimmedProp == "" {
 				info.metaEmptyProps++
 			} else if strings.Contains(trimmedProp, " ") {
 				info.metaListProps = append(info.metaListProps, prop)
