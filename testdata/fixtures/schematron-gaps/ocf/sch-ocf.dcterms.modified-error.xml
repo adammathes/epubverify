@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata xmlns="http://www.idpf.org/2013/metadata"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    unique-identifier="uid">
+    <dc:title>Test</dc:title>
+    <dc:language>en</dc:language>
+    <dc:identifier id="uid">urn:uuid:test</dc:identifier>
+</metadata>
