@@ -271,6 +271,22 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkFigcaptionPosition(data, fullPath, r)
 			// RSC-005: HTML5 content model — picture element structure
 			checkPictureContentModel(data, fullPath, r)
+			// RSC-005: Schematron disallowed descendants (address, form, caption, etc.)
+			checkDisallowedDescendants(data, fullPath, r)
+			// RSC-005: Schematron required ancestors (area→map, img[ismap]→a[href])
+			checkRequiredAncestor(data, fullPath, r)
+			// RSC-005: bdo requires dir attribute
+			checkBdoDir(data, fullPath, r)
+			// RSC-005: nested ssml:ph attributes
+			checkSSMLPhNesting(data, fullPath, r)
+			// RSC-005: duplicate map names
+			checkDuplicateMapName(data, fullPath, r)
+			// RSC-005: select without multiple having multiple selected options
+			checkSelectMultiple(data, fullPath, r)
+			// RSC-005: meta charset at most once
+			checkMetaCharset(data, fullPath, r)
+			// RSC-005: link sizes only on rel=icon
+			checkLinkSizes(data, fullPath, r)
 		}
 	}
 }
@@ -3013,6 +3029,14 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 			checkTransparentContentModel(data, fullPath, r)
 			checkFigcaptionPosition(data, fullPath, r)
 			checkPictureContentModel(data, fullPath, r)
+			checkDisallowedDescendants(data, fullPath, r)
+			checkRequiredAncestor(data, fullPath, r)
+			checkBdoDir(data, fullPath, r)
+			checkSSMLPhNesting(data, fullPath, r)
+			checkDuplicateMapName(data, fullPath, r)
+			checkSelectMultiple(data, fullPath, r)
+			checkMetaCharset(data, fullPath, r)
+			checkLinkSizes(data, fullPath, r)
 
 			// DOCTYPE check: mode-specific
 			if opts.CheckMode == "xhtml" {
@@ -7250,5 +7274,659 @@ func checkNavContentModel(data []byte, location string, r *report.Report) {
 		r.AddWithLocation(report.Error, "RSC-005",
 			`missing required nav element with epub:type="toc"`,
 			location)
+	}
+}
+
+// disallowedDescendantPairs defines (ancestor, descendant) pairs where the
+// descendant element must not appear anywhere inside the ancestor element.
+// These correspond to epubcheck's Schematron "disallowed-descendants" patterns.
+var disallowedDescendantPairs = []struct {
+	ancestor   string
+	descendant string
+}{
+	{"address", "address"},
+	{"address", "header"},
+	{"address", "footer"},
+	{"form", "form"},
+	{"progress", "progress"},
+	{"meter", "meter"},
+	{"caption", "table"},
+	{"header", "header"},
+	{"header", "footer"},
+	{"footer", "footer"},
+	{"footer", "header"},
+	{"label", "label"},
+}
+
+// checkDisallowedDescendants reports RSC-005 when an element contains a
+// descendant that is structurally forbidden. For example, <address> cannot
+// contain another <address>, <header>, or <footer>; <form> cannot nest inside
+// <form>; <caption> cannot contain <table>; etc.
+//
+// This complements checkInteractiveNesting (which handles interactive elements
+// like a, button, audio, video) by covering non-interactive disallowed nesting.
+func checkDisallowedDescendants(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	// Build lookup: for each ancestor element, which descendants are disallowed
+	type pair struct{ ancestor, descendant string }
+	disallowed := make(map[string][]string) // ancestor -> list of disallowed descendants
+	for _, p := range disallowedDescendantPairs {
+		disallowed[p.ancestor] = append(disallowed[p.ancestor], p.descendant)
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Stack of open elements that have disallowed-descendant rules
+	type stackEntry struct {
+		name       string
+		disallowed []string
+	}
+	var stack []stackEntry
+	reported := make(map[pair]bool)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			// Check if this element is a disallowed descendant of any ancestor on the stack
+			for _, entry := range stack {
+				for _, d := range entry.disallowed {
+					if name == d {
+						key := pair{entry.name, name}
+						if !reported[key] {
+							reported[key] = true
+							r.AddWithLocation(report.Error, "RSC-005",
+								fmt.Sprintf("element \"%s\" not allowed inside \"%s\"",
+									name, entry.name),
+								location)
+						}
+					}
+				}
+			}
+
+			// If this element has its own disallowed-descendant rules, push it
+			if dlist, ok := disallowed[name]; ok {
+				stack = append(stack, stackEntry{name: name, disallowed: dlist})
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if len(stack) > 0 && stack[len(stack)-1].name == name {
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+}
+
+// checkRequiredAncestor reports RSC-005 when an element appears without a
+// required ancestor. Covers:
+//   - <area> must be inside <map>
+//   - <img ismap> must be inside <a href>
+func checkRequiredAncestor(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	// Track ancestor context
+	var elementStack []string
+	mapDepth := 0   // how many <map> ancestors we're inside
+	aHrefDepth := 0 // how many <a href="..."> ancestors we're inside
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			elementStack = append(elementStack, name)
+
+			if name == "map" {
+				mapDepth++
+			}
+			if name == "a" {
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "href" && attr.Value != "" {
+						aHrefDepth++
+						break
+					}
+				}
+			}
+
+			// Check: <area> requires <map> ancestor
+			if name == "area" && mapDepth == 0 {
+				r.AddWithLocation(report.Error, "RSC-005",
+					`element "area" requires ancestor "map"`,
+					location)
+			}
+
+			// Check: <img ismap> requires <a href> ancestor
+			if name == "img" {
+				hasIsmap := false
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "ismap" {
+						hasIsmap = true
+						break
+					}
+				}
+				if hasIsmap && aHrefDepth == 0 {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "img" with attribute "ismap" requires ancestor "a" with attribute "href"`,
+						location)
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if len(elementStack) > 0 && elementStack[len(elementStack)-1] == name {
+				elementStack = elementStack[:len(elementStack)-1]
+			}
+			if name == "map" && mapDepth > 0 {
+				mapDepth--
+			}
+			if name == "a" && aHrefDepth > 0 {
+				aHrefDepth--
+			}
+		}
+	}
+}
+
+// checkBdoDir reports RSC-005 when a <bdo> element is missing the required
+// dir attribute. Per HTML spec, bdo must have dir="ltr" or dir="rtl".
+func checkBdoDir(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "bdo" {
+				hasDir := false
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "dir" {
+						hasDir = true
+						break
+					}
+				}
+				if !hasDir {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "bdo" missing required attribute "dir"`,
+						location)
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+		}
+	}
+}
+
+// checkSSMLPhNesting reports RSC-005 when ssml:ph attributes are nested.
+// An element with ssml:ph must not be a descendant of another element with ssml:ph.
+func checkSSMLPhNesting(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	ssmlNS := "http://www.w3.org/2001/10/synthesis"
+
+	// Track element depth. When we're inside an element with ssml:ph,
+	// phAncestorDepth records the element depth at which the ancestor's ssml:ph
+	// was found. -1 means we're not inside any ssml:ph element.
+	elementDepth := 0
+	phAncestorDepth := -1
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			elementDepth++
+			hasSSMLPh := false
+			for _, attr := range t.Attr {
+				if attr.Name.Local == "ph" && attr.Name.Space == ssmlNS {
+					hasSSMLPh = true
+					break
+				}
+			}
+			if hasSSMLPh {
+				if phAncestorDepth >= 0 {
+					// We're inside an element with ssml:ph — this is nested
+					r.AddWithLocation(report.Error, "RSC-005",
+						`attribute "ssml:ph" not allowed on descendant of element with "ssml:ph"`,
+						location)
+					return
+				}
+				phAncestorDepth = elementDepth
+			}
+		case xml.EndElement:
+			if phAncestorDepth == elementDepth {
+				// Leaving the element that had ssml:ph
+				phAncestorDepth = -1
+			}
+			elementDepth--
+		}
+	}
+}
+
+// checkDuplicateMapName reports RSC-005 when multiple <map> elements share the
+// same name attribute value within a document.
+func checkDuplicateMapName(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+	mapNames := make(map[string]bool)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "map" {
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "name" && attr.Value != "" {
+						if mapNames[attr.Value] {
+							r.AddWithLocation(report.Error, "RSC-005",
+								fmt.Sprintf(`duplicate map name "%s"`, attr.Value),
+								location)
+						}
+						mapNames[attr.Value] = true
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+		}
+	}
+}
+
+// checkSelectMultiple reports RSC-005 when a <select> element without the
+// "multiple" attribute has more than one <option> with "selected".
+func checkSelectMultiple(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	type selectState struct {
+		hasMultiple   bool
+		selectedCount int
+	}
+	var selectStack []*selectState
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "select" {
+				state := &selectState{}
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "multiple" {
+						state.hasMultiple = true
+						break
+					}
+				}
+				selectStack = append(selectStack, state)
+			}
+
+			if name == "option" && len(selectStack) > 0 {
+				current := selectStack[len(selectStack)-1]
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "selected" {
+						current.selectedCount++
+						if !current.hasMultiple && current.selectedCount > 1 {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`multiple "option" elements with "selected" in a "select" without "multiple"`,
+								location)
+						}
+						break
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "select" && len(selectStack) > 0 {
+				selectStack = selectStack[:len(selectStack)-1]
+			}
+		}
+	}
+}
+
+// checkMetaCharset reports RSC-005 when a document has more than one
+// <meta charset> element.
+func checkMetaCharset(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+	charsetCount := 0
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "meta" {
+				for _, attr := range t.Attr {
+					if strings.ToLower(attr.Name.Local) == "charset" {
+						charsetCount++
+						if charsetCount > 1 {
+							r.AddWithLocation(report.Error, "RSC-005",
+								`only one "meta" element with "charset" allowed per document`,
+								location)
+						}
+						break
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+		}
+	}
+}
+
+// checkLinkSizes reports RSC-005 when a <link> element has a "sizes" attribute
+// but its rel attribute is not "icon". Per HTML spec, sizes is only valid on
+// link[rel="icon"].
+func checkLinkSizes(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "link" {
+				hasSizes := false
+				relIsIcon := false
+				for _, attr := range t.Attr {
+					attrName := strings.ToLower(attr.Name.Local)
+					if attrName == "sizes" {
+						hasSizes = true
+					}
+					if attrName == "rel" {
+						for _, v := range strings.Fields(strings.ToLower(attr.Value)) {
+							if v == "icon" {
+								relIsIcon = true
+								break
+							}
+						}
+					}
+				}
+				if hasSizes && !relIsIcon {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`attribute "sizes" not allowed on "link" unless rel contains "icon"`,
+						location)
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+		}
+	}
+}
+
+// checkIDRefAttributes reports RSC-005 when IDREF attributes (like for, list,
+// form, aria-activedescendant, aria-controls, aria-describedby, aria-flowto,
+// aria-labelledby, aria-owns, headers) reference non-existent IDs.
+func checkIDRefAttributes(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	// First pass: collect all IDs in the document
+	ids := make(map[string]bool)
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			for _, attr := range se.Attr {
+				if strings.ToLower(attr.Name.Local) == "id" && attr.Value != "" {
+					ids[attr.Value] = true
+				}
+			}
+		}
+	}
+
+	// Single IDREF attributes (must reference exactly one ID)
+	singleIDRefAttrs := map[string]bool{
+		"for":                       true, // label
+		"list":                      true, // input
+		"form":                      true, // form-associated elements
+		"aria-activedescendant":     true,
+	}
+
+	// Space-separated IDREFS attributes (can reference multiple IDs)
+	multiIDRefAttrs := map[string]bool{
+		"headers":           true, // td/th
+		"aria-controls":     true,
+		"aria-describedby":  true,
+		"aria-flowto":       true,
+		"aria-labelledby":   true,
+		"aria-owns":         true,
+	}
+
+	// Second pass: check all IDREF attributes
+	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+	reported := make(map[string]bool)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			for _, attr := range t.Attr {
+				attrName := strings.ToLower(attr.Name.Local)
+
+				if singleIDRefAttrs[attrName] && attr.Value != "" {
+					if !ids[attr.Value] {
+						key := attrName + "=" + attr.Value
+						if !reported[key] {
+							reported[key] = true
+							r.AddWithLocation(report.Error, "RSC-005",
+								fmt.Sprintf(`"%s" attribute value "%s" does not reference a valid ID`,
+									attrName, attr.Value),
+								location)
+						}
+					}
+				}
+
+				if multiIDRefAttrs[attrName] && attr.Value != "" {
+					for _, ref := range strings.Fields(attr.Value) {
+						if !ids[ref] {
+							key := attrName + "=" + ref
+							if !reported[key] {
+								reported[key] = true
+								r.AddWithLocation(report.Error, "RSC-005",
+									fmt.Sprintf(`"%s" attribute references non-existent ID "%s"`,
+										attrName, ref),
+									location)
+							}
+						}
+					}
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+		}
 	}
 }

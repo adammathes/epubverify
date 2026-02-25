@@ -146,6 +146,59 @@ KNOWN_CHECKS: dict[str, dict] = {
     "map.id":                               {"status": "implemented", "go": "content.go:checkImageMapValid"},
     "descendant-dfn-dfn":                   {"status": "implemented", "go": "content.go:checkNestedDFN"},
 
+    # --- epub-xhtml-30.sch: disallowed-descendants (Tier 2) ---
+    "descendant-a-interactive":             {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-button-interactive":        {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-audio-audio":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-audio-video":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-video-video":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-video-audio":               {"status": "implemented", "go": "content.go:checkInteractiveNesting"},
+    "descendant-address-address":           {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-address-header":            {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-address-footer":            {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-form-form":                 {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-progress-progress":         {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-meter-meter":               {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-caption-table":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-header-header":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-header-footer":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-footer-footer":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-footer-header":             {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+    "descendant-label-label":               {"status": "implemented", "go": "content.go:checkDisallowedDescendants"},
+
+    # --- epub-xhtml-30.sch: required-ancestor (Tier 2) ---
+    "ancestor-area-map":                    {"status": "implemented", "go": "content.go:checkRequiredAncestor"},
+    "ancestor-imgismap-ahref":              {"status": "implemented", "go": "content.go:checkRequiredAncestor"},
+
+    # --- epub-xhtml-30.sch: required-attr (Tier 2) ---
+    "bdo-dir":                              {"status": "implemented", "go": "content.go:checkBdoDir"},
+
+    # --- epub-xhtml-30.sch: IDREF/IDREFS validation (Tier 2) ---
+    "idref-aria-activedescendant":          {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-label-for":                      {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-input-list":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-forms-form":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-headers":                       {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-describedby":              {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-output-for":                    {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-flowto":                   {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-labelledby":               {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-owns":                     {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idrefs-aria-controls":                 {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-trigger-observer":               {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-trigger-ref":                    {"status": "implemented", "go": "content.go:checkIDReferences"},
+    "idref-mathml-xref":                    {"status": "partial",     "go": "content.go:checkIDReferences", "note": "MathML xref not tracked by checkIDReferences (only XHTML namespace)"},
+    "idref-mathml-indenttarget":            {"status": "partial",     "go": "content.go:checkIDReferences", "note": "MathML indenttarget not tracked by checkIDReferences (only XHTML namespace)"},
+
+    # --- epub-xhtml-30.sch: concrete patterns (Tier 2) ---
+    "ssml-ph":                              {"status": "implemented", "go": "content.go:checkSSMLPhNesting"},
+    "map.name":                             {"status": "implemented", "go": "content.go:checkDuplicateMapName"},
+    "select-multiple":                      {"status": "implemented", "go": "content.go:checkSelectMultiple"},
+    "meta-charset":                         {"status": "implemented", "go": "content.go:checkMetaCharset"},
+    "link-sizes":                           {"status": "implemented", "go": "content.go:checkLinkSizes"},
+    "track":                                {"status": "partial",     "go": "", "note": "track label uniqueness not yet implemented"},
+    "md-media":                             {"status": "partial",     "go": "content.go:checkMicrodataAttrs", "note": "microdata media element checks not yet complete"},
+
     # --- epub-nav-30.sch ---
     "nav-ocurrence":                        {"status": "implemented", "go": "content.go:checkNavContentModel"},
     "span-no-sublist":                      {"status": "partial",     "go": "content.go:checkNavContentModel", "note": "checks li+span must have ol child, but not the reverse"},
@@ -158,6 +211,32 @@ KNOWN_CHECKS: dict[str, dict] = {
 
     # --- ocf-encryption-30.sch ---
     "ocf-enc.id-unique":                    {"status": "implemented", "go": "ocf.go:checkEncryptionXMLFull"},
+
+    # --- ocf-metadata-30.sch (multi-rendition metadata.xml) ---
+    # These apply to META-INF/metadata.xml in multi-rendition EPUBs.
+    # The equivalent OPF-level checks are fully implemented in opf.go.
+    # Multi-rendition EPUBs are extremely rare in practice.
+    "ocf.uid":                              {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.dcterms.modified":                 {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.dcterms.modified.syntax":          {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.refines.relative":                 {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.source-of":                   {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.link.record":                      {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.belongs-to-collection":       {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.meta.collection-type":             {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+    "ocf.rendition.globals":                {"status": "wontfix", "note": "multi-rendition metadata.xml; OPF equivalent in opf.go"},
+
+    # --- collection-do-30.sch (distributable-object collections) ---
+    "do.collection":                        {"status": "wontfix", "note": "distributable-object collection structure; very rare in practice"},
+
+    # --- collection-manifest-30.sch ---
+    "manifest.collection":                  {"status": "partial",  "go": "opf.go:checkCollections", "note": "top-level check done; child content/link count checks not yet implemented"},
+
+    # --- multiple-renditions/container.sch ---
+    "selection.accessModes":                {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "selection.mandatingOneSelectionAttribute": {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "mapping.atMostOne":                    {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
+    "mapping.mediaType":                    {"status": "wontfix", "note": "multi-rendition container.xml; very rare"},
 }
 
 
