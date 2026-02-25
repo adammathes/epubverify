@@ -35,10 +35,10 @@ Updating from upstream:
 
     The .cache/epubcheck directory is gitignored and auto-cloned on first run.
 
-Output directories:
-    XHTML fixtures  -> testdata/fixtures/epub3/06-content-document/
-    OPF fixtures    -> testdata/fixtures/epub3/05-package-document/
-    OCF fixtures    -> testdata/fixtures/epub3/04-ocf/
+Output directories (all under testdata/fixtures/schematron-gaps/):
+    XHTML fixtures  -> schematron-gaps/xhtml/
+    OPF fixtures    -> schematron-gaps/opf/
+    OCF fixtures    -> schematron-gaps/ocf/
 """
 
 import argparse
@@ -729,18 +729,20 @@ CONTAINER_FIXTURES: dict[str, tuple[str, str]] = {
 
 
 def generate_test_fixtures(
-    missing: list[SchematronCheck], repo_root: Path, xhtml_dir: Path
+    missing: list[SchematronCheck], repo_root: Path, gaps_dir: Path
 ) -> list[Path]:
     """Generate test fixture files for all missing checks.
 
-    XHTML fixtures go to xhtml_dir, OPF fixtures to 05-package-document/,
-    OCF metadata fixtures to 04-ocf/, etc.
+    All fixtures go under gaps_dir with subdirectories by type:
+      gaps_dir/xhtml/  - XHTML content document fixtures
+      gaps_dir/opf/    - OPF package document fixtures
+      gaps_dir/ocf/    - OCF container and metadata fixtures
     """
-    xhtml_dir.mkdir(parents=True, exist_ok=True)
-    opf_dir = repo_root / "testdata" / "fixtures" / "epub3" / "05-package-document"
-    opf_dir.mkdir(parents=True, exist_ok=True)
-    ocf_dir = repo_root / "testdata" / "fixtures" / "epub3" / "04-ocf"
-    ocf_dir.mkdir(parents=True, exist_ok=True)
+    xhtml_dir = gaps_dir / "xhtml"
+    opf_dir = gaps_dir / "opf"
+    ocf_dir = gaps_dir / "ocf"
+    for d in (xhtml_dir, opf_dir, ocf_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     generated = []
     seen_patterns: set[str] = set()
@@ -987,7 +989,7 @@ def main():
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory for generated test fixtures (default: testdata/fixtures/epub3/06-content-document/)",
+        help="Directory for generated test fixtures (default: testdata/fixtures/schematron-gaps/)",
     )
     parser.add_argument(
         "--skip-update",
@@ -1027,18 +1029,18 @@ def main():
 
     # Generate test fixtures if requested
     if args.generate_tests:
-        xhtml_dir = args.output_dir or (
-            repo_root / "testdata" / "fixtures" / "epub3" / "06-content-document"
+        gaps_dir = args.output_dir or (
+            repo_root / "testdata" / "fixtures" / "schematron-gaps"
         )
-        print(f"\nGenerating test fixtures ...", file=sys.stderr)
-        generated = generate_test_fixtures(result.missing_checks, repo_root, xhtml_dir)
+        print(f"\nGenerating test fixtures in {gaps_dir.relative_to(repo_root)}/ ...", file=sys.stderr)
+        generated = generate_test_fixtures(result.missing_checks, repo_root, gaps_dir)
         print(f"Generated {len(generated)} test fixture files:", file=sys.stderr)
         for p in generated:
             print(f"  {p.relative_to(repo_root)}", file=sys.stderr)
 
         # Also generate feature file snippet
         snippet = generate_feature_snippet(result.missing_checks)
-        snippet_path = xhtml_dir / "sch-generated-scenarios.feature.txt"
+        snippet_path = gaps_dir / "sch-generated-scenarios.feature.txt"
         snippet_path.write_text(snippet, encoding="utf-8")
         print(f"  {snippet_path.relative_to(repo_root)} (feature file snippet)", file=sys.stderr)
 
