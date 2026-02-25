@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"
+      xmlns:ssml="http://www.w3.org/2001/10/synthesis" xml:lang="en" lang="en">
+<head><title>Test: idref-trigger-ref</title></head>
+<body>
+  <div id="some-observer">Content</div>
+  <epub:trigger xmlns:epub="http://www.idpf.org/2007/ops"
+      xmlns:ev="http://www.w3.org/2001/xml-events"
+      action="show" ref="nonexistent-ref" ev:observer="some-observer"
+      ev:event="click"/>
+</body>
+</html>
