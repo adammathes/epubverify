@@ -325,6 +325,13 @@ crawl_internetarchive() {
 
   local count=0
 
+  # TODO: This source has not been tested against the live Internet Archive API.
+  # Run with --limit 5 against the real endpoint and verify:
+  #   1. advancedsearch.php JSON response parses correctly
+  #   2. /metadata/{id}/files returns .epub entries in the expected structure
+  #   3. Downloaded files are valid EPUB/ZIP containers
+  # Fix any URL encoding, JSON path, or response format issues found.
+
   # Strategy: use the Advanced Search API to find items containing EPUB files.
   # We page through results using the day-of-year as a seed so each run covers
   # a different slice of the ~millions of text items.
@@ -421,6 +428,14 @@ crawl_oapen() {
   echo ""
 
   local count=0
+
+  # TODO: This source has not been tested against the live OAPEN API.
+  # Run with --limit 5 against the real endpoint and verify:
+  #   1. OAI-PMH ListRecords XML contains parseable 20.500.12657/{id} handles
+  #   2. Handle pages contain /bitstream/.../*.epub links
+  #   3. Downloaded files are valid EPUB/ZIP containers
+  # The DSpace REST API (/rest/search) returned 500 errors during dev;
+  # OAI-PMH was chosen as the fallback. Confirm it works or switch approach.
 
   # Strategy: use the OAI-PMH ListRecords endpoint to discover items, then
   # check each handle page for downloadable EPUB bitstreams.

@@ -70,6 +70,19 @@ Add Gherkin scenarios for doctor mode. Currently only tested via Go unit tests. 
 
 Extend `make bench` to run against the full stress test corpus. Track per-book validation time, memory usage, startup overhead (JVM vs native Go), and batch throughput.
 
+### Verify New Crawl Sources End-to-End
+
+The Internet Archive and OAPEN crawlers have been implemented but not yet tested against live endpoints (development sandbox blocks outbound requests). Run each source manually against the real APIs and verify:
+
+- `bash scripts/epub-crawler.sh --source internetarchive --limit 5` discovers and downloads EPUBs
+- `bash scripts/epub-crawler.sh --source oapen --limit 5` discovers and downloads EPUBs
+- Downloaded files are valid ZIP/EPUB containers
+- Manifest entries are created correctly
+- `crawl-validate.sh` runs both validators on the new files without errors
+- Static entries in `epub-sources.txt` resolve to real downloadable EPUBs (some may be guessed identifiers)
+
+Fix any URL patterns, API response parsing, or download issues found during live testing.
+
 ### Expand Crawl Sources
 
 The crawler currently covers Gutenberg, Standard Ebooks, and Feedbooks — all public domain, Western-centric, and mostly well-formed. Add more diverse sources to increase coverage of edge cases:
