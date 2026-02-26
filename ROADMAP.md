@@ -47,17 +47,20 @@ Started at 605/903 (67%) → 826/903 (91.6%) → 867/902 → 901/902 → **923/9
 
 ## APPROVED
 
-_Large work items approved by human editor (adammathes)._
+### Increase Real-World EPUB Test Coverage
 
-No items currently approved. See PROPOSED section for candidates.
+Before we move on to the long running epub scouring stress test, let's expand from 77 to 200 epubs with more diversity from:
 
----
+Expand the stress test corpus beyond the current 77 EPUBs with diverse sources:
 
-## PROPOSED
+- **Standard Ebooks** (~700 titles): High quality EPUB3, rich accessibility metadata, custom `se:*` vocabulary
+- **OAPEN scholarly books**: Complex structure, footnotes, indexes, math
+- **Non-English EPUBs**: CJK, Arabic/RTL, Cyrillic, Indic scripts
+- **Very large EPUBs**: 50MB+ image-heavy books for performance testing
+- **Calibre/Sigil-generated**: Tool-specific output patterns
+- **EPUB2 depth**: More EPUB2-only books for legacy path coverage
 
-_Large work items proposed by AI or human editors. Not yet approved._
-
-### Proposal 1: Long-Running EPUB Scouring Stress Test
+### Long-Running EPUB Scouring Stress Test
 
 **Goal:** Create an automated, long-running process that continuously discovers EPUBs on the internet, validates them with both epubverify and epubcheck, and files bugs when discrepancies are found.
 
@@ -108,7 +111,8 @@ On discrepancy:
 **3. Reporter (`scripts/crawl-report.sh`)**
 
 - Generates a summary of all crawl runs: total EPUBs tested, match rate, discrepancies by category
-- For new discrepancies: creates a GitHub issue with the EPUB source URL, both validator outputs, and the specific error code differences
+- For new discrepancies: edits a document in the repo with the EPUB source URL, both validator outputs, and the specific error code differences to review and fix
+- Optionally files an ISSUE in the github repo
 - Optionally: if the discrepancy involves an error code we've seen before, adds a comment to the existing issue instead of creating a new one
 - Optionally: for false negatives, generates a synthetic test fixture that reproduces the issue and adds it to `testdata/synthetic/`
 
@@ -137,7 +141,7 @@ This could run as:
 
 ---
 
-### Proposal 2: Systematic Gap Extraction from Epubcheck's Three Validation Tiers ✅ ALL THREE TIERS COMPLETE
+### Systematic Gap Extraction from Epubcheck's Three Validation Tiers ✅ ALL THREE TIERS COMPLETE
 
 **Goal:** Methodically analyze each of epubcheck's three validation tiers — RelaxNG schemas, Schematron rules, and Java code — to identify every check that epubverify doesn't currently implement, prioritize the gaps, and systematically close them.
 
@@ -288,26 +292,25 @@ The following checks are intentionally skipped. They're grouped by reason so fut
 
 ---
 
-### Proposal 3: Increase Real-World EPUB Test Coverage
+---
 
-Expand the stress test corpus beyond the current 77 EPUBs with diverse sources:
+## PROPOSED
 
-- **Standard Ebooks** (~700 titles): High quality EPUB3, rich accessibility metadata, custom `se:*` vocabulary
-- **OAPEN scholarly books**: Complex structure, footnotes, indexes, math
-- **Non-English EPUBs**: CJK, Arabic/RTL, Cyrillic, Indic scripts
-- **Very large EPUBs**: 50MB+ image-heavy books for performance testing
-- **Calibre/Sigil-generated**: Tool-specific output patterns
-- **EPUB2 depth**: More EPUB2-only books for legacy path coverage
 
-### Proposal 4: Doctor Mode BDD Tests
+
+### Update Doctor Mode
+
+Given the more comprehensive tests, offer more fixes for checks that have a clear easy to implement adjustment to resolve in an epub.
+
+### Doctor Mode BDD Tests
 
 Add Gherkin scenarios for doctor mode. Currently only tested via Go unit tests. BDD scenarios would make the expected behavior more visible and could serve as documentation.
 
-### Proposal 5: Performance Benchmarking at Scale
+### Performance Benchmarking at Scale
 
 Extend `make bench` to run against the full stress test corpus. Track per-book validation time, memory usage, startup overhead (JVM vs native Go), and batch throughput.
 
-### Proposal 6: CI Integration for Stress Tests
+### CI Integration for Stress Tests
 
 Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compares against cached epubcheck results, and fails if any new disagreements appear.
 
