@@ -49,7 +49,7 @@ if [ ! -f "${MANIFEST}" ]; then
   exit 2
 fi
 
-export MANIFEST RESULTS_DIR FILE_ISSUES
+export MANIFEST RESULTS_DIR FILE_ISSUES OUTPUT
 
 python3 << 'PYEOF'
 import json
@@ -232,9 +232,15 @@ if os.path.isdir(ev_dir) and os.path.isdir(ec_dir):
             out(f"  {cid:<20} {count:>3} books")
         out()
 
-# --- Print report ---
+# --- Print/write report ---
 report = "\n".join(report_lines)
 print(report)
+
+OUTPUT = os.environ.get("OUTPUT", "")
+if OUTPUT:
+    with open(OUTPUT, "w") as f:
+        f.write(report)
+        f.write("\n")
 
 # --- File GitHub issues ---
 
@@ -297,7 +303,8 @@ if FILE_ISSUES and (false_positives or false_negatives):
 
 PYEOF
 
-# Write to file if requested
+# Confirm file output
 if [ -n "${OUTPUT}" ]; then
-  echo "Report written to ${OUTPUT}"
+  echo ""
+  echo "Report also written to: ${OUTPUT}"
 fi

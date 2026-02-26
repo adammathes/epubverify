@@ -90,6 +90,9 @@ echo "  epubverify:      ${EPUBVERIFY}"
 echo "  epubcheck:       ${EPUBCHECK_JAR:-NONE}"
 echo ""
 
+# Export variables so the Python heredoc can access them via os.environ
+export EPUB_DIR MANIFEST RESULTS_DIR EPUBVERIFY EPUBCHECK_JAR LIMIT
+
 # Validate EPUBs and update manifest
 python3 << 'PYEOF'
 import json
