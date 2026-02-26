@@ -78,8 +78,9 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 		// RSC-007: font file referenced in CSS must exist in the container
 		checkCSSFontFileExists(ep, cssContent, fullPath, r)
 
-		// RSC-007: background-image referenced file must exist in the container
-		checkCSSBackgroundImageExists(ep, cssContent, fullPath, r)
+		// NOTE: background-image url() references are NOT checked for RSC-007.
+		// epubcheck does not validate CSS url() references for file existence
+		// (only @font-face and @import targets are checked).
 
 		// RSC-008: CSS-referenced resources must be in manifest
 		checkCSSResourceInManifest(ep, cssContent, fullPath, manifestHrefs, r)

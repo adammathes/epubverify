@@ -5,8 +5,9 @@ body {
     font-family: arial, helvetica, sans-serif;
 }
 
-
-.bg
-{
-  background:url("../image/background.jpg") repeat-x 0px center;
+@font-face {
+  font-family: "Missing Font";
+  font-style: normal;
+  font-weight: normal;
+  src: url("missing-font.otf");
 }

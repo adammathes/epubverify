@@ -1749,7 +1749,16 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 		manifestByID[item.ID] = item
 	}
 
-	// Collect non-linear spine items
+	// Build set of nav document paths (always considered reachable)
+	navPaths := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if item.Href != "\x00MISSING" && hasProperty(item.Properties, "nav") {
+			navPaths[ep.ResolveHref(item.Href)] = true
+		}
+	}
+
+	// Collect non-linear spine items (skip the nav document itself — it is
+	// inherently reachable because reading systems present it to the user)
 	type nonLinearItem struct {
 		id   string
 		path string
@@ -1758,9 +1767,13 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 	for _, ref := range pkg.Spine {
 		if strings.EqualFold(ref.Linear, "no") {
 			if item, ok := manifestByID[ref.IDRef]; ok && item.Href != "\x00MISSING" {
+				itemPath := ep.ResolveHref(item.Href)
+				if navPaths[itemPath] {
+					continue // nav doc is always reachable
+				}
 				nonLinear = append(nonLinear, nonLinearItem{
 					id:   ref.IDRef,
-					path: ep.ResolveHref(item.Href),
+					path: itemPath,
 				})
 			}
 		}
