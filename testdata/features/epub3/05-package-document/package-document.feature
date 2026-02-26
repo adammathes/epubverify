@@ -904,6 +904,31 @@ Feature: EPUB 3 — Package document
     Then error OPF-084 is reported
     And no other errors or warnings are reported
 
+  Scenario: Report dictionary content without dc:type declaration
+    When checking EPUB 'pkg-dict-no-dctype-warning'
+    Then warning OPF-079 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report Search Key Map with wrong file extension
+    When checking EPUB 'pkg-skm-wrong-extension-warning'
+    Then warning OPF-080 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection without dictionary content
+    When checking EPUB 'pkg-dict-no-dict-content-error'
+    Then error OPF-078 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection resource not found in manifest
+    When checking EPUB 'pkg-dict-resource-not-found-error'
+    Then error OPF-081 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report Search Key Map reference not in spine
+    When checking EPUB 'pkg-skm-not-in-spine-error'
+    Then error RSC-021 is reported
+    And no other errors or warnings are reported
+
 
   ## Pagination metadata
 

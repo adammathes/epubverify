@@ -358,6 +358,24 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// OPF-070/RSC-005: collection role validation
 	checkCollections(pkg, r)
 
+	// OPF-078: dictionary collection must have dictionary content
+	if !opts.SingleFileMode {
+		checkDictionaryHasContent(ep, pkg, r)
+	}
+
+	// OPF-079: dictionary content without dc:type declaration
+	if !opts.SingleFileMode {
+		checkDictionaryDCType(ep, pkg, r)
+	}
+
+	// OPF-080: Search Key Map file extension should be .xml
+	checkSKMFileExtension(pkg, r)
+
+	// RSC-021: Search Key Map references must point to spine content docs
+	if !opts.SingleFileMode {
+		checkSKMSpineReferences(ep, pkg, r)
+	}
+
 	// RSC-005: element order (metadata must come before manifest, manifest before spine)
 	checkElementOrder(pkg, r)
 
@@ -3450,7 +3468,7 @@ func checkPreviewCollection(col epub.Collection, manifestByHref map[string]epub.
 	}
 }
 
-// OPF-082/083/084: dictionary collection checks.
+// OPF-081/082/083/084: dictionary collection checks.
 func checkDictionaryCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
 	skmCount := 0
 	for _, href := range col.Links {
@@ -3460,6 +3478,9 @@ func checkDictionaryCollection(col epub.Collection, manifestByHref map[string]ep
 		}
 		item, found := manifestByHref[parsed.Path]
 		if !found {
+			// OPF-081: resource referenced from dictionary collection not found
+			r.Add(report.Error, "OPF-081",
+				fmt.Sprintf(`Resource "%s" (referenced from an EPUB Dictionary collection) was not found`, parsed.Path))
 			continue
 		}
 		if item.MediaType == "application/vnd.epub.search-key-map+xml" {
@@ -3480,6 +3501,174 @@ func checkDictionaryCollection(col epub.Collection, manifestByHref map[string]ep
 		r.Add(report.Error, "OPF-083",
 			"Found an EPUB Dictionary collection containing no Search Key Map Document")
 	}
+}
+
+// OPF-078: an EPUB Dictionary must contain at least one Content Document
+// with dictionary content (epub:type="dictionary").
+func checkDictionaryHasContent(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check if there's a dictionary collection
+	hasDictCollection := false
+	for _, col := range pkg.Collections {
+		if extractCollectionRoleName(col.Role) == "dictionary" {
+			hasDictCollection = true
+			break
+		}
+	}
+	if !hasDictCollection {
+		return
+	}
+
+	// Scan all XHTML content docs for epub:type="dictionary"
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		if contentHasEpubType(data, "dictionary") {
+			return // found dictionary content
+		}
+	}
+	r.Add(report.Error, "OPF-078",
+		`An EPUB Dictionary must contain at least one Content Document with dictionary content (epub:type "dictionary")`)
+}
+
+// OPF-079: dictionary content found but no dc:type "dictionary" declared.
+func checkDictionaryDCType(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check if already declared
+	if epubHasDCType(ep, "dictionary") {
+		return
+	}
+
+	// Scan content documents for epub:type="dictionary"
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		if contentHasEpubType(data, "dictionary") {
+			r.Add(report.Warning, "OPF-079",
+				`Dictionary content was found (epub:type "dictionary"), the Package Document should declare the dc:type "dictionary"`)
+			return
+		}
+	}
+}
+
+// OPF-080: Search Key Map document file name should have .xml extension.
+func checkSKMFileExtension(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/vnd.epub.search-key-map+xml" {
+			if !strings.HasSuffix(strings.ToLower(item.Href), ".xml") {
+				r.Add(report.Warning, "OPF-080",
+					`A Search Key Map document file name should have the extension ".xml"`)
+			}
+		}
+	}
+}
+
+// RSC-021: Search Key Map documents must point to Content Documents in the spine.
+// Parses each SKM manifest item and checks that href values on <search-key-group>
+// elements resolve to content documents listed in the spine.
+func checkSKMSpineReferences(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build spine href set (resolved paths of spine items)
+	spineHrefs := make(map[string]bool)
+	idToItem := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		idToItem[item.ID] = item
+	}
+	for _, ref := range pkg.Spine {
+		if item, ok := idToItem[ref.IDRef]; ok && item.Href != "\x00MISSING" {
+			spineHrefs[item.Href] = true
+		}
+	}
+
+	// Find and parse SKM documents
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/vnd.epub.search-key-map+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		skmDir := path.Dir(item.Href)
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "search-key-group" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" && attr.Value != "" {
+					parsed, err := url.Parse(attr.Value)
+					if err != nil {
+						continue
+					}
+					// Resolve relative to SKM location
+					refPath := parsed.Path
+					if !path.IsAbs(refPath) && skmDir != "." {
+						refPath = skmDir + "/" + refPath
+					}
+					if !spineHrefs[refPath] {
+						r.Add(report.Error, "RSC-021",
+							fmt.Sprintf(`A Search Key Map Document must point to Content Documents ("%s" was not found in the spine)`, refPath))
+						return // report once
+					}
+				}
+			}
+		}
+	}
+}
+
+// contentHasEpubType checks if an XHTML document contains the given epub:type token.
+func contentHasEpubType(data []byte, typeName string) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && containsToken(attr.Value, typeName) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // OPF-077: Data Navigation Document should not be included in the spine.

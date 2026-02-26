@@ -197,6 +197,11 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkRegionBasedProperty(data, fullPath, r)
 		}
 
+		// HTM-051: EDUPUB microdata without RDFa warning
+		if ep.Package.Version >= "3.0" && epubHasDCType(ep, "edupub") {
+			checkMicrodataWithoutRDFa(data, fullPath, r)
+		}
+
 		// HTM-016: unique IDs within content document
 		checkUniqueIDs(data, fullPath, r)
 
@@ -2227,6 +2232,46 @@ func checkEmptyHrefUsage(data []byte, location string, r *report.Report) {
 				return // report once per document
 			}
 		}
+	}
+}
+
+// HTM-051: Microdata attributes found without RDFa (EDUPUB recommendation).
+// Reports once per document if microdata attributes (itemscope, itemprop, itemtype)
+// are found but no RDFa attributes (vocab, typeof, property, about, resource, prefix).
+func checkMicrodataWithoutRDFa(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	hasMicrodata := false
+	hasRDFa := false
+	rdfaAttrs := map[string]bool{
+		"vocab": true, "typeof": true, "property": true,
+		"about": true, "resource": true, "prefix": true,
+	}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			switch attr.Name.Local {
+			case "itemscope", "itemprop", "itemtype", "itemid", "itemref":
+				hasMicrodata = true
+			}
+			if rdfaAttrs[attr.Name.Local] {
+				hasRDFa = true
+			}
+		}
+		if hasMicrodata && hasRDFa {
+			return // both present, no warning
+		}
+	}
+	if hasMicrodata && !hasRDFa {
+		r.AddWithLocation(report.Warning, "HTM-051",
+			"Found Microdata semantic enrichments but no RDFa. EDUPUB recommends using RDFa Lite",
+			location)
 	}
 }
 

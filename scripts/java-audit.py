@@ -154,21 +154,21 @@ KNOWN_OVERRIDES: dict[str, dict] = {
                 "note": "fatal XML parse error"},
 
     # --- Known wontfix: very niche features ---
-    "HTM-051": {"status": "wontfix", "note": "EDUPUB Microdata warning; EDUPUB is defunct"},
-    "HTM-052": {"status": "wontfix", "note": "Data Navigation Documents; very rare feature"},
+    "HTM-051": {"status": "implemented", "go": "content.go", "note": "EDUPUB Microdata without RDFa warning"},
+    "HTM-052": {"status": "implemented", "go": "content.go", "note": "region-based epub:type on non-data-nav document"},
     "OPF-064": {"status": "wontfix", "note": "INFO: declares type; informational only"},
-    "OPF-077": {"status": "wontfix", "note": "Data Navigation Document spine warning; very niche"},
-    "OPF-078": {"status": "wontfix", "note": "EPUB Dictionary content check; very niche"},
-    "OPF-079": {"status": "wontfix", "note": "EPUB Dictionary dc:type check; very niche"},
-    "OPF-080": {"status": "wontfix", "note": "Search Key Map file extension; EPUB Dictionary"},
-    "OPF-081": {"status": "wontfix", "note": "EPUB Dictionary collection resource not found; very niche"},
-    "OPF-082": {"status": "wontfix", "note": "EPUB Dictionary multiple Search Key Maps; very niche"},
-    "OPF-083": {"status": "wontfix", "note": "EPUB Dictionary no Search Key Map; very niche"},
-    "OPF-084": {"status": "wontfix", "note": "EPUB Dictionary invalid collection resource; very niche"},
-    "OPF-071": {"status": "wontfix", "note": "Index collections XHTML only; very niche"},
-    "OPF-075": {"status": "wontfix", "note": "Preview collections content docs only; very niche"},
-    "OPF-076": {"status": "wontfix", "note": "Preview collections no CFI; very niche"},
-    "RSC-021": {"status": "wontfix", "note": "Search Key Map Document spine check; EPUB Dictionary"},
+    "OPF-077": {"status": "implemented", "go": "opf.go", "note": "Data Navigation Document should not be in spine"},
+    "OPF-078": {"status": "implemented", "go": "opf.go", "note": "Dictionary collection must have dictionary content"},
+    "OPF-079": {"status": "implemented", "go": "opf.go", "note": "Dictionary content without dc:type declaration"},
+    "OPF-080": {"status": "implemented", "go": "opf.go", "note": "Search Key Map file extension should be .xml"},
+    "OPF-081": {"status": "implemented", "go": "opf.go", "note": "Dictionary collection resource not found"},
+    "OPF-082": {"status": "implemented", "go": "opf.go", "note": "Dictionary collection multiple Search Key Maps"},
+    "OPF-083": {"status": "implemented", "go": "opf.go", "note": "Dictionary collection no Search Key Map"},
+    "OPF-084": {"status": "implemented", "go": "opf.go", "note": "Dictionary collection invalid resource type"},
+    "OPF-071": {"status": "implemented", "go": "opf.go", "note": "Index collections must only contain XHTML"},
+    "OPF-075": {"status": "implemented", "go": "opf.go", "note": "Preview collections must point to content docs"},
+    "OPF-076": {"status": "implemented", "go": "opf.go", "note": "Preview collections must not include CFI fragments"},
+    "RSC-021": {"status": "implemented", "go": "opf.go", "note": "Search Key Map must point to spine content docs"},
     "RSC-022": {"status": "wontfix", "note": "Java version check for image details; not applicable to Go"},
 
     # --- Codes emitted by schema/Schematron only (no Java code check needed) ---
@@ -215,7 +215,7 @@ KNOWN_OVERRIDES: dict[str, dict] = {
     "HTM-036": {"status": "wontfix", "note": "SUPPRESSED; IFrame found"},
     "HTM-038": {"status": "wontfix", "note": "SUPPRESSED; img usemap attribute"},
     "HTM-044": {"status": "wontfix", "note": "USAGE; unused namespace URI"},
-    "HTM-045": {"status": "wontfix", "note": "USAGE; empty href encountered"},
+    "HTM-045": {"status": "implemented", "go": "content.go", "note": "USAGE; empty href encountered"},
     "HTM-049": {"status": "wontfix", "note": "SUPPRESSED; reported as RSC-005"},
     "HTM-050": {"status": "wontfix", "note": "SUPPRESSED; RDFa attribute"},
 
@@ -225,7 +225,7 @@ KNOWN_OVERRIDES: dict[str, dict] = {
     "MED-006": {"status": "wontfix", "note": "SUPPRESSED; audio codec check"},
 
     # CSS SUPPRESSED codes
-    "CSS-006": {"status": "wontfix", "note": "USAGE; CSS position:fixed check"},
+    "CSS-006": {"status": "implemented", "go": "css.go", "note": "USAGE; CSS position:fixed check"},
     "CSS-009": {"status": "wontfix", "note": "SUPPRESSED; CSS property check"},
     "CSS-010": {"status": "wontfix", "note": "SUPPRESSED; CSS property check"},
     "CSS-012": {"status": "wontfix", "note": "SUPPRESSED; CSS property check"},
@@ -242,7 +242,7 @@ KNOWN_OVERRIDES: dict[str, dict] = {
     # NCX codes
     "NCX-002": {"status": "wontfix", "note": "SUPPRESSED; reported as RSC-005"},
     "NCX-003": {"status": "wontfix", "note": "SUPPRESSED; NCX structure check"},
-    "NCX-004": {"status": "wontfix", "note": "USAGE; NCX dtb:uid whitespace"},
+    "NCX-004": {"status": "implemented", "go": "epub2.go", "note": "USAGE; NCX dtb:uid whitespace"},
     "NCX-005": {"status": "wontfix", "note": "SUPPRESSED; NCX structure check"},
 
     # NAV codes
@@ -260,7 +260,7 @@ KNOWN_OVERRIDES: dict[str, dict] = {
 
     # RSC codes
     "RSC-018": {"status": "wontfix", "note": "SUPPRESSED; reported as RSC-007"},
-    "RSC-019": {"status": "wontfix", "note": "WARNING; multi-rendition metadata.xml suggestion"},
+    "RSC-019": {"status": "implemented", "go": "ocf.go", "note": "WARNING; multi-rendition metadata.xml check"},
     "RSC-023": {"status": "wontfix", "note": "SUPPRESSED; reported as RSC-020"},
     "RSC-024": {"status": "wontfix", "note": "USAGE; informative parsing warning"},
 
@@ -268,8 +268,8 @@ KNOWN_OVERRIDES: dict[str, dict] = {
     "OPF-011": {"status": "wontfix", "note": "commented out in epubcheck (dead code); page-spread mutual exclusivity handled by OPF-088"},
     "OPF-021": {"status": "wontfix", "note": "WARNING; non-registered URI scheme in DTBook only; very niche DAISY/DTBook feature"},
     "OPF-047": {"status": "wontfix", "note": "USAGE; OEBPS 1.2 syntax info; already handled via IsLegacyOEBPS12 detection"},
-    "OPF-066": {"status": "wontfix", "note": "ERROR; pagination source metadata; only checked for EDUPUB profile (defunct)"},
-    "OPF-097": {"status": "wontfix", "note": "USAGE; unreferenced manifest item; requires full reference tracking infrastructure"},
+    "OPF-066": {"status": "implemented", "go": "opf.go", "note": "ERROR; pagination source metadata (EDUPUB profile)"},
+    "OPF-097": {"status": "implemented", "go": "references.go", "note": "USAGE; unreferenced manifest item"},
 }
 
 

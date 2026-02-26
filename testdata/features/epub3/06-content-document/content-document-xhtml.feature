@@ -1043,3 +1043,10 @@ Feature: EPUB 3 — Content Documents — XHTML
     When checking EPUB 'content-xhtml-region-based-error'
     Then error HTM-052 is reported
     And no other errors or warnings are reported
+
+  #### Microdata without RDFa (EDUPUB)
+
+  Scenario: Report EDUPUB microdata without RDFa
+    When checking EPUB 'content-xhtml-microdata-no-rdfa-warning'
+    Then warning HTM-051 is reported
+    And no other errors or warnings are reported
