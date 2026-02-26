@@ -131,7 +131,7 @@ func checkResourcesInManifest(ep *epub.EPUB, r *report.Report) {
 // checkReferencedResourcesInManifest scans an XHTML doc for link[rel=stylesheet] href
 // and checks that the referenced CSS/resource is in the manifest.
 func checkReferencedResourcesInManifest(ep *epub.EPUB, data []byte, fullPath string, manifestHrefs map[string]bool, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	for {
@@ -372,7 +372,7 @@ type navDocInfo struct {
 
 // NAV-011: nav document must be well-formed XHTML
 func checkNavWellFormed(data []byte, location string, r *report.Report) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		_, err := decoder.Token()
 		if err == io.EOF {
@@ -389,7 +389,7 @@ func checkNavWellFormed(data []byte, location string, r *report.Report) bool {
 }
 
 func parseNavDocument(ep *epub.EPUB, data []byte, navPath string) navDocInfo {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	info := navDocInfo{}
 
 	// Track nav element nesting
@@ -690,7 +690,7 @@ func checkNavTOCOrder(ep *epub.EPUB, navInfo navDocInfo, navPath string, r *repo
 
 // collectElementPositions returns a map of element id → byte offset in the document.
 func collectElementPositions(data []byte) map[string]int {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	positions := make(map[string]int)
 	for {
 		offset := decoder.InputOffset()
@@ -883,7 +883,7 @@ func collectOtherRenditionPaths(ep *epub.EPUB) map[string]bool {
 
 // extractManifestHrefs does a quick XML scan of an OPF to extract manifest item hrefs.
 func extractManifestHrefs(data []byte) []string {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	var hrefs []string
 	for {
 		tok, err := decoder.Token()
@@ -933,7 +933,7 @@ func checkObfuscatedResources(ep *epub.EPUB, r *report.Report) {
 		manifestByPath[ep.ResolveHref(item.Href)] = item
 	}
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	var isIDPF bool
 	var inEncData bool
 	var currentURI string
@@ -1091,7 +1091,7 @@ func checkUnreferencedManifestItems(ep *epub.EPUB, r *report.Report) {
 
 // collectContentReferences extracts all resource references from an XHTML document.
 func collectContentReferences(ep *epub.EPUB, data []byte, location string, referenced map[string]bool) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	docDir := path.Dir(location)
 
 	for {

@@ -131,7 +131,7 @@ func checkImgAltText(ep *epub.EPUB, r *report.Report) {
 		if err != nil {
 			continue
 		}
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := decoder.Token()
 			if err != nil {
@@ -168,7 +168,7 @@ func checkHTMLLangPresent(ep *epub.EPUB, r *report.Report) {
 		if err != nil {
 			continue
 		}
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := decoder.Token()
 			if err != nil {
@@ -228,7 +228,7 @@ func checkPageSourceHasPageList(ep *epub.EPUB, r *report.Report) {
 }
 
 func navDocHasPageList(data []byte) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {
@@ -278,7 +278,7 @@ func checkLandmarksNavPresent(ep *epub.EPUB, r *report.Report) {
 }
 
 func navDocHasLandmarks(data []byte) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {

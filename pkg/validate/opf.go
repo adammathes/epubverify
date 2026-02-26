@@ -1800,7 +1800,7 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 		}
 		navDir := path.Dir(navPath)
 		// Collect all hrefs from nav document (scan <a href="..."> elements)
-		navDecoder := xml.NewDecoder(strings.NewReader(string(data)))
+		navDecoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := navDecoder.Token()
 			if err != nil {
@@ -1846,7 +1846,7 @@ func checkSpineNonLinearReachable(ep *epub.EPUB, r *report.Report) {
 		}
 		docDir := path.Dir(docPath)
 		// Scan for href attributes in a elements
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := decoder.Token()
 			if err != nil {
@@ -3628,7 +3628,7 @@ func checkSKMSpineReferences(ep *epub.EPUB, pkg *epub.Package, r *report.Report)
 			continue
 		}
 		skmDir := path.Dir(item.Href)
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := decoder.Token()
 			if err != nil {
@@ -3665,7 +3665,7 @@ func checkSKMSpineReferences(ep *epub.EPUB, pkg *epub.Package, r *report.Report)
 
 // contentHasEpubType checks if an XHTML document contains the given epub:type token.
 func contentHasEpubType(data []byte, typeName string) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -3769,7 +3769,7 @@ func epubHasDCType(ep *epub.EPUB, dcType string) bool {
 	if err != nil {
 		return false
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	dcNS := "http://purl.org/dc/elements/1.1/"
 	for {
 		tok, err := decoder.Token()
@@ -3804,7 +3804,7 @@ func epubHasDCType(ep *epub.EPUB, dcType string) bool {
 
 // contentHasPageBreak checks if an XHTML document contains epub:type="pagebreak".
 func contentHasPageBreak(data []byte) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {

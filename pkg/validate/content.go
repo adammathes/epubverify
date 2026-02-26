@@ -338,7 +338,7 @@ func checkForeignResourceFallbacks(ep *epub.EPUB, data []byte, location string, 
 		}
 	}
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(location)
 	inPicture := false
 	// Track audio/video context: when non-empty, we're inside that element
@@ -791,7 +791,11 @@ func checkForeignRef(ep *epub.EPUB, href, itemDir, location string, manifestByHr
 
 // HTM-001: check that XHTML is well-formed XML
 func checkXHTMLWellFormed(data []byte, location string, r *report.Report) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
+	// Provide XHTML named entities so that references like &nbsp; don't cause
+	// spurious "entity was referenced but not declared" errors. Go's xml.Decoder
+	// only knows the 5 XML entities by default; XHTML DTDs define 248 more.
+	decoder.Entity = xhtmlEntities
 	for {
 		_, err := decoder.Token()
 		if err == io.EOF {
@@ -822,7 +826,7 @@ func checkXHTMLWellFormed(data []byte, location string, r *report.Report) bool {
 
 // HTM-002: content documents should have a title element
 func checkContentHasTitle(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inHead := false
 	hasTitle := false
 
@@ -878,7 +882,7 @@ var obsoleteElements = map[string]bool{
 }
 
 func checkNoObsoleteElements(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	reported := make(map[string]bool)
 
 	for {
@@ -925,7 +929,7 @@ func checkDoctype(data []byte, location string, r *report.Report) {
 
 // HTM-012: XHTML namespace check
 func checkXHTMLNamespace(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 
 	for {
 		tok, err := decoder.Token()
@@ -951,7 +955,7 @@ func checkXHTMLNamespace(data []byte, location string, r *report.Report) {
 // OPF-014: property needed but not declared
 // OPF-015: property declared but not needed
 func checkPropertyDeclarations(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	hasScript := false
 	hasSVG := false
 	hasMathML := false
@@ -1198,7 +1202,7 @@ func checkSVGPropertyDeclarations(ep *epub.EPUB, data []byte, location string, i
 // checkFXLSVGViewBox checks that a fixed-layout SVG content document has a viewBox
 // attribute on the root svg element. HTM-048.
 func checkFXLSVGViewBox(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := newXHTMLDecoder(bytes.NewReader(data))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1258,7 +1262,7 @@ func parseViewportDims(content string) []viewportDim {
 
 // HTM-060b: viewport meta tag in reflowable content (usage note)
 func checkReflowViewport(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1290,7 +1294,7 @@ func checkReflowViewport(data []byte, location string, r *report.Report) {
 
 // HTM-046/047/056/057/059/060a: Fixed-layout XHTML viewport checks
 func checkFXLViewport(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	viewportCount := 0
 	viewportContent := ""
 
@@ -1407,13 +1411,13 @@ func checkFXLViewport(data []byte, location string, r *report.Report) {
 
 // RSC-003: fragment identifiers must resolve
 func checkFragmentIdentifiers(ep *epub.EPUB, data []byte, fullPath string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	// Collect all id attributes in the document for self-references
 	ids := collectIDs(data)
 
-	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	decoder = newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1484,7 +1488,8 @@ func checkFragmentRef(ep *epub.EPUB, href, itemDir, location string, localIDs ma
 
 func collectIDs(data []byte) map[string]bool {
 	ids := make(map[string]bool)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
+	decoder.Entity = xhtmlEntities
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1510,7 +1515,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 	// Detect external base URL (from <base href="..."> or xml:base="...") for RSC-006
 	_, isHTMLBase := detectExternalBaseURL(data)
 
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := newXHTMLDecoder(bytes.NewReader(data))
 	// Match href="..." in processing instruction data
 	piHrefRe := regexp.MustCompile(`href\s*=\s*["']([^"']+)["']`)
 
@@ -1675,7 +1680,7 @@ func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item ep
 func checkSVGSymbolLinks(data []byte, location string, r *report.Report) {
 	// First pass: collect all symbol element IDs
 	symbolIDs := make(map[string]bool)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1698,7 +1703,7 @@ func checkSVGSymbolLinks(data []byte, location string, r *report.Report) {
 	}
 
 	// Second pass: check <a href="#id"> against symbol IDs
-	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	decoder = newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -1740,7 +1745,7 @@ func isNonHTTPSRemote(s string) bool {
 
 // checkContentReferences finds href/src attributes in XHTML and validates them.
 func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref string, manifestPaths map[string]bool, remoteManifestItems map[string]epub.ManifestItem, manifestByPath map[string]epub.ManifestItem, spinePathSet map[string]bool, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	// Detect external base URL for RSC-006 (relative paths become remote)
@@ -2050,7 +2055,7 @@ func resolvePath(baseDir, rel string) string {
 
 // HTM-016: IDs must be unique within a content document
 func checkUniqueIDs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	seen := make(map[string]bool)
 	for {
 		tok, err := decoder.Token()
@@ -2076,7 +2081,7 @@ func checkUniqueIDs(data []byte, location string, r *report.Report) {
 
 // HTM-018: content document must have exactly one body element
 func checkSingleBody(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	bodyCount := 0
 	for {
 		tok, err := decoder.Token()
@@ -2099,7 +2104,7 @@ func checkSingleBody(data []byte, location string, r *report.Report) {
 // HTM-019: content document must have html as root element.
 // Returns true if the root element is html.
 func checkHTMLRootElement(data []byte, location string, r *report.Report) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2122,7 +2127,7 @@ func checkHTMLRootElement(data []byte, location string, r *report.Report) bool {
 
 // HTM-022: object data references must exist
 func checkObjectReferences(ep *epub.EPUB, data []byte, fullPath string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	for {
@@ -2155,7 +2160,7 @@ func checkObjectReferences(ep *epub.EPUB, data []byte, fullPath string, r *repor
 
 // HTM-003: hyperlink href attributes must not be empty
 func checkEmptyHrefAttributes(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2180,7 +2185,7 @@ func checkEmptyHrefAttributes(data []byte, location string, r *report.Report) {
 // HTM-052: the "region-based" epub:type is only allowed on nav elements
 // in Data Navigation Documents (items with the "data-nav" property).
 func checkRegionBasedProperty(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2204,7 +2209,7 @@ func checkRegionBasedProperty(data []byte, location string, r *report.Report) {
 // HTM-045: report empty href attribute as usage (self-reference hint).
 // In epubcheck this is reported on any element with href="" (a, area, link, etc.)
 func checkEmptyHrefUsage(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2229,7 +2234,7 @@ func checkEmptyHrefUsage(data []byte, location string, r *report.Report) {
 // Reports once per document if microdata attributes (itemscope, itemprop, itemtype)
 // are found but no RDFa attributes (vocab, typeof, property, about, resource, prefix).
 func checkMicrodataWithoutRDFa(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	hasMicrodata := false
 	hasRDFa := false
 	rdfaAttrs := map[string]bool{
@@ -2267,7 +2272,7 @@ func checkMicrodataWithoutRDFa(data []byte, location string, r *report.Report) {
 
 // HTM-009: base element should not be used in EPUB content documents
 func checkNoBaseElement(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2289,7 +2294,7 @@ func checkNoBaseElement(data []byte, location string, r *report.Report) {
 // Returns (baseURL, isHTMLBase) where isHTMLBase is true if found via <base> element.
 // Returns ("", false) if no external base URL is set.
 func detectExternalBaseURL(data []byte) (string, bool) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	first := true
 	for {
 		tok, err := decoder.Token()
@@ -2399,7 +2404,7 @@ var validEpubTypes = map[string]bool{
 
 // HTM-015: epub:type values must be valid
 func checkEpubTypeValid(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2429,7 +2434,7 @@ func checkEpubTypeValid(data []byte, location string, r *report.Report) {
 
 // HTM-020: processing instructions should not be used in EPUB content documents
 func checkNoProcessingInstructions(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2449,7 +2454,7 @@ func checkNoProcessingInstructions(data []byte, location string, r *report.Repor
 
 // HTM-021: position:absolute in content documents may cause rendering issues
 func checkNoPositionAbsolute(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2475,7 +2480,7 @@ func checkNoPositionAbsolute(data []byte, location string, r *report.Report) {
 
 // HTM-023: links must not escape the container via parent directory traversal
 func checkNoParentDirLinks(ep *epub.EPUB, data []byte, fullPath string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	for {
@@ -2518,7 +2523,7 @@ func checkNoParentDirLinks(ep *epub.EPUB, data []byte, fullPath string, r *repor
 
 // HTM-024: XHTML content documents must have a head element
 func checkContentHasHead(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2537,7 +2542,7 @@ func checkContentHasHead(data []byte, location string, r *report.Report) {
 
 // HTM-025: embed element src must reference existing resource
 func checkEmbedReferences(ep *epub.EPUB, data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	contentDir := path.Dir(location)
 	for {
 		tok, err := decoder.Token()
@@ -2569,7 +2574,7 @@ func checkEmbedReferences(ep *epub.EPUB, data []byte, location string, r *report
 
 // HTM-026: lang and xml:lang must have the same value when both present
 func checkLangXMLLangMatch(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2602,7 +2607,7 @@ func checkLangXMLLangMatch(data []byte, location string, r *report.Report) {
 
 // HTM-027: video poster attribute must reference existing resource
 func checkVideoPosterExists(ep *epub.EPUB, data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	contentDir := path.Dir(location)
 	for {
 		tok, err := decoder.Token()
@@ -2634,7 +2639,7 @@ func checkVideoPosterExists(ep *epub.EPUB, data []byte, location string, r *repo
 
 // HTM-028: audio src must reference existing resource
 func checkAudioSrcExists(ep *epub.EPUB, data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	contentDir := path.Dir(location)
 	for {
 		tok, err := decoder.Token()
@@ -2666,7 +2671,7 @@ func checkAudioSrcExists(ep *epub.EPUB, data []byte, location string, r *report.
 
 // HTM-030: img src attribute must not be empty
 func checkImgSrcNotEmpty(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2706,7 +2711,7 @@ var allowedAttrNamespaces = map[string]bool{
 // Attributes using non-standard namespaces (e.g., a misspelled SSML namespace)
 // are flagged. Valid SSML (ssml:ph, ssml:alphabet) is permitted for TTS.
 func checkCustomAttributeNamespaces(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2730,7 +2735,7 @@ func checkCustomAttributeNamespaces(data []byte, location string, r *report.Repo
 
 // HTM-032: CSS in inline style elements must be syntactically valid
 func checkStyleElementValid(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2778,7 +2783,7 @@ func checkStyleElementValid(data []byte, location string, r *report.Report) {
 // HTM-033: RDF metadata elements should not be used in EPUB content documents
 func checkNoRDFElements(data []byte, location string, r *report.Report) {
 	rdfNS := "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -2894,7 +2899,7 @@ func checkDOCTYPEExternalIdentifiers(ep *epub.EPUB, r *report.Report) {
 		}
 
 		// Scan for DOCTYPE directive
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		decoder.Strict = false
 		decoder.AutoClose = xml.HTMLAutoClose
 		for {
@@ -2988,7 +2993,7 @@ func checkInvalidHTMLElements(data []byte, location string, r *report.Report) {
 	const svgNS = "http://www.w3.org/2000/svg"
 	const mathNS = "http://www.w3.org/1998/Math/MathML"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0 // non-zero when inside svg/math/foreignObject
 
 	for {
@@ -3035,7 +3040,7 @@ func checkInvalidHTMLElements(data []byte, location string, r *report.Report) {
 // checkNestedDFN reports RSC-005 when a <dfn> element contains a descendant <dfn>.
 func checkNestedDFN(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	dfnDepth := 0
 
 	for {
@@ -3222,7 +3227,7 @@ func checkSingleFileContent(ep *epub.EPUB, r *report.Report, opts Options) {
 // checkSingleFileURLs scans href/src attributes and inline CSS in XHTML/SVG for
 // data URLs (RSC-029), file URLs (RSC-030), and query strings (RSC-033).
 func checkSingleFileURLs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
+	decoder := newXHTMLDecoder(bytes.NewReader(data))
 	decoder.Strict = false
 	decoder.AutoClose = xml.HTMLAutoClose
 
@@ -3331,7 +3336,7 @@ func checkXML11Version(data []byte, location string, r *report.Report) {
 
 // checkNestedAnchors detects nested <a> elements (RSC-005 in single-file mode).
 func checkNestedAnchors(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	depth := 0
 	for {
 		tok, err := decoder.Token()
@@ -3397,7 +3402,7 @@ func checkBlockInPhrasing(data []byte, location string, r *report.Report) {
 	const svgNS = "http://www.w3.org/2000/svg"
 	const mathNS = "http://www.w3.org/1998/Math/MathML"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0 // non-zero inside svg/math subtrees
 
 	// Stack tracks whether we're inside a phrasing-only parent.
@@ -3505,7 +3510,7 @@ var scriptSupportingElements = map[string]bool{
 func checkRestrictedChildren(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Stack of element names for parent tracking
@@ -3582,7 +3587,7 @@ var voidElements = map[string]bool{
 func checkVoidElementChildren(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Track when we're inside a void element
@@ -3649,7 +3654,7 @@ var tableDirectChildren = map[string]bool{
 func checkTableContentModel(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Stack tracks element depth; we care about direct children of <table>
@@ -3716,7 +3721,7 @@ var interactiveElements = map[string]bool{
 func checkInteractiveNesting(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Stack of interactive element names we're inside
@@ -3798,7 +3803,7 @@ var transparentElements = map[string]bool{
 func checkTransparentContentModel(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	type stackEntry struct {
@@ -3884,7 +3889,7 @@ func checkTransparentContentModel(data []byte, location string, r *report.Report
 func checkFigcaptionPosition(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// We need to collect children of each <figure> element, then check
@@ -3968,7 +3973,7 @@ func checkFigcaptionPosition(data []byte, location string, r *report.Report) {
 func checkPictureContentModel(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	type pictureCtx struct {
@@ -4062,7 +4067,7 @@ func checkPictureContentModel(data []byte, location string, r *report.Report) {
 // checkCustomNamespacedAttrs detects non-standard namespace attributes on XHTML elements (RSC-005).
 // Used for EPUB2 OPS XHTML documents where custom namespace attributes are not allowed.
 func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	// Accumulate namespace URI → prefix mappings across all elements
 	nsPrefixMap := make(map[string]string)
 	for {
@@ -4105,7 +4110,7 @@ func checkCustomNamespacedAttrs(data []byte, location string, r *report.Report) 
 
 // checkMissingNamespace detects XHTML documents without an XHTML namespace (RSC-005).
 func checkMissingNamespace(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4128,7 +4133,7 @@ func checkMissingNamespace(data []byte, location string, r *report.Report) {
 
 // checkDuplicateIDs detects duplicate id attribute values in XHTML (RSC-005 in single-file).
 func checkDuplicateIDs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	idCount := make(map[string]int)
 	for {
 		tok, err := decoder.Token()
@@ -4160,7 +4165,7 @@ func checkDuplicateIDs(data []byte, location string, r *report.Report) {
 // checkIDReferences checks that id-referencing attributes (for, headers, aria-labelledby, etc.)
 // refer to existing IDs in the same document (RSC-005 in single-file mode).
 func checkIDReferences(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	// First pass: collect all IDs
 	ids := collectIDs(data)
 
@@ -4172,7 +4177,7 @@ func checkIDReferences(data []byte, location string, r *report.Report) {
 		"aria-errormessage": true, "aria-details": true,
 	}
 
-	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	decoder = newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4237,7 +4242,7 @@ func checkEntityReferences(data []byte, location string, r *report.Report) {
 
 // checkHTM061DataAttrs validates data-* attribute names (HTM-061).
 func checkHTM061DataAttrs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4311,7 +4316,7 @@ func checkHTM054ReservedNS(data []byte, location string, r *report.Report) {
 		}
 		return false
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4347,7 +4352,7 @@ func checkHTM058Encoding(data []byte, location string, r *report.Report) {
 
 // checkHTM007SSML checks for empty SSML ph attributes (HTM-007).
 func checkHTM007SSML(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4384,7 +4389,7 @@ func checkHTM025URLScheme(data []byte, location string, r *report.Report) {
 		"blob": true, "about": true, "ws": true, "wss": true,
 		"coap": true, "cap": true, "acap": true, "tag": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4424,7 +4429,7 @@ func checkCSS008Inline(data []byte, location string, r *report.Report) {
 	// Check for <style> without type attribute (EPUB 2 issue)
 	// In EPUB 3, the type attribute defaults to text/css, so this is only reported
 	// if the style element has a non-CSS type
-	decoder := xml.NewDecoder(strings.NewReader(content))
+	decoder := newXHTMLDecoder(strings.NewReader(content))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4468,7 +4473,7 @@ func checkCSS008Inline(data []byte, location string, r *report.Report) {
 
 // checkCSS015AltStylesheet checks that alternative stylesheets have titles (CSS-015).
 func checkCSS015AltStylesheet(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4505,7 +4510,7 @@ func checkCSS015AltStylesheet(data []byte, location string, r *report.Report) {
 
 // checkCSS005AltStyleTag checks for conflicting alt style tags (CSS-005).
 func checkCSS005AltStyleTag(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	knownTags := map[string]bool{
 		"horizontal": true, "vertical": true, "day": true, "night": true,
 	}
@@ -4562,7 +4567,7 @@ func checkHTM055Discouraged(data []byte, location string, r *report.Report) {
 	discouraged := map[string]bool{
 		"base": true, "embed": true, "rp": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4582,7 +4587,7 @@ func checkHTM055Discouraged(data []byte, location string, r *report.Report) {
 
 // checkHTM010UnknownEpubNS detects unrecognized epub-like namespace URIs (HTM-010).
 func checkHTM010UnknownEpubNS(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	knownEpubNS := "http://www.idpf.org/2007/ops"
 	for {
 		tok, err := decoder.Token()
@@ -4629,7 +4634,7 @@ var deprecatedEpubTypes = map[string]bool{
 
 // checkOPF086bDeprecatedEpubType reports deprecated epub:type values (OPF-086b).
 func checkOPF086bDeprecatedEpubType(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4699,7 +4704,7 @@ var epubTypeRedundant = map[string]string{
 
 // checkOPF087MisusedEpubType reports epub:type values used on unexpected elements (OPF-087).
 func checkOPF087MisusedEpubType(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4748,7 +4753,7 @@ func checkOPF087MisusedEpubType(data []byte, location string, r *report.Report) 
 
 // checkOPF088UnknownEpubType reports unknown epub:type values in the default vocabulary (OPF-088).
 func checkOPF088UnknownEpubType(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4813,7 +4818,7 @@ func checkOPF028UndeclaredPrefix(data []byte, location string, r *report.Report)
 	}
 
 	// Check epub:type values for undeclared prefixes
-	decoder := xml.NewDecoder(strings.NewReader(content))
+	decoder := newXHTMLDecoder(strings.NewReader(content))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4847,7 +4852,7 @@ func checkDeprecatedDPUBARIA(data []byte, location string, r *report.Report) {
 		"doc-endnote":     true,
 		"doc-biblioentry": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -4978,7 +4983,7 @@ func checkHTML5ElementsEPUB2(data []byte, location string, r *report.Report) {
 		"source": true, "track": true, "embed": true, "wbr": true,
 		"datalist": true, "keygen": true, "template": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5007,16 +5012,18 @@ func checkUnknownEntityRefs(data []byte, location string, r *report.Report) {
 	// Extract entity declarations from internal DTD subset if present.
 	// Go's XML decoder skips the DOCTYPE declaration but doesn't know about
 	// entities declared inside it. We need to pre-populate decoder.Entity.
-	declaredEntities := map[string]string{}
+	// Start with standard XHTML entities, then overlay any inline DTD declarations.
+	declaredEntities := make(map[string]string, len(xhtmlEntities))
+	for k, v := range xhtmlEntities {
+		declaredEntities[k] = v
+	}
 	entityDeclRe := regexp.MustCompile(`<!ENTITY\s+(\w+)\s+(?:"[^"]*"|'[^']*')`)
 	for _, m := range entityDeclRe.FindAllStringSubmatch(content, -1) {
 		declaredEntities[m[1]] = m[1]
 	}
 
-	decoder := xml.NewDecoder(strings.NewReader(content))
-	if len(declaredEntities) > 0 {
-		decoder.Entity = declaredEntities
-	}
+	decoder := newXHTMLDecoder(strings.NewReader(content))
+	decoder.Entity = declaredEntities
 
 	for {
 		_, err := decoder.Token()
@@ -5042,7 +5049,7 @@ func checkUnknownEntityRefs(data []byte, location string, r *report.Report) {
 func checkImageMapValid(data []byte, location string, r *report.Report) {
 	content := string(data)
 	isHTML5 := strings.Contains(content, "<!DOCTYPE html>") || strings.Contains(content, "<!doctype html>")
-	decoder := xml.NewDecoder(strings.NewReader(content))
+	decoder := newXHTMLDecoder(strings.NewReader(content))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5069,7 +5076,7 @@ func checkImageMapValid(data []byte, location string, r *report.Report) {
 
 // checkHttpEquivCharset detects http-equiv charset issues (RSC-005).
 func checkHttpEquivCharset(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	hasCharsetAttr := false
 	hasHttpEquivCharset := false
 	for {
@@ -5124,7 +5131,7 @@ func checkMicrodataAttrs(data []byte, location string, r *report.Report) {
 	needsData := map[string]bool{
 		"object": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5213,7 +5220,7 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 		"ul":       {"type": true},
 		"pre":      {"width": true},
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	menuDepth := 0  // depth inside a menu element (1 = direct child)
 	inMenu := false
 	for {
@@ -5274,7 +5281,7 @@ func checkObsoleteAttrs(data []byte, location string, r *report.Report) {
 
 // checkACCMathMLAlt checks MathML elements for alternative text (ACC-009).
 func checkACCMathMLAlt(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5308,7 +5315,7 @@ func checkACCMathMLAlt(data []byte, location string, r *report.Report) {
 
 // checkSVGDuplicateIDs detects duplicate id attribute values in SVG (RSC-005).
 func checkSVGDuplicateIDs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	idCount := make(map[string]int)
 	for {
 		tok, err := decoder.Token()
@@ -5339,7 +5346,7 @@ func checkSVGDuplicateIDs(data []byte, location string, r *report.Report) {
 
 // checkSVGInvalidIDs detects invalid id attribute values in SVG (RSC-005).
 func checkSVGInvalidIDs(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	invalidIDRe := regexp.MustCompile(`^\d|^\s|\s`)
 	for {
 		tok, err := decoder.Token()
@@ -5366,7 +5373,7 @@ func checkSVGInvalidIDs(data []byte, location string, r *report.Report) {
 // Checks: non-HTML content, non-flow content (title/head/etc), multiple body elements,
 // and HTML validation errors (invalid attributes).
 func checkSVGForeignObject(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	svgNS := "http://www.w3.org/2000/svg"
 	htmlNS := "http://www.w3.org/1999/xhtml"
 
@@ -5467,7 +5474,7 @@ func checkSVGForeignObject(data []byte, location string, r *report.Report) {
 // standaloneMode should be true for standalone SVG files (where non-phrasing HTML
 // elements with inline xmlns are flagged), false for XHTML-embedded SVG.
 func checkSVGTitleContent(data []byte, location string, r *report.Report, standaloneMode bool) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	svgNS := "http://www.w3.org/2000/svg"
 	htmlNS := "http://www.w3.org/1999/xhtml"
 	noHrefElements := map[string]bool{
@@ -5595,7 +5602,7 @@ func checkSVGEpubType(data []byte, location string, r *report.Report) {
 		"polyline": true, "polygon": true, "path": true,
 		"text": true, "textPath": true, "tspan": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5620,7 +5627,7 @@ func checkSVGEpubType(data []byte, location string, r *report.Report) {
 // checkSVGUnknownEpubAttr detects unknown epub: attributes in SVG (RSC-005).
 // epub:type is allowed on SVG elements; epub:prefix is allowed on the root SVG element.
 func checkSVGUnknownEpubAttr(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	isRoot := true
 	for {
 		tok, err := decoder.Token()
@@ -5680,7 +5687,7 @@ func checkSVGInvalidElements(data []byte, location string, r *report.Report) {
 		"missing-glyph": true,
 	}
 	svgNS := "http://www.w3.org/2000/svg"
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inSVG := 0
 	for {
 		tok, err := decoder.Token()
@@ -5709,7 +5716,7 @@ func checkSVGInvalidElements(data []byte, location string, r *report.Report) {
 
 // checkSVGLinkLabel reports SVG hyperlinks without accessible labels (ACC-011).
 func checkSVGLinkLabel(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -5827,7 +5834,7 @@ func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.
 	// Check for plain prefix attribute (no epub: namespace) which is not valid
 	checkSMILPlainPrefixAttr(data, location, r)
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 
 	// Stack tracking for parent elements
 	var parentStack []string
@@ -5993,7 +6000,7 @@ func checkSingleFileSMIL(ep *epub.EPUB, data []byte, location string, r *report.
 // checkSMILPlainPrefixAttr detects plain prefix attribute (without epub: namespace) in SMIL (RSC-005).
 // In SMIL, the prefix attribute must use the epub: namespace; plain prefix= is not allowed.
 func checkSMILPlainPrefixAttr(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6162,7 +6169,7 @@ func parseFloat(s string) (float64, error) {
 
 // checkEmptySrcAttr detects img elements with empty src attributes (RSC-005).
 func checkEmptySrcAttr(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6192,7 +6199,7 @@ func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
 	// First pass: collect all element IDs for trigger ref validation
 	docIDs := make(map[string]bool)
 	{
-		idDecoder := xml.NewDecoder(strings.NewReader(string(data)))
+		idDecoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := idDecoder.Token()
 			if err != nil {
@@ -6210,7 +6217,7 @@ func checkEpubSwitchTrigger(data []byte, location string, r *report.Report) {
 		}
 	}
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 
 	type switchState struct {
 		hasCaseBefore bool
@@ -6322,7 +6329,7 @@ func checkEpubTypeOnHead(data []byte, location string, r *report.Report) {
 		"head": true, "title": true, "meta": true, "link": true,
 		"style": true, "base": true, "script": true, "noscript": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6346,7 +6353,7 @@ func checkEpubTypeOnHead(data []byte, location string, r *report.Report) {
 
 // checkTableBorderAttr checks table border attribute values (RSC-005).
 func checkTableBorderAttr(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6380,7 +6387,7 @@ func checkCSS008StyleType(data []byte, location string, r *report.Report) {
 		// HTML5 doctype — type attribute not required
 		return
 	}
-	decoder := xml.NewDecoder(strings.NewReader(content))
+	decoder := newXHTMLDecoder(strings.NewReader(content))
 	inHead := false
 	for {
 		tok, err := decoder.Token()
@@ -6415,7 +6422,7 @@ func checkCSS008StyleType(data []byte, location string, r *report.Report) {
 
 // checkStyleInBody detects style elements in the body (RSC-005).
 func checkStyleInBody(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inBody := false
 	for {
 		tok, err := decoder.Token()
@@ -6450,7 +6457,7 @@ func checkStyleInBody(data []byte, location string, r *report.Report) {
 
 // checkStyleAttrCSS detects invalid CSS in style attributes (CSS-008).
 func checkStyleAttrCSS(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6485,7 +6492,7 @@ func checkStyleAttrCSS(data []byte, location string, r *report.Report) {
 
 // checkARIADescribedAt detects non-existent ARIA describedat attribute (RSC-005).
 func checkARIADescribedAt(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6507,7 +6514,7 @@ func checkARIADescribedAt(data []byte, location string, r *report.Report) {
 
 // checkTitleElement checks for empty or missing title elements (RSC-005).
 func checkTitleElement(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inHead := false
 	hasTitle := false
 	inTitle := false
@@ -6557,7 +6564,7 @@ func checkTitleElement(data []byte, location string, r *report.Report) {
 func checkPrefixAttrLocation(data []byte, location string, r *report.Report) {
 	opsNS := "http://www.idpf.org/2007/ops"
 	// Elements where epub:prefix is not allowed (it's only valid on <html>)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6597,7 +6604,7 @@ func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
 		"schema":    "http://schema.org/",
 		"xsd":       "http://www.w3.org/2001/XMLSchema#",
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6653,7 +6660,7 @@ func checkPrefixDeclarations(data []byte, location string, r *report.Report) {
 
 // checkNestedTime detects <time> elements nested inside other <time> elements (RSC-005).
 func checkNestedTime(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	depth := 0
 	for {
 		tok, err := decoder.Token()
@@ -6688,7 +6695,7 @@ func checkMathMLContentOnly(data []byte, location string, r *report.Report) {
 		"cerror": true, "cbytes": true, "cs": true, "share": true,
 		"piecewise": true, "bind": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	mathDepth := 0  // depth inside a math element
 	inMath := false
 	reported := map[string]bool{}
@@ -6749,7 +6756,7 @@ func checkMathMLAnnotation(data []byte, location string, r *report.Report) {
 		"cerror": true, "cbytes": true, "cs": true, "share": true,
 		"piecewise": true, "bind": true,
 	}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inPresAnnotation := false
 	annotationDepth := 0
 	for {
@@ -6813,7 +6820,7 @@ func checkMathMLAnnotation(data []byte, location string, r *report.Report) {
 
 // checkHiddenAttrValue validates the hidden attribute value (RSC-005).
 func checkHiddenAttrValue(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6838,7 +6845,7 @@ func checkHiddenAttrValue(data []byte, location string, r *report.Report) {
 
 // checkDatetimeFormat validates datetime attribute values on <time> elements (RSC-005).
 func checkDatetimeFormat(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -6965,7 +6972,7 @@ func isValidDuration(s string) bool {
 
 // checkURLConformance checks for non-conforming URLs and unparseable hosts (RSC-020).
 func checkURLConformance(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -7019,7 +7026,7 @@ func isNavDocument(data []byte) bool {
 	if !strings.Contains(content, "<nav") || !strings.Contains(content, "toc") {
 		return false
 	}
-	decoder := xml.NewDecoder(strings.NewReader(content))
+	decoder := newXHTMLDecoder(strings.NewReader(content))
 	opsNS := "http://www.idpf.org/2007/ops"
 	for {
 		tok, err := decoder.Token()
@@ -7045,7 +7052,7 @@ func isNavDocument(data []byte) bool {
 
 // checkNavContentModel validates EPUB navigation document content model (RSC-005, RSC-017).
 func checkNavContentModel(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	opsNS := "http://www.idpf.org/2007/ops"
 
 	hasTocNav := false
@@ -7406,7 +7413,7 @@ func checkDisallowedDescendants(data []byte, location string, r *report.Report) 
 		disallowed[p.ancestor] = append(disallowed[p.ancestor], p.descendant)
 	}
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Stack of open elements that have disallowed-descendant rules
@@ -7480,7 +7487,7 @@ func checkDisallowedDescendants(data []byte, location string, r *report.Report) 
 func checkRequiredAncestor(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	// Track ancestor context
@@ -7571,7 +7578,7 @@ func checkRequiredAncestor(data []byte, location string, r *report.Report) {
 func checkBdoDir(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	for {
@@ -7623,7 +7630,7 @@ func checkBdoDir(data []byte, location string, r *report.Report) {
 // checkSSMLPhNesting reports RSC-005 when ssml:ph attributes are nested.
 // An element with ssml:ph must not be a descendant of another element with ssml:ph.
 func checkSSMLPhNesting(data []byte, location string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	ssmlNS := "http://www.w3.org/2001/10/synthesis"
 
 	// Track element depth. When we're inside an element with ssml:ph,
@@ -7672,7 +7679,7 @@ func checkSSMLPhNesting(data []byte, location string, r *report.Report) {
 func checkDuplicateMapName(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 	mapNames := make(map[string]bool)
 
@@ -7725,7 +7732,7 @@ func checkDuplicateMapName(data []byte, location string, r *report.Report) {
 func checkSelectMultiple(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	type selectState struct {
@@ -7800,7 +7807,7 @@ func checkSelectMultiple(data []byte, location string, r *report.Report) {
 func checkMetaCharset(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 	charsetCount := 0
 
@@ -7855,7 +7862,7 @@ func checkMetaCharset(data []byte, location string, r *report.Report) {
 func checkLinkSizes(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 
 	for {
@@ -7921,7 +7928,7 @@ func checkIDRefAttributes(data []byte, location string, r *report.Report) {
 
 	// First pass: collect all IDs in the document
 	ids := make(map[string]bool)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -7955,7 +7962,7 @@ func checkIDRefAttributes(data []byte, location string, r *report.Report) {
 	}
 
 	// Second pass: check all IDREF attributes
-	decoder = xml.NewDecoder(strings.NewReader(string(data)))
+	decoder = newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 	reported := make(map[string]bool)
 
@@ -8028,7 +8035,7 @@ func checkIDRefAttributes(data []byte, location string, r *report.Report) {
 func checkMetaRequiredAttrs(data []byte, location string, r *report.Report) {
 	const xhtmlNS = "http://www.w3.org/1999/xhtml"
 
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	foreignDepth := 0
 	inHead := false
 

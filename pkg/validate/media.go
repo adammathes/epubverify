@@ -282,7 +282,7 @@ func checkMediaOverlay(ep *epub.EPUB, item epub.ManifestItem, fullPath string, r
 	}
 
 	// MED-006: SMIL must be well-formed XML
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	var tokens []xml.Token
 	wellFormed := true
 	for {
@@ -624,7 +624,7 @@ func checkMediaOverlayCrossRefs(ep *epub.EPUB, r *report.Report) {
 		}
 
 		// Parse SMIL to find <text src="..."> references
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		seen := make(map[string]bool) // avoid duplicate refs from same SMIL
 		for {
 			tok, err := decoder.Token()
@@ -767,7 +767,8 @@ func checkMediaActiveClassCSS(ep *epub.EPUB, r *report.Report) {
 // collectIDsInOrder returns a slice of element IDs in DOM order from an XML document.
 func collectIDsInOrder(data []byte) []string {
 	var ids []string
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
+	decoder.Entity = xhtmlEntities
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -807,7 +808,7 @@ func checkMediaOverlayDOMOrder(ep *epub.EPUB, r *report.Report) {
 		}
 		var refs []smilRef
 
-		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 		for {
 			tok, err := decoder.Token()
 			if err != nil {
@@ -928,7 +929,7 @@ func checkMediaOverlayUndeclaredClassNames(ep *epub.EPUB, r *report.Report) {
 // For XHTML: looks for <link rel="stylesheet">, <style> element, or @import in style
 // For SVG: looks for <style> element or <?xml-stylesheet?> PI
 func contentDocHasCSS(data []byte, mediaType string) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
