@@ -66,17 +66,17 @@ GUTENBERG | https://www.gutenberg.org/ebooks/161.epub3.images   | Sense and Sens
 GUTENBERG | https://www.gutenberg.org/ebooks/25344.epub3.images | Scarlet Pimpernel (Orczy)
 GUTENBERG | https://www.gutenberg.org/ebooks/2591.epub3.images  | Grimm's Fairy Tales
 GUTENBERG | https://www.gutenberg.org/ebooks/1250.epub3.images  | Anthem (Rand)
-GUTENBERG | https://www.gutenberg.org/ebooks/4363.epub3.images  | Japanese Fairy Tales
+GUTENBERG | https://www.gutenberg.org/ebooks/4363.epub3.images  | Japanese Fairy Tales (non-English Japanese content)
 GUTENBERG | https://www.gutenberg.org/ebooks/2500.epub3.images  | Siddhartha (Hesse)
 GUTENBERG | https://www.gutenberg.org/ebooks/128.epub3.images   | Arabian Nights
 GUTENBERG | https://www.gutenberg.org/ebooks/10.epub3.images    | King James Bible — very large
 GUTENBERG | https://www.gutenberg.org/ebooks/100.epub3.images   | Complete Works of Shakespeare — very large
-GUTENBERG | https://www.gutenberg.org/ebooks/7787.epub3.images  | Esperanto Textbook (non-English)
+GUTENBERG | https://www.gutenberg.org/ebooks/7787.epub3.images  | Esperanto Textbook (non-English Esperanto)
 GUTENBERG | https://www.gutenberg.org/ebooks/37134.epub3.images | Elements of Style (Strunk)
 GUTENBERG | https://www.gutenberg.org/ebooks/1404.epub3.images  | Federalist Papers
 GUTENBERG | https://www.gutenberg.org/ebooks/59.epub3.images    | Discourse on Method (Descartes)
 GUTENBERG | https://www.gutenberg.org/ebooks/27827.epub3.images | Kama Sutra
-GUTENBERG | https://www.gutenberg.org/ebooks/9603.epub3.images  | Dream of Red Chamber (Chinese classic)
+GUTENBERG | https://www.gutenberg.org/ebooks/9603.epub3.images  | Dream of Red Chamber — Chinese classic
 GUTENBERG | https://www.gutenberg.org/ebooks/7849.epub3.images  | The Castle (Kafka)
 GUTENBERG | https://www.gutenberg.org/ebooks/201.epub3.images   | Flatland (Abbott) — geometry
 GUTENBERG | https://www.gutenberg.org/ebooks/10007.epub3.images | Carmilla (Le Fanu) — horror
@@ -85,8 +85,61 @@ GUTENBERG | https://www.gutenberg.org/ebooks/216.epub3.images   | Tao Te Ching
 GUTENBERG | https://www.gutenberg.org/ebooks/2388.epub3.images  | Bhagavad Gita
 GUTENBERG | https://www.gutenberg.org/ebooks/2680.epub3.images  | Meditations (Marcus Aurelius)
 
-# EPUB2 variants (use .epub.images instead of .epub3.images)
-GUTENBERG | https://www.gutenberg.org/ebooks/5200.epub.images   | Metamorphosis (EPUB2 variant)
+# New additions: poetry, drama, science, philosophy
+GUTENBERG | https://www.gutenberg.org/ebooks/1064.epub3.images  | Masque of the Red Death (Poe)
+GUTENBERG | https://www.gutenberg.org/ebooks/23.epub3.images    | Narrative of Frederick Douglass
+GUTENBERG | https://www.gutenberg.org/ebooks/408.epub3.images   | Souls of Black Folk (Du Bois)
+GUTENBERG | https://www.gutenberg.org/ebooks/829.epub3.images   | Gulliver's Travels (Swift)
+GUTENBERG | https://www.gutenberg.org/ebooks/2148.epub3.images  | Utopia (More)
+GUTENBERG | https://www.gutenberg.org/ebooks/5230.epub3.images  | Up from Slavery (Washington)
+GUTENBERG | https://www.gutenberg.org/ebooks/3825.epub3.images  | Psychopathology of Everyday Life (Freud)
+GUTENBERG | https://www.gutenberg.org/ebooks/1399.epub3.images  | Anna Karenina (Tolstoy)
+GUTENBERG | https://www.gutenberg.org/ebooks/7370.epub3.images  | Second Treatise of Government (Locke)
+GUTENBERG | https://www.gutenberg.org/ebooks/30254.epub3.images | Crime and Punishment (Dostoevsky)
+GUTENBERG | https://www.gutenberg.org/ebooks/45.epub3.images    | Anne of Green Gables (Montgomery)
+GUTENBERG | https://www.gutenberg.org/ebooks/4517.epub3.images  | Emile (Rousseau)
+GUTENBERG | https://www.gutenberg.org/ebooks/6593.epub3.images  | History of Tom Jones (Fielding)
+GUTENBERG | https://www.gutenberg.org/ebooks/4217.epub3.images  | Portrait of a Lady (James)
+GUTENBERG | https://www.gutenberg.org/ebooks/2554.epub3.images  | Crime and Punishment alt translation (Dostoevsky)
+GUTENBERG | https://www.gutenberg.org/ebooks/1998.epub3.images  | Thus Spake Zarathustra (Nietzsche)
+GUTENBERG | https://www.gutenberg.org/ebooks/2009.epub3.images  | Origin of Species (Darwin)
+GUTENBERG | https://www.gutenberg.org/ebooks/4078.epub3.images  | Thus Spake Zarathustra pt2 (Nietzsche)
+GUTENBERG | https://www.gutenberg.org/ebooks/1228.epub3.images  | On Liberty (Mill)
+GUTENBERG | https://www.gutenberg.org/ebooks/28885.epub3.images | Nicomachean Ethics (Aristotle)
+GUTENBERG | https://www.gutenberg.org/ebooks/2413.epub3.images  | Poetics (Aristotle)
+GUTENBERG | https://www.gutenberg.org/ebooks/815.epub3.images   | Democracy in America vol. 1 (Tocqueville)
+GUTENBERG | https://www.gutenberg.org/ebooks/816.epub3.images   | Democracy in America vol. 2 (Tocqueville)
+GUTENBERG | https://www.gutenberg.org/ebooks/35.epub3.images    | Time Machine (Wells)
+
+# Non-English Gutenberg books
+GUTENBERG | https://www.gutenberg.org/ebooks/17489.epub3.images | Les Fleurs du Mal (Baudelaire) — French poetry
+GUTENBERG | https://www.gutenberg.org/ebooks/4280.epub3.images  | La Divina Commedia (Dante) — Italian
+GUTENBERG | https://www.gutenberg.org/ebooks/7000.epub3.images  | Faust (Goethe) — German
+GUTENBERG | https://www.gutenberg.org/ebooks/2000.epub3.images  | Don Quijote — Spanish
+GUTENBERG | https://www.gutenberg.org/ebooks/57242.epub3.images | Art of War (Sun Tzu) — Chinese
+GUTENBERG | https://www.gutenberg.org/ebooks/7178.epub3.images  | Sorrows of Young Werther — German (Goethe)
+GUTENBERG | https://www.gutenberg.org/ebooks/23393.epub3.images | Candide — French (Voltaire)
+GUTENBERG | https://www.gutenberg.org/ebooks/52521.epub3.images | Anna Karenina — Russian (Tolstoy)
+GUTENBERG | https://www.gutenberg.org/ebooks/7993.epub3.images  | Chekhov Stories — Russian
+GUTENBERG | https://www.gutenberg.org/ebooks/14880.epub3.images | Journey to the West — Chinese classic
+GUTENBERG | https://www.gutenberg.org/ebooks/60041.epub3.images | Lysistrata — Greek (Aristophanes)
+GUTENBERG | https://www.gutenberg.org/ebooks/22367.epub3.images | Baburnama — Persian/Mughal history
+GUTENBERG | https://www.gutenberg.org/ebooks/24022.epub3.images | Os Sertões — Portuguese (da Cunha)
+GUTENBERG | https://www.gutenberg.org/ebooks/7205.epub3.images  | Carmen — French (Merimee)
+GUTENBERG | https://www.gutenberg.org/ebooks/15238.epub3.images | Rubáiyát of Omar Khayyám — Persian poetry
+GUTENBERG | https://www.gutenberg.org/ebooks/8492.epub3.images  | Decameron (Boccaccio) — Italian
+GUTENBERG | https://www.gutenberg.org/ebooks/14765.epub3.images | Les Aventures de Telemaque — French (Fenelon)
+GUTENBERG | https://www.gutenberg.org/ebooks/20580.epub3.images | Sakuntala — Hindi/Sanskrit drama
+GUTENBERG | https://www.gutenberg.org/ebooks/7452.epub3.images  | Korean Fairy Tales — Korean non-English content
+GUTENBERG | https://www.gutenberg.org/ebooks/19505.epub3.images | Panchatantra — Hindi/Sanskrit fables
+GUTENBERG | https://www.gutenberg.org/ebooks/38145.epub3.images | Dead Souls (Gogol) — Russian literature
+
+# Very large and reference works
+GUTENBERG | https://www.gutenberg.org/ebooks/3206.epub3.images  | Common Sense (Paine)
+GUTENBERG | https://www.gutenberg.org/ebooks/20203.epub3.images | Encyclopaedia Britannica vol. 1 — very large reference
+GUTENBERG | https://www.gutenberg.org/ebooks/3176.epub3.images  | Decline and Fall vol. 1 — very large (Gibbon)
+GUTENBERG | https://www.gutenberg.org/ebooks/890.epub3.images   | Wealth of Nations vol. 1 — very large (Adam Smith)
+GUTENBERG | https://www.gutenberg.org/ebooks/1041.epub3.images  | Complete Poetical Works of Shakespeare — very large poetry
 
 ##############################################################################
 # IDPF / W3C EPUB3 SAMPLES (https://github.com/IDPF/epub3-samples)
@@ -106,77 +159,113 @@ IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/children
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/linear-algebra.epub              | Linear Algebra — MathML
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/haruko-html-jpeg.epub            | Haruko — Japanese FXL, vertical text
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/figure-gallery-bindings.epub     | Figure Gallery — bindings, custom media type
-IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/cole-voyage-of-life-tol.epub     | Cole Voyage of Life — image-heavy
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/cole-voyage-of-life-tol.epub     | Cole Voyage of Life — image-heavy, large
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/trees.epub                       | Trees — scripted content
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/sous-le-vent.epub                | Sous le Vent — FXL, French
 IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/cc-shared-culture.epub           | CC Shared Culture — scripted, video
-
-# These IDPF samples use Git LFS and may not download via direct URL:
-# IDPF | accessible-epub3.epub        | Accessible EPUB3 (requires LFS)
-# IDPF | wasteland-wmo.epub           | Wasteland with media overlays (requires LFS)
-# IDPF | georgia-cjk.epub             | Georgia CJK Japanese (requires LFS)
-# IDPF | indexing-for-editors.epub     | Indexing for Editors (requires LFS)
-# IDPF | regime-anticancer-sample.epub | Regime Anticancer French (requires LFS)
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/wasteland-otf.epub               | Wasteland — media overlays, poetry
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/epub30-spec.epub                 | EPUB 3.0 Spec — large reference
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/georgia-pls-ssml.epub            | Georgia PLS SSML — speech synthesis
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/indexing-for-editors-screens.epub | Indexing for Editors — indexes
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/jlreq-in-english.epub            | JLREQ — Japanese layout requirements
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/kusamakura-japanese-vertical-writing.epub | Kusamakura — Japanese vertical text
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/moby-dick-mo.epub                | Moby Dick — media overlays
+IDPF | https://github.com/IDPF/epub3-samples/releases/download/20230704/accessible-epub3.epub            | Accessible EPUB3 — accessibility features
 
 ##############################################################################
 # STANDARD EBOOKS (https://standardebooks.org)
 #
-# Format: https://standardebooks.org/ebooks/{author}/{title}/downloads/{file}.epub
+# Format: https://standardebooks.org/ebooks/{author}/{title}/downloads/{author}_{title}.epub
 #
 # License: CC0 / public domain
 # Notes: Very high quality EPUB3. Rich accessibility metadata, custom se:*
-#        vocabulary, complex refines chains. Automated downloads are blocked —
-#        manual download required or use their GitHub releases.
-#        Previously tested in rounds 8+ (17 samples).
+#        vocabulary, complex refines chains. 700+ titles available.
 ##############################################################################
 
-# Manual download required — automated fetch returns HTML, not EPUB
-# STANDARDEBOOKS | jane-austen/emma
-# STANDARDEBOOKS | oscar-wilde/the-importance-of-being-earnest
-# STANDARDEBOOKS | h-g-wells/the-time-machine
-# See https://standardebooks.org/ebooks for the full catalog
+STANDARDEBOOKS | https://standardebooks.org/ebooks/jane-austen/persuasion/downloads/jane-austen_persuasion.epub | Persuasion (Austen) — high quality EPUB3
+STANDARDEBOOKS | https://standardebooks.org/ebooks/oscar-wilde/the-importance-of-being-earnest/downloads/oscar-wilde_the-importance-of-being-earnest.epub | The Importance of Being Earnest (Wilde) — drama
+STANDARDEBOOKS | https://standardebooks.org/ebooks/h-g-wells/the-time-machine/downloads/h-g-wells_the-time-machine.epub | The Time Machine (Wells)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/virginia-woolf/mrs-dalloway/downloads/virginia-woolf_mrs-dalloway.epub | Mrs Dalloway (Woolf)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/f-scott-fitzgerald/the-great-gatsby/downloads/f-scott-fitzgerald_the-great-gatsby.epub | The Great Gatsby (Fitzgerald)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/kate-chopin/the-awakening/downloads/kate-chopin_the-awakening.epub | The Awakening (Chopin)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/james-joyce/a-portrait-of-the-artist-as-a-young-man/downloads/james-joyce_a-portrait-of-the-artist-as-a-young-man.epub | Portrait of the Artist (Joyce)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/joseph-conrad/lord-jim/downloads/joseph-conrad_lord-jim.epub | Lord Jim (Conrad)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/edith-wharton/the-age-of-innocence/downloads/edith-wharton_the-age-of-innocence.epub | The Age of Innocence (Wharton)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/fyodor-dostoevsky/notes-from-underground/downloads/fyodor-dostoevsky_notes-from-underground.epub | Notes from Underground (Dostoevsky) — Russian literature
+STANDARDEBOOKS | https://standardebooks.org/ebooks/leo-tolstoy/the-death-of-ivan-ilyich/downloads/leo-tolstoy_the-death-of-ivan-ilyich.epub | Death of Ivan Ilyich (Tolstoy) — Russian literature
+STANDARDEBOOKS | https://standardebooks.org/ebooks/e-m-forster/a-room-with-a-view/downloads/e-m-forster_a-room-with-a-view.epub | A Room with a View (Forster)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/mark-twain/a-connecticut-yankee-in-king-arthurs-court/downloads/mark-twain_a-connecticut-yankee-in-king-arthurs-court.epub | Connecticut Yankee (Twain)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/agatha-christie/the-mysterious-affair-at-styles/downloads/agatha-christie_the-mysterious-affair-at-styles.epub | Mysterious Affair at Styles (Christie)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/edgar-allan-poe/short-fiction/downloads/edgar-allan-poe_short-fiction.epub | Short Fiction (Poe)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/h-p-lovecraft/short-fiction/downloads/h-p-lovecraft_short-fiction.epub | Short Fiction (Lovecraft)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/p-g-wodehouse/my-man-jeeves/downloads/p-g-wodehouse_my-man-jeeves.epub | My Man Jeeves (Wodehouse)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/jack-london/white-fang/downloads/jack-london_white-fang.epub | White Fang (London)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/rudyard-kipling/just-so-stories/downloads/rudyard-kipling_just-so-stories.epub | Just So Stories (Kipling)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/willa-cather/my-antonia/downloads/willa-cather_my-antonia.epub | My Antonia (Cather)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/henry-james/the-turn-of-the-screw/downloads/henry-james_the-turn-of-the-screw.epub | Turn of the Screw (James)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/franz-kafka/the-trial/downloads/franz-kafka_the-trial.epub | The Trial (Kafka) — German literature in translation
+STANDARDEBOOKS | https://standardebooks.org/ebooks/voltaire/candide/downloads/voltaire_candide.epub | Candide (Voltaire) — French literature in translation
+STANDARDEBOOKS | https://standardebooks.org/ebooks/w-e-b-du-bois/the-souls-of-black-folk/downloads/w-e-b-du-bois_the-souls-of-black-folk.epub | Souls of Black Folk (Du Bois)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/charlotte-bronte/villette/downloads/charlotte-bronte_villette.epub | Villette (Bronte)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/charles-dickens/david-copperfield/downloads/charles-dickens_david-copperfield.epub | David Copperfield (Dickens) — very large novel
+STANDARDEBOOKS | https://standardebooks.org/ebooks/george-eliot/middlemarch/downloads/george-eliot_middlemarch.epub | Middlemarch (Eliot) — very large novel
+STANDARDEBOOKS | https://standardebooks.org/ebooks/thomas-hardy/tess-of-the-durbervilles/downloads/thomas-hardy_tess-of-the-durbervilles.epub | Tess of the d'Urbervilles (Hardy)
+STANDARDEBOOKS | https://standardebooks.org/ebooks/william-shakespeare/the-tempest/downloads/william-shakespeare_the-tempest.epub | The Tempest (Shakespeare) — drama
+STANDARDEBOOKS | https://standardebooks.org/ebooks/marcus-aurelius/meditations/downloads/marcus-aurelius_meditations.epub | Meditations (Marcus Aurelius) — Latin/Greek philosophy
 
 ##############################################################################
-# ADDITIONAL SOURCES (not yet tested — candidates for future rounds)
+# FEEDBOOKS (https://www.feedbooks.com)
+#
+# Format: https://www.feedbooks.com/book/{ID}.epub
+#
+# License: Public domain
+# Notes: Calibre-generated EPUB output. Tests tool-specific patterns and
+#        output quirks from popular conversion tools.
 ##############################################################################
 
-# INTERNET ARCHIVE (https://archive.org)
-# Notes: Vast collection but inconsistent quality. Many EPUB2.
-#        Some downloads blocked. Use /download/{id}/ pattern.
-#        Rate limit: be very respectful.
+FEEDBOOKS | https://www.feedbooks.com/book/6.epub       | Metamorphosis (Kafka) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/14.epub      | Adventures of Huckleberry Finn — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/27.epub      | Uncle Tom's Cabin (Stowe) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/28.epub      | The Scarlet Letter (Hawthorne) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/39.epub      | The Yellow Wallpaper (Gilman) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/53.epub      | The Secret Garden (Burnett) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/54.epub      | The Jungle Book (Kipling) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/59.epub      | Tale of Peter Rabbit (Potter) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/61.epub      | The Raven (Poe) — poetry, Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/62.epub      | The Gift of the Magi (O. Henry) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/66.epub      | Legend of Sleepy Hollow (Irving) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/69.epub      | Wonderful Wizard of Oz (Baum) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/70.epub      | Anne of Green Gables (Montgomery) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/73.epub      | The Prince (Machiavelli) — Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/77.epub      | Sonnets (Shakespeare) — poetry, Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/137.epub     | Three Musketeers (Dumas) — French literature, Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/138.epub     | Count of Monte Cristo (Dumas) — French literature, Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/289.epub     | Candide (Voltaire) — French literature, Calibre output
+FEEDBOOKS | https://www.feedbooks.com/book/715.epub     | Le Petit Prince — French non-English
+FEEDBOOKS | https://www.feedbooks.com/book/928.epub     | Madame Bovary — French non-English
 
-# OAPEN (https://library.oapen.org)
-# Notes: Open access scholarly books. EPUB3 with academic metadata.
-#        Good source for complex, well-structured EPUBs.
-#        Downloads via /bitstream/20.500.12657/{id}/ pattern.
+##############################################################################
+# EPUB2 VARIANTS (EPUB 2.0.1 format for legacy path coverage)
+#
+# Format: https://www.gutenberg.org/ebooks/{ID}.epub.images (forces EPUB2)
+#
+# Notes: Gutenberg books in EPUB2 format to test legacy validation paths.
+#        Important for EPUB2-specific checks: NCX, OPF 2.0, OPS.
+##############################################################################
 
-# WAREID / EPUB3-TESTS (https://github.com/nichanank/epub3-tests)
-# Notes: Purpose-built test EPUBs. FXL, audio/video, WOFF2, accessibility.
-#        Already used in round 9 (11 samples).
-
-# READIUM TEST FILES (https://github.com/nichanank/readium-test-files)
-# Notes: Conformance test files. MathML, accessibility.
-#        Already used in round 9 (1 sample).
-
-# DAISY ACCESSIBILITY TESTS
-# Notes: Accessibility-focused test EPUBs.
-#        Already used in rounds 5 and 6.
-
-# FEEDBOOKS (public domain section)
-# Notes: Used in rounds 2-3 (4 samples). Calibre-generated EPUB2/3.
-
-# CALIBRE TEST OUTPUT
-# Notes: Generate EPUBs with various Calibre conversion settings
-#        to test tool-specific quirks. Not yet explored.
-
-# SIGIL TEST OUTPUT
-# Notes: Generate EPUBs with Sigil editor to test its output patterns.
-#        Not yet explored.
-
-# APPLE BOOKS / KOBO SIDELOADED
-# Notes: EPUBs generated by commercial tools often have vendor-specific
-#        extensions. Would need manual sourcing.
-
-# THORIUM / READIUM TEST BOOKS
-# Notes: Reading system test suites may include conformance EPUBs.
-#        https://github.com/nichanank/thorium-reader
+GUTENBERG | https://www.gutenberg.org/ebooks/5200.epub.images   | Metamorphosis (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/1342.epub.images   | Pride and Prejudice (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/84.epub.images     | Frankenstein (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/11.epub.images     | Alice in Wonderland (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/1661.epub.images   | Sherlock Holmes (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/74.epub.images     | Tom Sawyer (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/345.epub.images    | Dracula (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/98.epub.images     | Tale of Two Cities (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/46.epub.images     | Christmas Carol (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/174.epub.images    | Dorian Gray (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/768.epub.images    | Wuthering Heights (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/1260.epub.images   | Jane Eyre (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/76.epub.images     | Huckleberry Finn (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/514.epub.images    | Little Women (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/120.epub.images    | Treasure Island (EPUB2 variant)
+GUTENBERG | https://www.gutenberg.org/ebooks/55.epub.images     | Wizard of Oz (EPUB2 variant)
