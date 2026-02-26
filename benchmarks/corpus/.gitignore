@@ -1,0 +1,2 @@
+# Generated test EPUBs — recreate with: go run benchmarks/generate-test-epubs.go
+*.epub
