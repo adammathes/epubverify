@@ -227,6 +227,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// RSC-005/OPF-063: page-map attribute on spine is not allowed
 	checkSpinePageMap(ep, pkg, r)
 
+	// OPF-077: Data Navigation Document should not be in spine
+	checkDataNavNotInSpine(pkg, r)
+
+	// OPF-066: pagination source metadata check
+	if !opts.SingleFileMode {
+		checkPaginationSourceMetadata(ep, pkg, r)
+	}
+
 	// OPF-099: OPF must not reference itself in manifest
 	checkManifestSelfReference(ep, pkg, r)
 
@@ -3344,6 +3352,15 @@ func checkCollections(pkg *epub.Package, r *report.Report) {
 	if pkg.Version < "3.0" {
 		return
 	}
+
+	// Build manifest lookup maps
+	manifestByHref := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestByHref[item.Href] = item
+		}
+	}
+
 	for _, col := range pkg.Collections {
 		if col.Role == "" {
 			continue
@@ -3360,6 +3377,179 @@ func checkCollections(pkg *epub.Package, r *report.Report) {
 			r.Add(report.Error, "RSC-005",
 				"A manifest collection must be the child of another collection")
 		}
+
+		// Normalize role URL to extract the role name suffix
+		roleName := extractCollectionRoleName(col.Role)
+
+		// OPF-071: index collections must only contain XHTML
+		if roleName == "index" || roleName == "index-group" {
+			checkIndexCollection(col, manifestByHref, r)
+		}
+
+		// OPF-075/076: preview collection checks
+		if roleName == "preview" {
+			checkPreviewCollection(col, manifestByHref, r)
+		}
+
+		// OPF-082/083/084: dictionary collection checks
+		if roleName == "dictionary" {
+			checkDictionaryCollection(col, manifestByHref, r)
+		}
+	}
+}
+
+// extractCollectionRoleName gets the terminal segment of a collection role URL.
+// e.g., "http://idpf.org/epub/vocab/package/roles/#index" → "index"
+func extractCollectionRoleName(role string) string {
+	if i := strings.LastIndex(role, "#"); i >= 0 {
+		return role[i+1:]
+	}
+	if i := strings.LastIndex(role, "/"); i >= 0 && i < len(role)-1 {
+		return role[i+1:]
+	}
+	return role
+}
+
+// OPF-071: index collections must only contain resources pointing to XHTML Content Documents.
+func checkIndexCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	for _, href := range col.Links {
+		// Strip fragment
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		item, found := manifestByHref[parsed.Path]
+		if !found || item.MediaType != "application/xhtml+xml" {
+			r.Add(report.Error, "OPF-071",
+				"Index collections must only contain resources pointing to XHTML Content Documents")
+			return
+		}
+	}
+}
+
+// OPF-075/076: preview collections checks.
+func checkPreviewCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	for _, href := range col.Links {
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+
+		// OPF-076: preview collection links must not include EPUB CFI fragments
+		if parsed.Fragment != "" && strings.HasPrefix(parsed.Fragment, "epubcfi") {
+			r.Add(report.Error, "OPF-076",
+				"The URI of preview collections link elements must not include EPUB canonical fragment identifiers")
+		}
+
+		// OPF-075: must point to EPUB Content Documents (XHTML or SVG)
+		item, found := manifestByHref[parsed.Path]
+		if !found || (item.MediaType != "application/xhtml+xml" && item.MediaType != "image/svg+xml") {
+			r.Add(report.Error, "OPF-075",
+				"Preview collections must only point to EPUB Content Documents")
+		}
+	}
+}
+
+// OPF-082/083/084: dictionary collection checks.
+func checkDictionaryCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	skmCount := 0
+	for _, href := range col.Links {
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		item, found := manifestByHref[parsed.Path]
+		if !found {
+			continue
+		}
+		if item.MediaType == "application/vnd.epub.search-key-map+xml" {
+			skmCount++
+			if skmCount > 1 {
+				// OPF-082: multiple search key maps
+				r.Add(report.Error, "OPF-082",
+					"Found an EPUB Dictionary collection containing more than one Search Key Map Document")
+			}
+		} else if item.MediaType != "application/xhtml+xml" {
+			// OPF-084: invalid resource type in dictionary collection
+			r.Add(report.Error, "OPF-084",
+				fmt.Sprintf("Found an EPUB Dictionary collection containing resource '%s' which is neither a Search Key Map Document nor an XHTML Content Document", parsed.Path))
+		}
+	}
+	// OPF-083: no search key map
+	if skmCount == 0 {
+		r.Add(report.Error, "OPF-083",
+			"Found an EPUB Dictionary collection containing no Search Key Map Document")
+	}
+}
+
+// OPF-077: Data Navigation Document should not be included in the spine.
+func checkDataNavNotInSpine(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Build set of manifest item IDs with data-nav property
+	dataNavIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "data-nav") {
+			dataNavIDs[item.ID] = true
+		}
+	}
+	// Check if any spine itemref references a data-nav item
+	for _, ref := range pkg.Spine {
+		if dataNavIDs[ref.IDRef] {
+			r.Add(report.Warning, "OPF-077",
+				"A Data Navigation Document should not be included in the spine")
+			return
+		}
+	}
+}
+
+// OPF-066: pagination source metadata check.
+// When page break markers are present (page-list in nav), the publication
+// must declare dc:source and a source-of:pagination refinement.
+func checkPaginationSourceMetadata(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check if nav document has a page-list
+	var navHref string
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "nav") {
+			navHref = item.Href
+			break
+		}
+	}
+	if navHref == "" {
+		return
+	}
+	navPath := ep.ResolveHref(navHref)
+	data, err := ep.ReadFile(navPath)
+	if err != nil {
+		return
+	}
+	if !navDocHasPageList(data) {
+		return
+	}
+
+	// page-list is present — check for dc:source
+	if len(pkg.Metadata.Sources) == 0 {
+		r.Add(report.Error, "OPF-066",
+			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
+		return
+	}
+
+	// Check for source-of:pagination refinement on any dc:source
+	hasSourceOf := false
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "source-of" && mr.Value == "pagination" {
+			hasSourceOf = true
+			break
+		}
+	}
+	if !hasSourceOf {
+		r.Add(report.Error, "OPF-066",
+			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
 	}
 }
 

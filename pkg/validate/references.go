@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/adammathes/epubverify/pkg/epub"
@@ -55,6 +56,11 @@ func checkReferences(ep *epub.EPUB, r *report.Report, opts Options) {
 
 	// PKG-026: IDPF-obfuscated resources must be core media type fonts
 	checkObfuscatedResources(ep, r)
+
+	// OPF-097: report manifest items not referenced from any content (EPUB 3 only)
+	if ep.Package.Version >= "3.0" {
+		checkUnreferencedManifestItems(ep, r)
+	}
 }
 
 // RSC-001 / RSC-005 / RSC-009: manifest file existence checks
@@ -980,5 +986,151 @@ func checkObfuscatedResources(ep *epub.EPUB, r *report.Report) {
 				currentURI = ""
 			}
 		}
+	}
+}
+
+// OPF-097: report manifest items that are not referenced from content docs,
+// CSS, spine, nav, NCX, or metadata links.
+func checkUnreferencedManifestItems(ep *epub.EPUB, r *report.Report) {
+	pkg := ep.Package
+	if pkg == nil {
+		return
+	}
+
+	// Build set of "referenced" manifest paths.
+	referenced := make(map[string]bool)
+
+	// 1. Spine items are referenced.
+	for _, ref := range pkg.Spine {
+		for _, item := range pkg.Manifest {
+			if item.ID == ref.IDRef {
+				referenced[ep.ResolveHref(item.Href)] = true
+				break
+			}
+		}
+	}
+
+	// 2. Nav document is referenced.
+	// 3. NCX is referenced.
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "nav") || item.MediaType == "application/x-dtbncx+xml" {
+			referenced[ep.ResolveHref(item.Href)] = true
+		}
+	}
+
+	// 4. Metadata links are referenced.
+	for _, link := range pkg.MetadataLinks {
+		if link.Href != "" {
+			referenced[ep.ResolveHref(link.Href)] = true
+		}
+	}
+
+	// 5. Manifest fallback chains are references.
+	for _, item := range pkg.Manifest {
+		if item.Fallback != "" {
+			for _, other := range pkg.Manifest {
+				if other.ID == item.Fallback && other.Href != "\x00MISSING" {
+					referenced[ep.ResolveHref(other.Href)] = true
+				}
+			}
+		}
+	}
+
+	// 6. Collection link targets are referenced.
+	for _, col := range pkg.Collections {
+		for _, href := range col.Links {
+			parsed, err := url.Parse(href)
+			if err == nil {
+				referenced[ep.ResolveHref(parsed.Path)] = true
+			}
+		}
+	}
+
+	// 7. Scan all XHTML content documents for src/href/poster/data references.
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" || item.MediaType != "application/xhtml+xml" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		collectContentReferences(ep, data, fullPath, referenced)
+	}
+
+	// 8. Scan CSS files for url() references.
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "text/css" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		collectCSSReferences(data, fullPath, referenced)
+	}
+
+	// Report unreferenced items.
+	for _, item := range pkg.Manifest {
+		if item.Href == "\x00MISSING" || item.Href == "" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		if !referenced[fullPath] {
+			r.Add(report.Usage, "OPF-097",
+				fmt.Sprintf("Resource '%s' is listed in the manifest, but no reference to it was found in content documents", item.Href))
+		}
+	}
+}
+
+// collectContentReferences extracts all resource references from an XHTML document.
+func collectContentReferences(ep *epub.EPUB, data []byte, location string, referenced map[string]bool) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	docDir := path.Dir(location)
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			switch attr.Name.Local {
+			case "href", "src", "poster", "data":
+				href := strings.TrimSpace(attr.Value)
+				if href == "" || isRemoteURL(href) || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "mailto:") || strings.HasPrefix(href, "tel:") {
+					continue
+				}
+				parsed, err := url.Parse(href)
+				if err != nil {
+					continue
+				}
+				target := resolvePath(docDir, parsed.Path)
+				referenced[target] = true
+			}
+		}
+	}
+}
+
+// collectCSSReferences extracts url() references from a CSS file.
+func collectCSSReferences(data []byte, location string, referenced map[string]bool) {
+	cssDir := path.Dir(location)
+	urlRe := regexp.MustCompile(`url\(\s*['"]?([^'")]+?)['"]?\s*\)`)
+	for _, match := range urlRe.FindAllSubmatch(data, -1) {
+		href := string(match[1])
+		if isRemoteURL(href) || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "data:") {
+			continue
+		}
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		target := resolvePath(cssDir, parsed.Path)
+		referenced[target] = true
 	}
 }
