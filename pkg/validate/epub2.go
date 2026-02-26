@@ -79,6 +79,9 @@ func checkEPUB2(ep *epub.EPUB, r *report.Report) {
 	// E2-010: NCX uid must match OPF uid
 	checkNCXUIDMatchesOPF(ep, data, r)
 
+	// NCX-004: NCX dtb:uid should not have leading/trailing whitespace
+	checkNCXUIDWhitespace(data, r)
+
 	// RSC-005: NCX IDs must be unique
 	checkNCXUniqueIDs(data, r)
 
@@ -479,6 +482,37 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 	if ncxUID != "" && strings.TrimSpace(ncxUID) != strings.TrimSpace(opfUID) {
 		r.Add(report.Error, "NCX-001",
 			fmt.Sprintf("NCX identifier '%s' does not match OPF identifier '%s'", ncxUID, opfUID))
+	}
+}
+
+// NCX-004: NCX dtb:uid should not contain leading or trailing whitespace.
+func checkNCXUIDWhitespace(data []byte, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "meta" {
+			var name, content string
+			for _, attr := range se.Attr {
+				switch attr.Name.Local {
+				case "name":
+					name = attr.Value
+				case "content":
+					content = attr.Value
+				}
+			}
+			if name == "dtb:uid" && content != strings.TrimSpace(content) {
+				r.Add(report.Usage, "NCX-004",
+					"NCX identifier (\"dtb:uid\" metadata) should not contain leading or trailing whitespace")
+				return
+			}
+		}
 	}
 }
 

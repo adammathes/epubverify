@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title>Test NCX-004</dc:title>
+  <dc:language>en</dc:language>
+  <dc:identifier id="uid">urn:test:ncx004</dc:identifier>
+</metadata>
+<manifest>
+  <item id="content" href="content_001.xhtml" media-type="application/xhtml+xml"/>
+  <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+</manifest>
+<spine toc="ncx"><itemref idref="content"/></spine>
+</package>

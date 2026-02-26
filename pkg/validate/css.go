@@ -83,6 +83,9 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 
 		// RSC-008: CSS-referenced resources must be in manifest
 		checkCSSResourceInManifest(ep, cssContent, fullPath, manifestHrefs, r)
+
+		// CSS-006: report use of position:fixed
+		checkCSSPositionFixed(cssContent, fullPath, r)
 	}
 }
 
@@ -240,6 +243,20 @@ func checkCSSForbiddenProperties(css string, location string, r *report.Report) 
 		prop := strings.TrimSpace(m[1])
 		r.AddWithLocation(report.Error, "CSS-001",
 			fmt.Sprintf("CSS property '%s' is not allowed in EPUB content documents", prop),
+			location)
+	}
+}
+
+// CSS-006: report CSS position:fixed usage (usage-level informational report).
+func checkCSSPositionFixed(css string, location string, r *report.Report) {
+	// Strip comments
+	commentRe := regexp.MustCompile(`/\*[\s\S]*?\*/`)
+	css = commentRe.ReplaceAllString(css, "")
+
+	posRe := regexp.MustCompile(`(?im)position\s*:\s*fixed`)
+	if posRe.MatchString(css) {
+		r.AddWithLocation(report.Usage, "CSS-006",
+			"CSS selector specifies fixed position",
 			location)
 	}
 }

@@ -1027,3 +1027,19 @@ Feature: EPUB 3 — Content Documents — XHTML
     Then usage HTM-010 is reported
     And the message contains 'Namespace "http://http://www.idpf.org/2007/ops" is unusual'
     And no errors or warnings are reported
+
+  #### Empty href
+
+  Scenario: Report an empty href attribute as usage
+    Given the reporting level is set to usage
+    When checking EPUB 'content-xhtml-empty-href-usage'
+    Then usage HTM-045 is reported
+    And no other usages are reported
+    And no other errors or warnings are reported
+
+  #### Region-based property
+
+  Scenario: Report region-based property on non-data-nav document
+    When checking EPUB 'content-xhtml-region-based-error'
+    Then error HTM-052 is reported
+    And no other errors or warnings are reported
