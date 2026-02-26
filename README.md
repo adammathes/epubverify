@@ -10,6 +10,21 @@ epubverify passes 901 of 902 BDD scenarios ported from the [w3c/epubcheck](https
 
 See [ROADMAP.md](ROADMAP.md) for detailed status and confidence assessment.
 
+## Performance
+
+epubverify is significantly faster and lighter than epubcheck, primarily because it compiles to a native binary with no JVM startup overhead.
+
+| Metric | epubverify (Go) | epubcheck (Java) | Ratio |
+|--------|----------------|-------------------|-------|
+| Validation time (medium EPUB) | 256ms | 4,968ms | **19.4x faster** |
+| Peak memory (medium EPUB) | 21.4MB | 590.3MB | **27.6x less** |
+| Binary size | 5.3MB | 35MB (+ JRE) | **6.5x smaller** |
+| Runtime dependencies | None | JRE 11+ | — |
+
+For small-to-medium EPUBs (the vast majority of real-world ebooks), epubverify is **19–250x faster**. The speedup narrows for very large files as actual validation work dominates over startup overhead.
+
+See [benchmarks/results/performance-report.md](benchmarks/results/performance-report.md) for full methodology and detailed results.
+
 ## Installation
 
 ```bash
