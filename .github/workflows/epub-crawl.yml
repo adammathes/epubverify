@@ -1,12 +1,13 @@
 name: EPUB Crawl Stress Test
 
-# Runs weekly to discover new EPUBs, validate with both epubverify and
-# epubcheck, and report any discrepancies. Can also be triggered manually.
+# Discovers new EPUBs, validates with both epubverify and epubcheck,
+# and reports any discrepancies. Manual trigger only until tested.
+# To enable weekly schedule, uncomment the schedule block below.
 
 on:
-  schedule:
-    # Run every Sunday at 06:00 UTC
-    - cron: '0 6 * * 0'
+  # schedule:
+  #   # Run every Sunday at 06:00 UTC
+  #   - cron: '0 6 * * 0'
   workflow_dispatch:
     inputs:
       source:

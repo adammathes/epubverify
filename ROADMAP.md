@@ -70,6 +70,10 @@ Add Gherkin scenarios for doctor mode. Currently only tested via Go unit tests. 
 
 Extend `make bench` to run against the full stress test corpus. Track per-book validation time, memory usage, startup overhead (JVM vs native Go), and batch throughput.
 
+### Enable Scheduled EPUB Crawl Workflow
+
+The `.github/workflows/epub-crawl.yml` workflow is currently manual-only (`workflow_dispatch`). After manual testing confirms the crawl pipeline works end-to-end, uncomment the `schedule` block to enable weekly automated runs (Sundays 06:00 UTC).
+
 ### CI Integration for Stress Tests
 
 Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compares against cached epubcheck results, and fails if any new disagreements appear.

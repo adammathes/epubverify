@@ -278,7 +278,7 @@ func TestGitHubActionsWorkflowExists(t *testing.T) {
 	}
 }
 
-func TestGitHubActionsWorkflowIsScheduled(t *testing.T) {
+func TestGitHubActionsWorkflowHasScheduleConfig(t *testing.T) {
 	path := filepath.Join(repoRoot(), ".github", "workflows", "epub-crawl.yml")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -289,11 +289,16 @@ func TestGitHubActionsWorkflowIsScheduled(t *testing.T) {
 	}
 	content := string(data)
 
+	// Schedule config should be present (even if commented out for now)
 	if !strings.Contains(content, "schedule") {
-		t.Error("epub-crawl.yml must have a schedule trigger")
+		t.Error("epub-crawl.yml must have schedule configuration (can be commented out)")
 	}
 	if !strings.Contains(content, "cron") {
-		t.Error("epub-crawl.yml must have a cron expression")
+		t.Error("epub-crawl.yml must have a cron expression (can be commented out)")
+	}
+	// Must support manual dispatch
+	if !strings.Contains(content, "workflow_dispatch") {
+		t.Error("epub-crawl.yml must support manual workflow_dispatch")
 	}
 }
 
