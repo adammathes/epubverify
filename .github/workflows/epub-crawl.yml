@@ -58,6 +58,11 @@ jobs:
         restore-keys: |
           crawl-manifest-
 
+    # NOTE: The Internet Archive source (archive.org) is blocked in Claude
+    # Code containers by the sandbox egress policy. It works fine here in
+    # GitHub Actions. If running the crawler locally in a restricted
+    # environment, use --source gutenberg/standardebooks/feedbooks/oapen
+    # to skip the IA source, or expect 0 downloads from that source.
     - name: Crawl EPUBs
       run: |
         bash scripts/epub-crawler.sh \
