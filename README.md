@@ -90,4 +90,6 @@ epubverify/
 
 ## License
 
-See LICENSE file for details.
+MIT License. See [LICENSE](LICENSE) for details.
+
+Test data in `testdata/` is derived from the [w3c/epubcheck](https://github.com/w3c/epubcheck) test suite, which is distributed under the BSD 3-Clause License. See [THIRD-PARTY-LICENSES](THIRD-PARTY-LICENSES) for details.
