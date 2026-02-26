@@ -1,0 +1,3 @@
+tool,binary_size_kb,runtime_deps
+epubverify,5409,none
+epubcheck,35334,JRE

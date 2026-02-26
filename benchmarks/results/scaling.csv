@@ -1,0 +1,15 @@
+tool,epub,file_size_kb,wall_time_ms
+epubverify,epub2-minimal,1,19
+epubcheck,epub2-minimal,1,4574
+epubverify,large-50ch,60,1053
+epubcheck,large-50ch,60,5222
+epubverify,medium-20ch,22,261
+epubcheck,medium-20ch,22,4916
+epubverify,minimal,1,20
+epubcheck,minimal,1,4673
+epubverify,small-5ch,6,49
+epubcheck,small-5ch,6,4782
+epubverify,tiny-1ch,2,23
+epubcheck,tiny-1ch,2,4762
+epubverify,xlarge-100ch,142,4015
+epubcheck,xlarge-100ch,142,5638

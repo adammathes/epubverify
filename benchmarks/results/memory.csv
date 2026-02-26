@@ -1,0 +1,15 @@
+tool,epub,peak_rss_kb
+epubverify,epub2-minimal,0
+epubcheck,epub2-minimal,597856
+epubverify,large-50ch,22320
+epubcheck,large-50ch,614820
+epubverify,medium-20ch,21884
+epubcheck,medium-20ch,604468
+epubverify,minimal,13192
+epubcheck,minimal,596996
+epubverify,small-5ch,21148
+epubcheck,small-5ch,596648
+epubverify,tiny-1ch,15716
+epubcheck,tiny-1ch,585244
+epubverify,xlarge-100ch,23232
+epubcheck,xlarge-100ch,615776
