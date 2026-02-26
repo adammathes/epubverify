@@ -388,8 +388,15 @@ except (json.JSONDecodeError, KeyError, TypeError):
 
   if [ -z "${identifiers}" ]; then
     echo "  WARN: search API returned no results (page ${page}), using fallback list"
-    # Fallback: curated list of popular IA items known to contain EPUBs.
-    # These are well-known public domain works with high download counts.
+    # Search API returned nothing — skip IA for this run rather than
+    # trying a hardcoded fallback list (IA identifiers are opaque and
+    # change over time, so a static list quickly becomes stale).
+    echo "  Skipping Internet Archive (search API unreachable)"
+    rm -f "${search_file}"
+    echo ""
+    echo "  Internet Archive: downloaded ${count} new EPUBs"
+    return
+    # Kept for reference: previous fallback list (identifiers are not valid IA item IDs)
     local -a fallback_ids=(
       "alice_in_wonderland_lewis_carroll"
       "dracula_by_bram_stoker"

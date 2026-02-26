@@ -479,9 +479,17 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 		}
 	}
 
-	if ncxUID != "" && strings.TrimSpace(ncxUID) != strings.TrimSpace(opfUID) {
-		r.Add(report.Error, "NCX-001",
-			fmt.Sprintf("NCX identifier '%s' does not match OPF identifier '%s'", ncxUID, opfUID))
+	if ncxUID != "" {
+		// Normalize both identifiers: trim whitespace and strip urn:uuid: prefix
+		// so that "877093ac-..." matches "urn:uuid:877093ac-..."
+		normNCX := strings.TrimSpace(ncxUID)
+		normOPF := strings.TrimSpace(opfUID)
+		normNCX = strings.TrimPrefix(normNCX, "urn:uuid:")
+		normOPF = strings.TrimPrefix(normOPF, "urn:uuid:")
+		if normNCX != normOPF {
+			r.Add(report.Error, "NCX-001",
+				fmt.Sprintf("NCX identifier '%s' does not match OPF identifier '%s'", ncxUID, opfUID))
+		}
 	}
 }
 

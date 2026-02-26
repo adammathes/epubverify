@@ -62,6 +62,10 @@ Feature: EPUB 2 ▸ Navigation ▸ Full Publication Checks
     Then error NCX-001 is reported
     And no other errors or warnings are reported
 
+  Scenario: Verify that an NCX `uid` without urn:uuid: prefix matches OPF identifier with the prefix
+    When checking EPUB 'ncx-uid-urn-uuid-prefix-valid'
+    Then no errors or warnings are reported
+
   Scenario: Report NCX dtb:uid with leading or trailing whitespace
     Given the reporting level is set to usage
     When checking EPUB 'ncx-uid-whitespace-usage'

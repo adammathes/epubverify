@@ -152,8 +152,13 @@ func checkMimetypeContent(ep *epub.EPUB, r *report.Report) {
 	}
 	content := string(data)
 	if content != "application/epub+zip" {
+		display := strings.TrimSpace(content)
+		if display == "application/epub+zip" {
+			// Content matches after trimming, so extra whitespace is the issue
+			display = fmt.Sprintf("%s (with extra whitespace/newline characters, length %d)", display, len(content))
+		}
 		r.Add(report.Error, "PKG-007",
-			"The mimetype file must contain exactly 'application/epub+zip' but was '"+strings.TrimSpace(content)+"'")
+			"The mimetype file must contain exactly 'application/epub+zip' but was '"+display+"'")
 	}
 }
 
