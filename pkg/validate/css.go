@@ -61,7 +61,8 @@ func checkCSS(ep *epub.EPUB, r *report.Report) {
 		// CSS-008: CSS syntax errors (unclosed braces)
 		checkCSSSyntax(cssContent, fullPath, r)
 
-		// CSS-002: @font-face empty URL reference
+		// CSS-028: report use of @font-face declarations; CSS-002: empty URL reference
+		checkCSSFontFaceUsage(cssContent, fullPath, r)
 		checkCSSFontFaceEmptyURL(cssContent, fullPath, r)
 
 		// CSS-011: @font-face must have src descriptor; CSS-019: empty @font-face
@@ -239,6 +240,16 @@ func checkCSSForbiddenProperties(css string, location string, r *report.Report) 
 		prop := strings.TrimSpace(m[1])
 		r.AddWithLocation(report.Error, "CSS-001",
 			fmt.Sprintf("CSS property '%s' is not allowed in EPUB content documents", prop),
+			location)
+	}
+}
+
+// CSS-028: report use of @font-face declarations (informational usage report).
+func checkCSSFontFaceUsage(css string, location string, r *report.Report) {
+	fontFaceRe := regexp.MustCompile(`@font-face\s*\{`)
+	if fontFaceRe.MatchString(css) {
+		r.AddWithLocation(report.Usage, "CSS-028",
+			"Use of @font-face declaration",
 			location)
 	}
 }

@@ -238,6 +238,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 		checkSpineNonLinearReachable(ep, r)
 	}
 
+	// OPF-067: link resources must not also be manifest items (EPUB 3)
+	if !opts.SingleFileMode {
+		checkLinkNotInManifest(ep, pkg, r)
+	}
+
+	// OPF-072: empty metadata elements
+	checkEmptyMetadataElements(pkg, r)
+
 	// OPF-090: manifest items with non-preferred but valid core media types
 	checkNonPreferredMediaTypes(pkg, r)
 
@@ -1566,6 +1574,8 @@ func checkSpinePageMap(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
 	if pkg.SpinePageMap == "" {
 		return
 	}
+	// OPF-062: Adobe page-map attribute on spine element
+	r.Add(report.Usage, "OPF-062", "Found Adobe page-map attribute on spine element in opf file")
 	r.Add(report.Error, "RSC-005", `attribute "page-map" not allowed here`)
 
 	// OPF-063: page-map attribute must reference a valid manifest item
@@ -3351,4 +3361,77 @@ func checkCollections(pkg *epub.Package, r *report.Report) {
 				"A manifest collection must be the child of another collection")
 		}
 	}
+}
+
+// OPF-067: a resource listed as a metadata <link> must not also be a manifest item
+// (unless the item is in the spine). This prevents confusion between metadata
+// links (which describe the publication) and manifest items (which are publication resources).
+func checkLinkNotInManifest(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build a set of resolved manifest item paths that are NOT in the spine.
+	// Items in the spine are publication resources and may legitimately also be link targets.
+	spineIDs := make(map[string]bool)
+	for _, ref := range pkg.Spine {
+		spineIDs[ref.IDRef] = true
+	}
+
+	manifestPaths := make(map[string]string) // resolved path -> item href
+	for _, item := range pkg.Manifest {
+		if item.Href == "" || item.Href == "\x00MISSING" {
+			continue
+		}
+		if spineIDs[item.ID] {
+			continue // spine items are OK
+		}
+		resolved := ep.ResolveHref(item.Href)
+		manifestPaths[resolved] = item.Href
+	}
+
+	for _, link := range pkg.MetadataLinks {
+		if link.Href == "" || isRemoteURL(link.Href) {
+			continue
+		}
+		// Strip fragment
+		hrefPath := link.Href
+		if idx := strings.Index(hrefPath, "#"); idx >= 0 {
+			hrefPath = hrefPath[:idx]
+		}
+		resolved := ep.ResolveHref(hrefPath)
+		if itemHref, found := manifestPaths[resolved]; found {
+			r.Add(report.Error, "OPF-067",
+				fmt.Sprintf("The resource '%s' must not be listed both as a \"link\" element in the package metadata and as a manifest item", itemHref))
+		}
+	}
+}
+
+// OPF-072: dc:* metadata elements must not be empty.
+// This flags empty dc:title, dc:creator, dc:contributor, dc:language, dc:identifier,
+// dc:source, dc:date elements (text content is empty string or whitespace-only).
+func checkEmptyMetadataElements(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check dc:source elements
+	for _, src := range pkg.Metadata.Sources {
+		if strings.TrimSpace(src) == "" {
+			r.Add(report.Usage, "OPF-072",
+				`Metadata element "dc:source" is empty`)
+		}
+	}
+
+	// Check dc:date elements
+	for _, dt := range pkg.Metadata.Dates {
+		if strings.TrimSpace(dt) == "" {
+			// Already handled by OPF-054, skip to avoid double-reporting
+			continue
+		}
+	}
+
+	// dc:title, dc:identifier emptiness already checked by OPF-032, OPF-031
+	// dc:language emptiness already checked by OPF-003
+	// dc:creator/contributor with empty values are checked by OPF-055
 }

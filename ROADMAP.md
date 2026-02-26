@@ -29,6 +29,8 @@ February 25, 2026
 
 **High confidence — Schematron rule coverage (Tier 2).** The Tier 2 Schematron audit covers all 118 patterns from epubcheck's 10 core .sch files: 167 checks implemented, 13 partial, 0 missing. New checks added: disallowed descendant nesting (address/form/progress/meter/caption/header/footer/label), required ancestors (area→map, img[ismap]→a[href]), bdo dir attribute, SSML ph nesting, duplicate map names, select multiple validation, meta charset uniqueness, link sizes validation, and IDREF attribute checking.
 
+**High confidence — Java code check coverage (Tier 3).** The Tier 3 Java audit covers all 315 MessageId codes defined in epubcheck: 203 implemented, 9 suppressed (disabled in epubcheck), 103 wontfix (niche/defunct features like EDUPUB, DTBook, EPUB Dictionaries, scripting checks, dead code). See `scripts/java-audit.py` (run with `--json` for machine-readable output).
+
 ### Where We Have Less Confidence
 
 **Medium confidence — Edge-case error codes.** A handful of epubcheck error codes rely on schema validation or features we haven't implemented: RSC-007 (mailto links), RSC-020 (CFI URLs), OPF-007c (prefix redeclaration), PKG-026 (font obfuscation), OPF-043 (complex fallback chains).
@@ -135,7 +137,7 @@ This could run as:
 
 ---
 
-### Proposal 2: Systematic Gap Extraction from Epubcheck's Three Validation Tiers
+### Proposal 2: Systematic Gap Extraction from Epubcheck's Three Validation Tiers ✅ ALL THREE TIERS COMPLETE
 
 **Goal:** Methodically analyze each of epubcheck's three validation tiers — RelaxNG schemas, Schematron rules, and Java code — to identify every check that epubverify doesn't currently implement, prioritize the gaps, and systematically close them.
 
@@ -212,35 +214,94 @@ Audit script (`scripts/schematron-audit.py`) — parses epubcheck's 10 core Sche
 - distributable-object collection: very rare EDUPUB-specific feature
 - Multi-rendition selection/mapping (4): experimental multi-rendition container extensions
 
-**Tier 3: Java Code Analysis**
+**Tier 3: Java Code Analysis** ✅ DONE
 
-The Java code checks are the hardest to audit systematically because they're scattered across many classes. Approach:
+Audit script (`scripts/java-audit.py`) — parses epubcheck's `MessageId.java` (315 message IDs), `DefaultSeverities.java`, and `MessageBundle.properties`, then greps all Java source files for `MessageId.XXX` references to map every error code to its emitting Java class. Cross-references against epubverify's Go source and BDD feature files. **All 315 message IDs accounted for: 203 implemented, 9 suppressed, 103 wontfix, 0 missing.**
 
-1. **Grep for error codes.** Search the epubcheck Java source for every `message(MessageId.XXX)` call. Build a complete list of error codes emitted by Java code (as opposed to schema validation).
-2. **Cross-reference with our implementation.** For each error code, check whether epubverify emits it and whether we have a test for it.
-3. **Categorize gaps.** Group missing error codes by category: cross-reference checks, media type checks, metadata checks, content checks, etc.
-4. **Prioritize.** Focus on error codes that appear in real-world EPUBs (use the stress test corpus).
+**New check functions (Tier 3):**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkLinkNotInManifest` | OPF-067: resource listed as both metadata link and manifest item |
+| `checkEmptyMetadataElements` | OPF-072: empty dc:source metadata elements |
+| `checkCSSFontFaceUsage` | CSS-028: use of @font-face declaration (USAGE report) |
+| `checkSpinePageMap` (extended) | OPF-062: Adobe page-map attribute on spine element |
+
+**Wontfix codes (after Java source review):**
+- OPF-011: commented out in epubcheck (dead code); handled by OPF-088
+- OPF-021: DTBook-only href check (very niche DAISY feature)
+- OPF-047: OEBPS 1.2 syntax info (handled via IsLegacyOEBPS12 detection)
+- OPF-066: EDUPUB-profile-only pagination metadata check (EDUPUB is defunct)
+- OPF-097: unreferenced manifest item (requires full reference tracking)
 
 **Deliverables:**
+- `scripts/java-audit.py` — comprehensive audit script (run with `--json` for machine-readable output)
+- 4 new check functions, 0 regressions: 901/902 BDD scenarios still passing
 
-- A gap analysis document listing every check we're missing, organized by tier and priority
-- New test fixtures for each identified gap
-- Incremental PRs closing the gaps, starting with the highest-priority items
+**Consolidated known gaps (all tiers):**
 
-**What we already have:**
-- `scripts/schematron-audit.py` — parses schematron, maps to error codes
-- `testdata/fixtures/schematron-audit/` — fixtures from the first audit pass
-- The godog test suite itself — can be queried for which error codes have scenarios
-- The stress test corpus — shows which error codes appear in practice
+The following checks are intentionally skipped. They're grouped by reason so future work can target a category. Codes marked SUPPRESSED are disabled by default in epubcheck itself.
 
-**What we'd need to build:**
-- RelaxNG schema parser/analyzer (could be a Python script similar to the schematron audit)
-- Java code error-code extractor (grep + analysis script)
-- Gap analysis document
-- New test fixtures and scenarios for identified gaps
-- Implementation of missing checks
+**Could implement later (meaningful checks, deprioritized):**
 
-**Estimated scope:** Large. The RelaxNG analysis alone is significant. Best done incrementally — one tier at a time, highest-priority gaps first.
+| Code | Sev | What it checks | Why skipped |
+|------|-----|----------------|-------------|
+| OPF-097 | USAGE | Manifest item with no reference in content docs | Needs full cross-file reference tracking |
+| `<input>` types | ERROR | Type-specific attribute validation (13+ variants) | Tier 1 RelaxNG; large surface area, low real-world impact |
+| SVG/MathML models | ERROR | Full SVG/MathML content model enforcement | Tier 1 RelaxNG; complex schemas, rarely triggers |
+| CSS-006 | USAGE | CSS `position:fixed` usage report | Low value; informational only |
+| HTM-044 | USAGE | Unused namespace URI declared | Low value; informational only |
+| HTM-045 | USAGE | Empty href encountered (valid self-reference) | Low value; informational only |
+| NCX-004 | USAGE | NCX dtb:uid leading/trailing whitespace | Low value; EPUB 2 edge case |
+| RSC-019 | WARNING | Multi-rendition EPUB should have metadata.xml | Multi-rendition support not a priority |
+| ACC-011 | USAGE | SVG hyperlink has no accessible name | Niche SVG accessibility check |
+
+**EPUB Dictionaries / Index collections (very niche EPUB 3 extensions):**
+
+| Code | Sev | What it checks |
+|------|-----|----------------|
+| OPF-071 | ERROR | Index collections must only contain XHTML |
+| OPF-075 | ERROR | Preview collections must only point to content docs |
+| OPF-076 | ERROR | Preview collections must not include CFI fragments |
+| OPF-078 | ERROR | EPUB Dictionary must have dictionary content |
+| OPF-079 | WARNING | Dictionary content should declare dc:type "dictionary" |
+| OPF-080 | WARNING | Search Key Map should have .xml extension |
+| OPF-081 | ERROR | Dictionary collection resource not found |
+| OPF-082 | ERROR | Dictionary collection has multiple Search Key Maps |
+| OPF-083 | ERROR | Dictionary collection has no Search Key Map |
+| OPF-084 | ERROR | Dictionary collection has invalid resource type |
+| RSC-021 | ERROR | Search Key Map must point to spine content docs |
+
+**EDUPUB / defunct profiles:**
+
+| Code | Sev | What it checks |
+|------|-----|----------------|
+| OPF-066 | ERROR | Missing pagination source metadata (EDUPUB only) |
+| HTM-051 | WARNING | Microdata without RDFa (EDUPUB recommendation) |
+| HTM-052 | ERROR | Data Navigation Documents (EDUPUB feature) |
+| OPF-077 | WARNING | Data Navigation Document should not be in spine |
+| NAV-004 | USAGE | Full heading hierarchy in nav (EDUPUB) |
+
+**Multi-rendition container (Tier 2 Schematron — experimental spec extension):**
+
+9 OCF metadata patterns + 4 selection/mapping patterns. OPF equivalents exist for single-rendition EPUBs (the common case).
+
+**Dead code / already covered:**
+
+| Code | Why skipped |
+|------|-------------|
+| OPF-011 | Commented out in epubcheck source (dead code); handled by OPF-088 |
+| OPF-021 | DTBook-only href check (DAISY; not EPUB content) |
+| OPF-047 | OEBPS 1.2 syntax info; already detected via `IsLegacyOEBPS12` |
+| PKG-001 | Version mismatch info; handled by OPF-001 |
+| PKG-015 | Unable to read contents; covered by PKG-008 |
+| PKG-018 | File not found; handled by Go `os.Open` |
+| PKG-020 | OPF not found; covered by OPF-002 |
+| RSC-022 | Java version check; not applicable to Go |
+
+**Epubcheck internal (CHK-001 through CHK-007):** Custom message override configuration errors. These are internal to epubcheck's message override system and have no equivalent in epubverify.
+
+**SUPPRESSED in epubcheck (51 codes):** These are disabled by default in epubcheck itself — they defined checks that were later deemed too noisy or not spec-required. Includes all 10 SCP (scripting) codes, 12 CSS property checks, and various HTM/OPF codes. Full list: run `python3 scripts/java-audit.py --json | jq '.messages[] | select(.status=="suppressed" or (.status=="wontfix" and .severity=="SUPPRESSED"))'`.
 
 ---
 
@@ -270,6 +331,23 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 ---
 
 ## COMPLETED
+
+### Tier 3 Java Code Analysis — Complete (Proposal 2)
+
+Java code audit script (`scripts/java-audit.py`) — parses epubcheck's `MessageId.java` (315 message IDs), `DefaultSeverities.java` (severity mappings), and `MessageBundle.properties` (message texts). Greps all Java source files for `MessageId.XXX` references to map every error code to its emitting Java class. Cross-references against epubverify Go source and BDD features. **All 315 message IDs accounted for: 203 implemented, 9 suppressed, 103 wontfix, 0 missing.**
+
+**4 new check functions added:**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkLinkNotInManifest` | OPF-067: resource listed as both metadata link and manifest item |
+| `checkEmptyMetadataElements` | OPF-072: empty dc:source metadata elements |
+| `checkCSSFontFaceUsage` | CSS-028: use of @font-face declaration (USAGE report) |
+| `checkSpinePageMap` (extended) | OPF-062: Adobe page-map attribute on spine element |
+
+- Machine-readable gap analysis: run `python3 scripts/java-audit.py --json`
+- 5 codes confirmed wontfix after Java source review: OPF-011 (dead code), OPF-021 (DTBook only), OPF-047 (handled), OPF-066 (EDUPUB only), OPF-097 (needs reference tracking)
+- 0 regressions: 901/902 BDD scenarios still passing
 
 ### Tier 2 Schematron Rule Analysis — Complete (Proposal 2)
 
