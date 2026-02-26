@@ -1,0 +1,109 @@
+name: EPUB Crawl Stress Test
+
+# Runs weekly to discover new EPUBs, validate with both epubverify and
+# epubcheck, and report any discrepancies. Can also be triggered manually.
+
+on:
+  schedule:
+    # Run every Sunday at 06:00 UTC
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to crawl (gutenberg, standardebooks, feedbooks, all)'
+        required: false
+        default: 'all'
+      limit:
+        description: 'Max EPUBs to download per source'
+        required: false
+        default: '10'
+
+jobs:
+  crawl-and-validate:
+    name: Crawl, Validate, Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+
+    - name: Build epubverify
+      run: go build -o epubverify .
+
+    - name: Set up Java (for epubcheck)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Download epubcheck
+      run: |
+        EPUBCHECK_VERSION="5.3.0"
+        curl -sL -o epubcheck.zip \
+          "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
+        unzip -q epubcheck.zip
+        echo "EPUBCHECK_JAR=$(pwd)/epubcheck-${EPUBCHECK_VERSION}/epubcheck.jar" >> $GITHUB_ENV
+
+    - name: Restore crawl manifest cache
+      uses: actions/cache@v4
+      with:
+        path: stress-test/crawl-manifest.json
+        key: crawl-manifest-${{ github.run_number }}
+        restore-keys: |
+          crawl-manifest-
+
+    - name: Crawl EPUBs
+      run: |
+        bash scripts/epub-crawler.sh \
+          --source "${{ github.event.inputs.source || 'all' }}" \
+          --limit "${{ github.event.inputs.limit || '10' }}"
+
+    - name: Validate EPUBs
+      run: |
+        bash scripts/crawl-validate.sh
+      env:
+        EPUBCHECK_JAR: ${{ env.EPUBCHECK_JAR }}
+
+    - name: Generate report
+      run: |
+        bash scripts/crawl-report.sh --output stress-test/crawl-report.txt
+
+    - name: Upload crawl results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: crawl-results-${{ github.run_number }}
+        path: |
+          stress-test/crawl-manifest.json
+          stress-test/crawl-report.txt
+          stress-test/crawl-results/
+        retention-days: 30
+
+    - name: File issues for discrepancies
+      if: github.event_name == 'schedule'
+      run: |
+        bash scripts/crawl-report.sh --file-issues
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Check for failures
+      run: |
+        python3 -c "
+        import json, sys
+        with open('stress-test/crawl-manifest.json') as f:
+            m = json.load(f)
+        fp = m['summary'].get('false_positives', 0)
+        fn = m['summary'].get('false_negatives', 0)
+        crashes = m['summary'].get('crashes', 0)
+        if fp > 0 or fn > 0 or crashes > 0:
+            print(f'WARNING: {fp} false positives, {fn} false negatives, {crashes} crashes')
+            # Don't fail the workflow for discrepancies — just report them
+            # sys.exit(1)
+        else:
+            print('All EPUBs match!')
+        "
