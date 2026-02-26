@@ -349,6 +349,12 @@ crawl_internetarchive() {
   #
   # If the search API is unavailable, fall back to a curated list of known
   # popular IA identifiers that contain EPUB files.
+  #
+  # NOTE: archive.org is blocked in Claude Code containers (sandbox egress
+  # policy returns HTTP 403, x-block-reason: hostname_blocked). The search
+  # API, metadata API, and download endpoints are all affected. The fallback
+  # list will be used but downloads will also fail. This source works in
+  # GitHub Actions and other unrestricted environments.
   local day_seed
   day_seed=$(date +%j)
   local page=$(( (day_seed * 13) % 200 + 1 ))
