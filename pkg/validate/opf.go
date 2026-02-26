@@ -3512,27 +3512,32 @@ func checkPaginationSourceMetadata(ep *epub.EPUB, pkg *epub.Package, r *report.R
 		return
 	}
 
-	// Check if nav document has a page-list
-	var navHref string
-	for _, item := range pkg.Manifest {
-		if hasProperty(item.Properties, "nav") {
-			navHref = item.Href
-			break
-		}
-	}
-	if navHref == "" {
-		return
-	}
-	navPath := ep.ResolveHref(navHref)
-	data, err := ep.ReadFile(navPath)
-	if err != nil {
-		return
-	}
-	if !navDocHasPageList(data) {
+	// OPF-066 only applies to EDUPUB profile publications.
+	// Check if dc:type element contains "edupub" (case-insensitive).
+	if !epubHasDCType(ep, "edupub") {
 		return
 	}
 
-	// page-list is present — check for dc:source
+	// Check if any content document has epub:type="pagebreak" markers
+	hasPageBreak := false
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		data, err := ep.ReadFile(ep.ResolveHref(item.Href))
+		if err != nil {
+			continue
+		}
+		if contentHasPageBreak(data) {
+			hasPageBreak = true
+			break
+		}
+	}
+	if !hasPageBreak {
+		return
+	}
+
+	// page break markers are present — check for dc:source
 	if len(pkg.Metadata.Sources) == 0 {
 		r.Add(report.Error, "OPF-066",
 			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
@@ -3551,6 +3556,69 @@ func checkPaginationSourceMetadata(ep *epub.EPUB, pkg *epub.Package, r *report.R
 		r.Add(report.Error, "OPF-066",
 			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
 	}
+}
+
+// epubHasDCType checks if the OPF contains a dc:type element with the given value.
+func epubHasDCType(ep *epub.EPUB, dcType string) bool {
+	if ep.RootfilePath == "" {
+		return false
+	}
+	data, err := ep.ReadFile(ep.RootfilePath)
+	if err != nil {
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	dcNS := "http://purl.org/dc/elements/1.1/"
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "type" && (se.Name.Space == dcNS || se.Name.Space == "") {
+			// Read text content
+			var content string
+			for {
+				inner, err := decoder.Token()
+				if err != nil {
+					break
+				}
+				if cd, ok := inner.(xml.CharData); ok {
+					content += string(cd)
+				} else if _, ok := inner.(xml.EndElement); ok {
+					break
+				}
+			}
+			if strings.EqualFold(strings.TrimSpace(content), dcType) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// contentHasPageBreak checks if an XHTML document contains epub:type="pagebreak".
+func contentHasPageBreak(data []byte) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && containsToken(attr.Value, "pagebreak") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // OPF-067: a resource listed as a metadata <link> must not also be a manifest item

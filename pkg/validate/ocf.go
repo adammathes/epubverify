@@ -103,8 +103,7 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// file paths should not exceed 65535 bytes
 	checkFilenameLength(ep, r)
 
-	// RSC-019: multi-rendition EPUBs should have a META-INF/metadata.xml
-	checkMultiRenditionMetadata(ep, r)
+	// RSC-019: moved to after OPF parse (needs version info)
 
 	return fatal
 }
@@ -926,8 +925,19 @@ func readZipFile(f *zip.File) ([]byte, error) {
 
 // RSC-019: EPUBs with Multiple Renditions should contain a META-INF/metadata.xml file.
 func checkMultiRenditionMetadata(ep *epub.EPUB, r *report.Report) {
-	if len(ep.AllRootfiles) <= 1 {
-		return // Single rendition, no check needed
+	// Count OPF-typed rootfiles (multiple OPF rootfiles = multi-rendition)
+	opfCount := 0
+	for _, rf := range ep.AllRootfiles {
+		if rf.MediaType == "application/oebps-package+xml" {
+			opfCount++
+		}
+	}
+	if opfCount <= 1 {
+		return // Not multi-rendition
+	}
+	// Only applicable to EPUB 3
+	if ep.Package != nil && ep.Package.Version < "3.0" {
+		return
 	}
 	// Check if metadata.xml exists
 	if _, exists := ep.Files["META-INF/metadata.xml"]; !exists {
