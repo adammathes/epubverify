@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<search-key-map xmlns="http://www.idpf.org/2007/ops" xml:lang="en">
+  <search-key-group href="content_001.xhtml#e1">
+    <match value="Test"/>
+  </search-key-group>
+  <search-key-group href="content_002.xhtml#e2">
+    <match value="Test2"/>
+  </search-key-group>
+</search-key-map>

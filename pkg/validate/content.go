@@ -113,6 +113,9 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		// HTM-003: empty href attributes
 		checkEmptyHrefAttributes(data, fullPath, r)
 
+		// HTM-045: empty href encountered (usage hint for self-references)
+		checkEmptyHrefUsage(data, fullPath, r)
+
 		// HTM-004: no obsolete elements
 		checkNoObsoleteElements(data, fullPath, r)
 
@@ -187,6 +190,16 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
 			// RSC-014: hyperlinks to SVG symbol elements are not allowed
 			checkSVGSymbolLinks(data, fullPath, r)
+		}
+
+		// HTM-052: region-based property only allowed on data-nav documents
+		if ep.Package.Version >= "3.0" && !hasProperty(item.Properties, "data-nav") {
+			checkRegionBasedProperty(data, fullPath, r)
+		}
+
+		// HTM-051: EDUPUB microdata without RDFa warning
+		if ep.Package.Version >= "3.0" && epubHasDCType(ep, "edupub") {
+			checkMicrodataWithoutRDFa(data, fullPath, r)
 		}
 
 		// HTM-016: unique IDs within content document
@@ -2171,6 +2184,94 @@ func checkEmptyHrefAttributes(data []byte, location string, r *report.Report) {
 				}
 			}
 		}
+	}
+}
+
+// HTM-052: the "region-based" epub:type is only allowed on nav elements
+// in Data Navigation Documents (items with the "data-nav" property).
+func checkRegionBasedProperty(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && containsToken(attr.Value, "region-based") {
+				r.AddWithLocation(report.Error, "HTM-052",
+					`The property "region-based" is only allowed on nav elements in Data Navigation Documents`,
+					location)
+				return
+			}
+		}
+	}
+}
+
+// HTM-045: report empty href attribute as usage (self-reference hint).
+// In epubcheck this is reported on any element with href="" (a, area, link, etc.)
+func checkEmptyHrefUsage(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "href" && attr.Value == "" {
+				r.AddWithLocation(report.Usage, "HTM-045",
+					"Encountered empty href",
+					location)
+				return // report once per document
+			}
+		}
+	}
+}
+
+// HTM-051: Microdata attributes found without RDFa (EDUPUB recommendation).
+// Reports once per document if microdata attributes (itemscope, itemprop, itemtype)
+// are found but no RDFa attributes (vocab, typeof, property, about, resource, prefix).
+func checkMicrodataWithoutRDFa(data []byte, location string, r *report.Report) {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	hasMicrodata := false
+	hasRDFa := false
+	rdfaAttrs := map[string]bool{
+		"vocab": true, "typeof": true, "property": true,
+		"about": true, "resource": true, "prefix": true,
+	}
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			switch attr.Name.Local {
+			case "itemscope", "itemprop", "itemtype", "itemid", "itemref":
+				hasMicrodata = true
+			}
+			if rdfaAttrs[attr.Name.Local] {
+				hasRDFa = true
+			}
+		}
+		if hasMicrodata && hasRDFa {
+			return // both present, no warning
+		}
+	}
+	if hasMicrodata && !hasRDFa {
+		r.AddWithLocation(report.Warning, "HTM-051",
+			"Found Microdata semantic enrichments but no RDFa. EDUPUB recommends using RDFa Lite",
+			location)
 	}
 }
 

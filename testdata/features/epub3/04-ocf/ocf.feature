@@ -397,3 +397,12 @@ Feature: EPUB 3 — Open Container Format
     When checking EPUB 'ocf-obfuscation-not-font-error'
     Then error PKG-026 is reported
     And no errors or warnings are reported
+
+
+  ## Multi-rendition
+
+  Scenario: Report multi-rendition EPUB without metadata.xml
+    When checking EPUB 'multi-rendition-no-metadata-warning'
+    Then warning RSC-019 is reported
+    And error PKG-013 is reported
+    And no other errors or warnings are reported

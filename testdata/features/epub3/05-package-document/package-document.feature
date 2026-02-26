@@ -852,3 +852,87 @@ Feature: EPUB 3 — Package document
     Given the reporting level set to USAGE
     When checking EPUB 'package-ncx-missing-references-to-spine-valid'
     Then no errors or warnings are reported
+
+
+  ## Unreferenced manifest items
+
+  Scenario: Report manifest items that are not referenced from any content document
+    Given the reporting level is set to usage
+    When checking EPUB 'pkg-unreferenced-manifest-item-usage'
+    Then usage OPF-097 is reported
+    And no other usages are reported
+    And no other errors or warnings are reported
+
+
+  ## Collection checks
+
+  Scenario: Report index collection containing non-XHTML resource
+    When checking EPUB 'pkg-index-collection-non-xhtml-error'
+    Then error OPF-071 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report preview collection containing non-content-document resource
+    When checking EPUB 'pkg-preview-collection-non-content-error'
+    Then error OPF-075 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report preview collection link with EPUBCFI fragment
+    When checking EPUB 'pkg-preview-collection-epubcfi-error'
+    Then error OPF-076 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report Data Navigation Document in spine
+    When checking EPUB 'pkg-data-nav-in-spine-warning'
+    Then warning OPF-077 is reported
+    And no other errors or warnings are reported
+
+
+  ## Dictionary collection checks
+
+  Scenario: Report dictionary collection with multiple Search Key Maps
+    When checking EPUB 'pkg-dict-multiple-skm-error'
+    Then error OPF-082 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection with no Search Key Map
+    When checking EPUB 'pkg-dict-no-skm-error'
+    Then error OPF-083 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection with invalid resource type
+    When checking EPUB 'pkg-dict-invalid-resource-error'
+    Then error OPF-084 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary content without dc:type declaration
+    When checking EPUB 'pkg-dict-no-dctype-warning'
+    Then warning OPF-079 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report Search Key Map with wrong file extension
+    When checking EPUB 'pkg-skm-wrong-extension-warning'
+    Then warning OPF-080 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection without dictionary content
+    When checking EPUB 'pkg-dict-no-dict-content-error'
+    Then error OPF-078 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report dictionary collection resource not found in manifest
+    When checking EPUB 'pkg-dict-resource-not-found-error'
+    Then error OPF-081 is reported
+    And no other errors or warnings are reported
+
+  Scenario: Report Search Key Map reference not in spine
+    When checking EPUB 'pkg-skm-not-in-spine-error'
+    Then error RSC-021 is reported
+    And no other errors or warnings are reported
+
+
+  ## Pagination metadata
+
+  Scenario: Report missing pagination source metadata when page-list is present
+    When checking EPUB 'pkg-pagination-no-source-error'
+    Then error OPF-066 is reported
+    And no other errors or warnings are reported

@@ -121,8 +121,16 @@ Feature: EPUB 3 — Content Documents — CSS
     When checking EPUB 'content-css-font-size-valid'
     Then no errors or warnings are reported
 
-  Scenario: Verify a fragment-only URL does not trigger a "fragment not defined" error 
+  Scenario: Verify a fragment-only URL does not trigger a "fragment not defined" error
     When checking EPUB 'content-css-url-fragment-valid'
     Then no errors or warnings are reported
 
+  ##### CSS position:fixed
+
+  Scenario: Report CSS position:fixed as usage
+    Given the reporting level is set to usage
+    When checking EPUB 'content-css-position-fixed-usage'
+    Then usage CSS-006 is reported
+    And no other usages are reported
+    And no other errors or warnings are reported
 

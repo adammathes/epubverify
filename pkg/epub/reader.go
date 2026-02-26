@@ -286,6 +286,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 	}
 
 	depth := 0 // track nesting to detect direct children of <package>
+	var collectionDepths []int // stack of depths at which collections were opened
 	knownPackageChildren := map[string]bool{
 		"metadata": true, "manifest": true, "spine": true, "guide": true,
 		"bindings": true, "collection": true,
@@ -300,8 +301,12 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 			return nil, err
 		}
 
-		switch tok.(type) {
+		switch t := tok.(type) {
 		case xml.EndElement:
+			// Pop collection from stack when its element closes
+			if t.Name.Local == "collection" && len(collectionDepths) > 0 {
+				collectionDepths = collectionDepths[:len(collectionDepths)-1]
+			}
 			depth--
 			continue
 		default:
@@ -397,6 +402,7 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 				Role:     role,
 				TopLevel: depth == 1,
 			})
+			collectionDepths = append(collectionDepths, depth)
 		case "itemref":
 			var idref, props, linear string
 			for _, attr := range se.Attr {
@@ -494,7 +500,14 @@ func scanOPFStructure(data []byte) (*opfStructInfo, error) {
 					linkProps = attr.Value
 				}
 			}
-			if href != "" || rel != "" {
+			// If inside a collection, attach link to the most recent collection
+			// (and don't treat it as a metadata link)
+			if len(collectionDepths) > 0 && href != "" {
+				idx := len(info.collections) - 1
+				if idx >= 0 {
+					info.collections[idx].Links = append(info.collections[idx].Links, href)
+				}
+			} else if href != "" || rel != "" {
 				info.metadataLinks = append(info.metadataLinks, MetadataLink{
 					Href:       href,
 					Rel:        rel,

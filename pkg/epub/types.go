@@ -163,5 +163,6 @@ type GuideReference struct {
 // Collection represents a <collection> element in the OPF package document.
 type Collection struct {
 	Role     string
-	TopLevel bool // true if this is a direct child of <package>
+	TopLevel bool     // true if this is a direct child of <package>
+	Links    []string // href attributes from child <link> elements
 }

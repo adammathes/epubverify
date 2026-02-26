@@ -61,3 +61,10 @@ Feature: EPUB 2 ▸ Navigation ▸ Full Publication Checks
     When checking EPUB 'ncx-uid-mismatch-error'
     Then error NCX-001 is reported
     And no other errors or warnings are reported
+
+  Scenario: Report NCX dtb:uid with leading or trailing whitespace
+    Given the reporting level is set to usage
+    When checking EPUB 'ncx-uid-whitespace-usage'
+    Then usage NCX-004 is reported
+    And no other usages are reported
+    And no other errors or warnings are reported

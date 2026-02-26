@@ -75,6 +75,11 @@ func ValidateWithOptions(epubPath string, opts Options) (*report.Report, error) 
 		return r, nil
 	}
 
+	// RSC-019: multi-rendition EPUBs should have metadata.xml (needs OPF version)
+	if !opts.SingleFileMode {
+		checkMultiRenditionMetadata(ep, r)
+	}
+
 	if !opts.SingleFileMode {
 		// Phase 3: Cross-reference checks
 		checkReferences(ep, r, opts)

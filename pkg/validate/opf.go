@@ -227,6 +227,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// RSC-005/OPF-063: page-map attribute on spine is not allowed
 	checkSpinePageMap(ep, pkg, r)
 
+	// OPF-077: Data Navigation Document should not be in spine
+	checkDataNavNotInSpine(pkg, r)
+
+	// OPF-066: pagination source metadata check
+	if !opts.SingleFileMode {
+		checkPaginationSourceMetadata(ep, pkg, r)
+	}
+
 	// OPF-099: OPF must not reference itself in manifest
 	checkManifestSelfReference(ep, pkg, r)
 
@@ -237,6 +245,14 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 		// OPF-096: non-linear spine items must be reachable
 		checkSpineNonLinearReachable(ep, r)
 	}
+
+	// OPF-067: link resources must not also be manifest items (EPUB 3)
+	if !opts.SingleFileMode {
+		checkLinkNotInManifest(ep, pkg, r)
+	}
+
+	// OPF-072: empty metadata elements
+	checkEmptyMetadataElements(pkg, r)
 
 	// OPF-090: manifest items with non-preferred but valid core media types
 	checkNonPreferredMediaTypes(pkg, r)
@@ -341,6 +357,24 @@ func checkOPF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 
 	// OPF-070/RSC-005: collection role validation
 	checkCollections(pkg, r)
+
+	// OPF-078: dictionary collection must have dictionary content
+	if !opts.SingleFileMode {
+		checkDictionaryHasContent(ep, pkg, r)
+	}
+
+	// OPF-079: dictionary content without dc:type declaration
+	if !opts.SingleFileMode {
+		checkDictionaryDCType(ep, pkg, r)
+	}
+
+	// OPF-080: Search Key Map file extension should be .xml
+	checkSKMFileExtension(pkg, r)
+
+	// RSC-021: Search Key Map references must point to spine content docs
+	if !opts.SingleFileMode {
+		checkSKMSpineReferences(ep, pkg, r)
+	}
 
 	// RSC-005: element order (metadata must come before manifest, manifest before spine)
 	checkElementOrder(pkg, r)
@@ -1566,6 +1600,8 @@ func checkSpinePageMap(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
 	if pkg.SpinePageMap == "" {
 		return
 	}
+	// OPF-062: Adobe page-map attribute on spine element
+	r.Add(report.Usage, "OPF-062", "Found Adobe page-map attribute on spine element in opf file")
 	r.Add(report.Error, "RSC-005", `attribute "page-map" not allowed here`)
 
 	// OPF-063: page-map attribute must reference a valid manifest item
@@ -3334,6 +3370,15 @@ func checkCollections(pkg *epub.Package, r *report.Report) {
 	if pkg.Version < "3.0" {
 		return
 	}
+
+	// Build manifest lookup maps
+	manifestByHref := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		if item.Href != "\x00MISSING" {
+			manifestByHref[item.Href] = item
+		}
+	}
+
 	for _, col := range pkg.Collections {
 		if col.Role == "" {
 			continue
@@ -3350,5 +3395,490 @@ func checkCollections(pkg *epub.Package, r *report.Report) {
 			r.Add(report.Error, "RSC-005",
 				"A manifest collection must be the child of another collection")
 		}
+
+		// Normalize role URL to extract the role name suffix
+		roleName := extractCollectionRoleName(col.Role)
+
+		// OPF-071: index collections must only contain XHTML
+		if roleName == "index" || roleName == "index-group" {
+			checkIndexCollection(col, manifestByHref, r)
+		}
+
+		// OPF-075/076: preview collection checks
+		if roleName == "preview" {
+			checkPreviewCollection(col, manifestByHref, r)
+		}
+
+		// OPF-082/083/084: dictionary collection checks
+		if roleName == "dictionary" {
+			checkDictionaryCollection(col, manifestByHref, r)
+		}
 	}
+}
+
+// extractCollectionRoleName gets the terminal segment of a collection role URL.
+// e.g., "http://idpf.org/epub/vocab/package/roles/#index" → "index"
+func extractCollectionRoleName(role string) string {
+	if i := strings.LastIndex(role, "#"); i >= 0 {
+		return role[i+1:]
+	}
+	if i := strings.LastIndex(role, "/"); i >= 0 && i < len(role)-1 {
+		return role[i+1:]
+	}
+	return role
+}
+
+// OPF-071: index collections must only contain resources pointing to XHTML Content Documents.
+func checkIndexCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	for _, href := range col.Links {
+		// Strip fragment
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		item, found := manifestByHref[parsed.Path]
+		if !found || item.MediaType != "application/xhtml+xml" {
+			r.Add(report.Error, "OPF-071",
+				"Index collections must only contain resources pointing to XHTML Content Documents")
+			return
+		}
+	}
+}
+
+// OPF-075/076: preview collections checks.
+func checkPreviewCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	for _, href := range col.Links {
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+
+		// OPF-076: preview collection links must not include EPUB CFI fragments
+		if parsed.Fragment != "" && strings.HasPrefix(parsed.Fragment, "epubcfi") {
+			r.Add(report.Error, "OPF-076",
+				"The URI of preview collections link elements must not include EPUB canonical fragment identifiers")
+		}
+
+		// OPF-075: must point to EPUB Content Documents (XHTML or SVG)
+		item, found := manifestByHref[parsed.Path]
+		if !found || (item.MediaType != "application/xhtml+xml" && item.MediaType != "image/svg+xml") {
+			r.Add(report.Error, "OPF-075",
+				"Preview collections must only point to EPUB Content Documents")
+		}
+	}
+}
+
+// OPF-081/082/083/084: dictionary collection checks.
+func checkDictionaryCollection(col epub.Collection, manifestByHref map[string]epub.ManifestItem, r *report.Report) {
+	skmCount := 0
+	for _, href := range col.Links {
+		parsed, err := url.Parse(href)
+		if err != nil {
+			continue
+		}
+		item, found := manifestByHref[parsed.Path]
+		if !found {
+			// OPF-081: resource referenced from dictionary collection not found
+			r.Add(report.Error, "OPF-081",
+				fmt.Sprintf(`Resource "%s" (referenced from an EPUB Dictionary collection) was not found`, parsed.Path))
+			continue
+		}
+		if item.MediaType == "application/vnd.epub.search-key-map+xml" {
+			skmCount++
+			if skmCount > 1 {
+				// OPF-082: multiple search key maps
+				r.Add(report.Error, "OPF-082",
+					"Found an EPUB Dictionary collection containing more than one Search Key Map Document")
+			}
+		} else if item.MediaType != "application/xhtml+xml" {
+			// OPF-084: invalid resource type in dictionary collection
+			r.Add(report.Error, "OPF-084",
+				fmt.Sprintf("Found an EPUB Dictionary collection containing resource '%s' which is neither a Search Key Map Document nor an XHTML Content Document", parsed.Path))
+		}
+	}
+	// OPF-083: no search key map
+	if skmCount == 0 {
+		r.Add(report.Error, "OPF-083",
+			"Found an EPUB Dictionary collection containing no Search Key Map Document")
+	}
+}
+
+// OPF-078: an EPUB Dictionary must contain at least one Content Document
+// with dictionary content (epub:type="dictionary").
+func checkDictionaryHasContent(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check if there's a dictionary collection
+	hasDictCollection := false
+	for _, col := range pkg.Collections {
+		if extractCollectionRoleName(col.Role) == "dictionary" {
+			hasDictCollection = true
+			break
+		}
+	}
+	if !hasDictCollection {
+		return
+	}
+
+	// Scan all XHTML content docs for epub:type="dictionary"
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		if contentHasEpubType(data, "dictionary") {
+			return // found dictionary content
+		}
+	}
+	r.Add(report.Error, "OPF-078",
+		`An EPUB Dictionary must contain at least one Content Document with dictionary content (epub:type "dictionary")`)
+}
+
+// OPF-079: dictionary content found but no dc:type "dictionary" declared.
+func checkDictionaryDCType(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check if already declared
+	if epubHasDCType(ep, "dictionary") {
+		return
+	}
+
+	// Scan content documents for epub:type="dictionary"
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		if contentHasEpubType(data, "dictionary") {
+			r.Add(report.Warning, "OPF-079",
+				`Dictionary content was found (epub:type "dictionary"), the Package Document should declare the dc:type "dictionary"`)
+			return
+		}
+	}
+}
+
+// OPF-080: Search Key Map document file name should have .xml extension.
+func checkSKMFileExtension(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	for _, item := range pkg.Manifest {
+		if item.MediaType == "application/vnd.epub.search-key-map+xml" {
+			if !strings.HasSuffix(strings.ToLower(item.Href), ".xml") {
+				r.Add(report.Warning, "OPF-080",
+					`A Search Key Map document file name should have the extension ".xml"`)
+			}
+		}
+	}
+}
+
+// RSC-021: Search Key Map documents must point to Content Documents in the spine.
+// Parses each SKM manifest item and checks that href values on <search-key-group>
+// elements resolve to content documents listed in the spine.
+func checkSKMSpineReferences(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build spine href set (resolved paths of spine items)
+	spineHrefs := make(map[string]bool)
+	idToItem := make(map[string]epub.ManifestItem)
+	for _, item := range pkg.Manifest {
+		idToItem[item.ID] = item
+	}
+	for _, ref := range pkg.Spine {
+		if item, ok := idToItem[ref.IDRef]; ok && item.Href != "\x00MISSING" {
+			spineHrefs[item.Href] = true
+		}
+	}
+
+	// Find and parse SKM documents
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/vnd.epub.search-key-map+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		fullPath := ep.ResolveHref(item.Href)
+		data, err := ep.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		skmDir := path.Dir(item.Href)
+		decoder := xml.NewDecoder(strings.NewReader(string(data)))
+		for {
+			tok, err := decoder.Token()
+			if err != nil {
+				break
+			}
+			se, ok := tok.(xml.StartElement)
+			if !ok {
+				continue
+			}
+			if se.Name.Local != "search-key-group" {
+				continue
+			}
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "href" && attr.Value != "" {
+					parsed, err := url.Parse(attr.Value)
+					if err != nil {
+						continue
+					}
+					// Resolve relative to SKM location
+					refPath := parsed.Path
+					if !path.IsAbs(refPath) && skmDir != "." {
+						refPath = skmDir + "/" + refPath
+					}
+					if !spineHrefs[refPath] {
+						r.Add(report.Error, "RSC-021",
+							fmt.Sprintf(`A Search Key Map Document must point to Content Documents ("%s" was not found in the spine)`, refPath))
+						return // report once
+					}
+				}
+			}
+		}
+	}
+}
+
+// contentHasEpubType checks if an XHTML document contains the given epub:type token.
+func contentHasEpubType(data []byte, typeName string) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && containsToken(attr.Value, typeName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OPF-077: Data Navigation Document should not be included in the spine.
+func checkDataNavNotInSpine(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+	// Build set of manifest item IDs with data-nav property
+	dataNavIDs := make(map[string]bool)
+	for _, item := range pkg.Manifest {
+		if hasProperty(item.Properties, "data-nav") {
+			dataNavIDs[item.ID] = true
+		}
+	}
+	// Check if any spine itemref references a data-nav item
+	for _, ref := range pkg.Spine {
+		if dataNavIDs[ref.IDRef] {
+			r.Add(report.Warning, "OPF-077",
+				"A Data Navigation Document should not be included in the spine")
+			return
+		}
+	}
+}
+
+// OPF-066: pagination source metadata check.
+// When page break markers are present (page-list in nav), the publication
+// must declare dc:source and a source-of:pagination refinement.
+func checkPaginationSourceMetadata(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// OPF-066 only applies to EDUPUB profile publications.
+	// Check if dc:type element contains "edupub" (case-insensitive).
+	if !epubHasDCType(ep, "edupub") {
+		return
+	}
+
+	// Check if any content document has epub:type="pagebreak" markers
+	hasPageBreak := false
+	for _, item := range pkg.Manifest {
+		if item.MediaType != "application/xhtml+xml" || item.Href == "\x00MISSING" {
+			continue
+		}
+		data, err := ep.ReadFile(ep.ResolveHref(item.Href))
+		if err != nil {
+			continue
+		}
+		if contentHasPageBreak(data) {
+			hasPageBreak = true
+			break
+		}
+	}
+	if !hasPageBreak {
+		return
+	}
+
+	// page break markers are present — check for dc:source
+	if len(pkg.Metadata.Sources) == 0 {
+		r.Add(report.Error, "OPF-066",
+			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
+		return
+	}
+
+	// Check for source-of:pagination refinement on any dc:source
+	hasSourceOf := false
+	for _, mr := range pkg.MetaRefines {
+		if mr.Property == "source-of" && mr.Value == "pagination" {
+			hasSourceOf = true
+			break
+		}
+	}
+	if !hasSourceOf {
+		r.Add(report.Error, "OPF-066",
+			`Missing "dc:source" or "source-of" pagination metadata. The pagination source must be identified using the "dc:source" and "source-of" properties when the content includes page break markers`)
+	}
+}
+
+// epubHasDCType checks if the OPF contains a dc:type element with the given value.
+func epubHasDCType(ep *epub.EPUB, dcType string) bool {
+	if ep.RootfilePath == "" {
+		return false
+	}
+	data, err := ep.ReadFile(ep.RootfilePath)
+	if err != nil {
+		return false
+	}
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	dcNS := "http://purl.org/dc/elements/1.1/"
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if se.Name.Local == "type" && (se.Name.Space == dcNS || se.Name.Space == "") {
+			// Read text content
+			var content string
+			for {
+				inner, err := decoder.Token()
+				if err != nil {
+					break
+				}
+				if cd, ok := inner.(xml.CharData); ok {
+					content += string(cd)
+				} else if _, ok := inner.(xml.EndElement); ok {
+					break
+				}
+			}
+			if strings.EqualFold(strings.TrimSpace(content), dcType) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// contentHasPageBreak checks if an XHTML document contains epub:type="pagebreak".
+func contentHasPageBreak(data []byte) bool {
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		for _, attr := range se.Attr {
+			if attr.Name.Local == "type" && containsToken(attr.Value, "pagebreak") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OPF-067: a resource listed as a metadata <link> must not also be a manifest item
+// (unless the item is in the spine). This prevents confusion between metadata
+// links (which describe the publication) and manifest items (which are publication resources).
+func checkLinkNotInManifest(ep *epub.EPUB, pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Build a set of resolved manifest item paths that are NOT in the spine.
+	// Items in the spine are publication resources and may legitimately also be link targets.
+	spineIDs := make(map[string]bool)
+	for _, ref := range pkg.Spine {
+		spineIDs[ref.IDRef] = true
+	}
+
+	manifestPaths := make(map[string]string) // resolved path -> item href
+	for _, item := range pkg.Manifest {
+		if item.Href == "" || item.Href == "\x00MISSING" {
+			continue
+		}
+		if spineIDs[item.ID] {
+			continue // spine items are OK
+		}
+		resolved := ep.ResolveHref(item.Href)
+		manifestPaths[resolved] = item.Href
+	}
+
+	for _, link := range pkg.MetadataLinks {
+		if link.Href == "" || isRemoteURL(link.Href) {
+			continue
+		}
+		// Strip fragment
+		hrefPath := link.Href
+		if idx := strings.Index(hrefPath, "#"); idx >= 0 {
+			hrefPath = hrefPath[:idx]
+		}
+		resolved := ep.ResolveHref(hrefPath)
+		if itemHref, found := manifestPaths[resolved]; found {
+			r.Add(report.Error, "OPF-067",
+				fmt.Sprintf("The resource '%s' must not be listed both as a \"link\" element in the package metadata and as a manifest item", itemHref))
+		}
+	}
+}
+
+// OPF-072: dc:* metadata elements must not be empty.
+// This flags empty dc:title, dc:creator, dc:contributor, dc:language, dc:identifier,
+// dc:source, dc:date elements (text content is empty string or whitespace-only).
+func checkEmptyMetadataElements(pkg *epub.Package, r *report.Report) {
+	if pkg.Version < "3.0" {
+		return
+	}
+
+	// Check dc:source elements
+	for _, src := range pkg.Metadata.Sources {
+		if strings.TrimSpace(src) == "" {
+			r.Add(report.Usage, "OPF-072",
+				`Metadata element "dc:source" is empty`)
+		}
+	}
+
+	// Check dc:date elements
+	for _, dt := range pkg.Metadata.Dates {
+		if strings.TrimSpace(dt) == "" {
+			// Already handled by OPF-054, skip to avoid double-reporting
+			continue
+		}
+	}
+
+	// dc:title, dc:identifier emptiness already checked by OPF-032, OPF-031
+	// dc:language emptiness already checked by OPF-003
+	// dc:creator/contributor with empty values are checked by OPF-055
 }

@@ -2,7 +2,7 @@
 
 ## DATE UPDATED
 
-February 25, 2026
+February 26, 2026
 
 ---
 
@@ -12,14 +12,14 @@ February 25, 2026
 
 | Suite | Result | Notes |
 |-------|--------|-------|
-| **Godog BDD scenarios** | 901/902 passing (1 pending) | 100% pass rate on non-pending scenarios |
+| **Godog BDD scenarios** | 923/924 passing (1 pending) | 100% pass rate on non-pending scenarios |
 | **Unit tests** | All passing | 35 doctor tests, 39 content model tests, epub/validate tests |
 | **Stress tests** | 77/77 match epubcheck | Independent real-world EPUBs |
 | **Synthetic EPUBs** | 29/29 match epubcheck | Purpose-built edge cases |
 
 ### Where We Have Confidence
 
-**High confidence — EPUB 3.3 validation core.** The 901 passing BDD scenarios are ported directly from epubcheck's own test suite and cover OCF container checks, OPF package document validation, XHTML/SVG/SMIL content document checks, navigation document validation, CSS checks, media overlay validation, fixed-layout checks, accessibility checks, cross-reference resolution, and encoding detection. The stress test corpus of 77 independently-downloaded real-world EPUBs (from Project Gutenberg, IDPF samples, Standard Ebooks, DAISY, Feedbooks, wareid, readium) all produce the same valid/invalid verdict as epubcheck 5.1.0.
+**High confidence — EPUB 3.3 validation core.** The 923 passing BDD scenarios are ported directly from epubcheck's own test suite and cover OCF container checks, OPF package document validation, XHTML/SVG/SMIL content document checks, navigation document validation, CSS checks, media overlay validation, fixed-layout checks, accessibility checks, cross-reference resolution, encoding detection, EPUB Dictionary/Index/Preview collections, EDUPUB profile checks, and Search Key Map validation. The stress test corpus of 77 independently-downloaded real-world EPUBs (from Project Gutenberg, IDPF samples, Standard Ebooks, DAISY, Feedbooks, wareid, readium) all produce the same valid/invalid verdict as epubcheck 5.1.0.
 
 **High confidence — EPUB 2.0.1 validation.** 7 feature files covering NCX, OCF, OPF, and OPS checks for EPUB 2. The stress test corpus includes EPUB 2 books.
 
@@ -28,6 +28,8 @@ February 25, 2026
 **High confidence — HTML5 content model (RSC-005).** The Tier 1 RelaxNG gap analysis closed 62 of 63 identified gaps. We now enforce: block-in-phrasing (div inside p/h1-h6/span/etc.), restricted children (ul/ol/table/select/dl/hgroup), void element children, table content model, interactive nesting, transparent content model inheritance, figcaption position, and picture structure. Only remaining gap: `<input>` type-specific attribute validation (low priority).
 
 **High confidence — Schematron rule coverage (Tier 2).** The Tier 2 Schematron audit covers all 118 patterns from epubcheck's 10 core .sch files: 167 checks implemented, 13 partial, 0 missing. New checks added: disallowed descendant nesting (address/form/progress/meter/caption/header/footer/label), required ancestors (area→map, img[ismap]→a[href]), bdo dir attribute, SSML ph nesting, duplicate map names, select multiple validation, meta charset uniqueness, link sizes validation, and IDREF attribute checking.
+
+**High confidence — Java code check coverage (Tier 3).** The Tier 3 Java audit covers all 315 MessageId codes defined in epubcheck: 223 implemented (including EPUB Dictionaries, EDUPUB, collections), 9 suppressed (disabled in epubcheck), 83 wontfix (niche/defunct features like DTBook, scripting checks, dead code). See `scripts/java-audit.py` (run with `--json` for machine-readable output).
 
 ### Where We Have Less Confidence
 
@@ -39,7 +41,7 @@ February 25, 2026
 
 ### Progress History
 
-Started at 605/903 (67%) → 826/903 (91.6%) → 867/902 → **901/902 (100% non-pending)**
+Started at 605/903 (67%) → 826/903 (91.6%) → 867/902 → 901/902 → **923/924 (100% non-pending)**
 
 ---
 
@@ -135,7 +137,7 @@ This could run as:
 
 ---
 
-### Proposal 2: Systematic Gap Extraction from Epubcheck's Three Validation Tiers
+### Proposal 2: Systematic Gap Extraction from Epubcheck's Three Validation Tiers ✅ ALL THREE TIERS COMPLETE
 
 **Goal:** Methodically analyze each of epubcheck's three validation tiers — RelaxNG schemas, Schematron rules, and Java code — to identify every check that epubverify doesn't currently implement, prioritize the gaps, and systematically close them.
 
@@ -188,7 +190,7 @@ Audit script (`scripts/schematron-audit.py`) — parses epubcheck's 10 core Sche
 - Cross-referenced with existing godog scenarios and implementation
 - Implemented 8 new check functions for 43 previously-missing XHTML patterns
 - 28 new unit tests, all passing
-- 0 regressions: 901/902 BDD scenarios still passing
+- 0 regressions on initial implementation
 
 **New check functions (Tier 2):**
 
@@ -212,35 +214,77 @@ Audit script (`scripts/schematron-audit.py`) — parses epubcheck's 10 core Sche
 - distributable-object collection: very rare EDUPUB-specific feature
 - Multi-rendition selection/mapping (4): experimental multi-rendition container extensions
 
-**Tier 3: Java Code Analysis**
+**Tier 3: Java Code Analysis** ✅ DONE
 
-The Java code checks are the hardest to audit systematically because they're scattered across many classes. Approach:
+Audit script (`scripts/java-audit.py`) — parses epubcheck's `MessageId.java` (315 message IDs), `DefaultSeverities.java`, and `MessageBundle.properties`, then greps all Java source files for `MessageId.XXX` references to map every error code to its emitting Java class. Cross-references against epubverify's Go source and BDD feature files. **All 315 message IDs accounted for: 223 implemented, 9 suppressed, 83 wontfix, 0 missing.**
 
-1. **Grep for error codes.** Search the epubcheck Java source for every `message(MessageId.XXX)` call. Build a complete list of error codes emitted by Java code (as opposed to schema validation).
-2. **Cross-reference with our implementation.** For each error code, check whether epubverify emits it and whether we have a test for it.
-3. **Categorize gaps.** Group missing error codes by category: cross-reference checks, media type checks, metadata checks, content checks, etc.
-4. **Prioritize.** Focus on error codes that appear in real-world EPUBs (use the stress test corpus).
+**New check functions (Tier 3, Phase 1):**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkLinkNotInManifest` | OPF-067: resource listed as both metadata link and manifest item |
+| `checkEmptyMetadataElements` | OPF-072: empty dc:source metadata elements |
+| `checkCSSFontFaceUsage` | CSS-028: use of @font-face declaration (USAGE report) |
+| `checkSpinePageMap` (extended) | OPF-062: Adobe page-map attribute on spine element |
+
+**New check functions (Tier 3, Phase 2 — Known Gaps Closure):**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkCSSPositionFixed` | CSS-006: `position:fixed` usage (USAGE report) |
+| `checkEmptyHrefUsage` | HTM-045: empty href attribute encountered (USAGE) |
+| `checkRegionBasedProperty` | HTM-052: region-based epub:type on non-data-nav |
+| `checkNCXUIDWhitespace` | NCX-004: dtb:uid leading/trailing whitespace (USAGE) |
+| `checkUnreferencedManifestItems` | OPF-097: unreferenced manifest item (USAGE) |
+| `checkMultiRenditionMetadata` | RSC-019: multi-rendition EPUB missing metadata.xml |
+| `checkPaginationSourceMetadata` | OPF-066: missing pagination source metadata (EDUPUB) |
+| `checkDataNavNotInSpine` | OPF-077: Data Navigation Document in spine |
+| `checkCollections` (extended) | OPF-071/075/076: index, preview collection checks |
+| `checkDictionaryCollection` | OPF-081/082/083/084: dictionary collection validation |
+| `checkDictionaryHasContent` | OPF-078: dictionary collection needs dict content |
+| `checkDictionaryDCType` | OPF-079: dict content without dc:type "dictionary" |
+| `checkSKMFileExtension` | OPF-080: Search Key Map .xml extension |
+| `checkSKMSpineReferences` | RSC-021: SKM must point to spine content docs |
+| `checkMicrodataWithoutRDFa` | HTM-051: microdata without RDFa (EDUPUB) |
 
 **Deliverables:**
+- `scripts/java-audit.py` — comprehensive audit script (run with `--json` for machine-readable output)
+- 19 new check functions total, 22 new BDD scenarios, 0 regressions: 923/924 BDD scenarios passing
 
-- A gap analysis document listing every check we're missing, organized by tier and priority
-- New test fixtures for each identified gap
-- Incremental PRs closing the gaps, starting with the highest-priority items
+**Consolidated known gaps (all tiers):**
 
-**What we already have:**
-- `scripts/schematron-audit.py` — parses schematron, maps to error codes
-- `testdata/fixtures/schematron-audit/` — fixtures from the first audit pass
-- The godog test suite itself — can be queried for which error codes have scenarios
-- The stress test corpus — shows which error codes appear in practice
+The following checks are intentionally skipped. They're grouped by reason so future work can target a category. Codes marked SUPPRESSED are disabled by default in epubcheck itself.
 
-**What we'd need to build:**
-- RelaxNG schema parser/analyzer (could be a Python script similar to the schematron audit)
-- Java code error-code extractor (grep + analysis script)
-- Gap analysis document
-- New test fixtures and scenarios for identified gaps
-- Implementation of missing checks
+**Could implement later (meaningful checks, deprioritized):**
 
-**Estimated scope:** Large. The RelaxNG analysis alone is significant. Best done incrementally — one tier at a time, highest-priority gaps first.
+| Code | Sev | What it checks | Why skipped |
+|------|-----|----------------|-------------|
+| `<input>` types | ERROR | Type-specific attribute validation (13+ variants) | Tier 1 RelaxNG; large surface area, low real-world impact |
+| SVG/MathML models | ERROR | Full SVG/MathML content model enforcement | Tier 1 RelaxNG; complex schemas, rarely triggers |
+| HTM-044 | USAGE | Unused namespace URI declared | Dead code in epubcheck (not actively emitted) |
+
+**NAV-004 note:** Our NAV-004 implements "anchors must contain text" (ERROR), which differs from epubcheck's NAV-004 USAGE check for EDUPUB heading hierarchy. The EDUPUB version requires complex section/heading analysis for a defunct profile — not worth implementing.
+
+**Multi-rendition container (Tier 2 Schematron — experimental spec extension):**
+
+9 OCF metadata patterns + 4 selection/mapping patterns. OPF equivalents exist for single-rendition EPUBs (the common case).
+
+**Dead code / already covered:**
+
+| Code | Why skipped |
+|------|-------------|
+| OPF-011 | Commented out in epubcheck source (dead code); handled by OPF-088 |
+| OPF-021 | DTBook-only href check (DAISY; not EPUB content) |
+| OPF-047 | OEBPS 1.2 syntax info; already detected via `IsLegacyOEBPS12` |
+| PKG-001 | Version mismatch info; handled by OPF-001 |
+| PKG-015 | Unable to read contents; covered by PKG-008 |
+| PKG-018 | File not found; handled by Go `os.Open` |
+| PKG-020 | OPF not found; covered by OPF-002 |
+| RSC-022 | Java version check; not applicable to Go |
+
+**Epubcheck internal (CHK-001 through CHK-007):** Custom message override configuration errors. These are internal to epubcheck's message override system and have no equivalent in epubverify.
+
+**SUPPRESSED in epubcheck (51 codes):** These are disabled by default in epubcheck itself — they defined checks that were later deemed too noisy or not spec-required. Includes all 10 SCP (scripting) codes, 12 CSS property checks, and various HTM/OPF codes. Full list: run `python3 scripts/java-audit.py --json | jq '.messages[] | select(.status=="suppressed" or (.status=="wontfix" and .severity=="SUPPRESSED"))'`.
 
 ---
 
@@ -271,6 +315,32 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 
 ## COMPLETED
 
+### Tier 3 Java Code Analysis — Complete (Proposal 2)
+
+Java code audit script (`scripts/java-audit.py`) — parses epubcheck's `MessageId.java` (315 message IDs), `DefaultSeverities.java` (severity mappings), and `MessageBundle.properties` (message texts). Greps all Java source files for `MessageId.XXX` references to map every error code to its emitting Java class. Cross-references against epubverify Go source and BDD features. **All 315 message IDs accounted for: 223 implemented, 9 suppressed, 83 wontfix, 0 missing.**
+
+**Phase 1 — 4 new check functions:**
+
+| Check | What it catches |
+|-------|----------------|
+| `checkLinkNotInManifest` | OPF-067: resource listed as both metadata link and manifest item |
+| `checkEmptyMetadataElements` | OPF-072: empty dc:source metadata elements |
+| `checkCSSFontFaceUsage` | CSS-028: use of @font-face declaration (USAGE report) |
+| `checkSpinePageMap` (extended) | OPF-062: Adobe page-map attribute on spine element |
+
+**Phase 2 — Known Gaps Closure (22 codes implemented):**
+
+Systematically closed all "Could implement later", "EPUB Dictionaries/Index", and "EDUPUB/defunct profiles" gaps:
+
+- **CSS/Content checks:** CSS-006 (position:fixed), HTM-045 (empty href), HTM-051 (microdata/RDFa), HTM-052 (region-based), NCX-004 (uid whitespace)
+- **Package document:** OPF-066 (pagination source), OPF-077 (data-nav in spine), OPF-097 (unreferenced items), RSC-019 (multi-rendition metadata)
+- **Collections:** OPF-071 (index XHTML), OPF-075 (preview content), OPF-076 (preview CFI)
+- **EPUB Dictionaries:** OPF-078 (dict content), OPF-079 (dict dc:type), OPF-080 (SKM extension), OPF-081 (dict resource), OPF-082 (multiple SKM), OPF-083 (no SKM), OPF-084 (invalid resource), RSC-021 (SKM spine)
+- Enhanced Collection type with Links field; added collection link parsing in OPF reader
+
+- Machine-readable gap analysis: run `python3 scripts/java-audit.py --json`
+- 22 new BDD scenarios, 0 regressions: 923/924 BDD scenarios passing
+
 ### Tier 2 Schematron Rule Analysis — Complete (Proposal 2)
 
 Schematron audit script (`scripts/schematron-audit.py`) — parses epubcheck's 10 core Schematron .sch files covering 118 patterns and 180 individual checks. **All patterns accounted for: 167 implemented, 13 partial, 0 missing.**
@@ -291,7 +361,7 @@ Schematron audit script (`scripts/schematron-audit.py`) — parses epubcheck's 1
 - 28 new unit tests for Schematron checks, all passing
 - 43 XHTML patterns implemented, 13 IDREF patterns mapped to existing checkIDReferences
 - 15 multi-rendition/collection patterns marked wontfix (very niche features, OPF equivalents exist)
-- 0 regressions: 901/902 BDD scenarios still passing
+- 0 regressions on initial implementation
 
 ### Tier 1 RelaxNG Gap Analysis — Complete (Proposal 2)
 
@@ -312,7 +382,7 @@ RelaxNG schema audit script (`scripts/relaxng-audit.py`) — parses epubcheck's 
 
 - 29 unit tests for content model checks, all passing
 - 16 test fixtures in `testdata/fixtures/relaxng-gaps/xhtml/`
-- 0 regressions: 901/902 BDD scenarios still passing
+- 0 regressions on initial implementation
 - Only remaining gap: `<input>` type-specific attribute validation (low priority, 13+ type variants)
 
 ### Validation Engine (PRs #17–#22)
