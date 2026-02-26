@@ -298,6 +298,8 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			checkSelectMultiple(data, fullPath, r)
 			// RSC-005: meta charset at most once
 			checkMetaCharset(data, fullPath, r)
+			// RSC-005: meta must have name, http-equiv, charset, or property
+			checkMetaRequiredAttrs(data, fullPath, r)
 			// RSC-005: link sizes only on rel=icon
 			checkLinkSizes(data, fullPath, r)
 		}
@@ -8027,6 +8029,82 @@ func checkIDRefAttributes(data []byte, location string, r *report.Report) {
 			if foreignDepth > 0 {
 				foreignDepth--
 				continue
+			}
+		}
+	}
+}
+
+// checkMetaRequiredAttrs reports RSC-005 when a <meta> element is missing all
+// of the required grouping attributes: charset, name, http-equiv, or property.
+// A bare <meta content="..."/> is invalid because the content has no key.
+func checkMetaRequiredAttrs(data []byte, location string, r *report.Report) {
+	const xhtmlNS = "http://www.w3.org/1999/xhtml"
+
+	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	foreignDepth := 0
+	inHead := false
+
+	for {
+		tok, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if foreignDepth > 0 {
+				foreignDepth++
+				continue
+			}
+			ns := t.Name.Space
+			if ns != "" && ns != xhtmlNS {
+				foreignDepth = 1
+				continue
+			}
+			name := strings.ToLower(t.Name.Local)
+			if name == "svg" || name == "math" {
+				foreignDepth = 1
+				continue
+			}
+
+			if name == "head" {
+				inHead = true
+			}
+			if name == "body" {
+				return // done scanning head
+			}
+
+			if name == "meta" && inHead {
+				hasCharset := false
+				hasName := false
+				hasHttpEquiv := false
+				hasProperty := false
+				for _, attr := range t.Attr {
+					switch strings.ToLower(attr.Name.Local) {
+					case "charset":
+						hasCharset = true
+					case "name":
+						hasName = true
+					case "http-equiv":
+						hasHttpEquiv = true
+					case "property":
+						hasProperty = true
+					}
+				}
+				if !hasCharset && !hasName && !hasHttpEquiv && !hasProperty {
+					r.AddWithLocation(report.Error, "RSC-005",
+						`element "meta" missing one or more required attributes; expected attribute "name", "http-equiv", "charset", or "property"`,
+						location)
+				}
+			}
+
+		case xml.EndElement:
+			if foreignDepth > 0 {
+				foreignDepth--
+				continue
+			}
+			eName := strings.ToLower(t.Name.Local)
+			if eName == "head" {
+				return // done scanning head
 			}
 		}
 	}
