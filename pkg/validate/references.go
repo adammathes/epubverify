@@ -575,9 +575,10 @@ func checkNavTocSpineLinks(ep *epub.EPUB, navInfo navDocInfo, navPath string, r 
 			continue // file not in manifest, already reported by RSC-007
 		}
 
-		// RSC-010: toc nav links must point to XHTML or SVG content documents
+		// RSC-010: toc nav links must point to XHTML or SVG content documents,
+		// or to resources that are in the spine (e.g., images in pre-paginated EPUBs).
 		isContentDoc := mt == "application/xhtml+xml" || mt == "image/svg+xml"
-		if !isContentDoc {
+		if !isContentDoc && !spineSet[target] {
 			r.AddWithLocation(report.Error, "RSC-010",
 				fmt.Sprintf("The 'toc' nav element links to a resource that is not a Content Document: '%s'", link.href),
 				navPath)
@@ -1000,13 +1001,18 @@ func checkUnreferencedManifestItems(ep *epub.EPUB, r *report.Report) {
 	// Build set of "referenced" manifest paths.
 	referenced := make(map[string]bool)
 
+	// Build ID → href lookup for O(1) resolution (avoids O(n²) nested loops).
+	idToHref := make(map[string]string, len(pkg.Manifest))
+	for _, item := range pkg.Manifest {
+		if item.Href != "\x00MISSING" {
+			idToHref[item.ID] = item.Href
+		}
+	}
+
 	// 1. Spine items are referenced.
 	for _, ref := range pkg.Spine {
-		for _, item := range pkg.Manifest {
-			if item.ID == ref.IDRef {
-				referenced[ep.ResolveHref(item.Href)] = true
-				break
-			}
+		if href, ok := idToHref[ref.IDRef]; ok {
+			referenced[ep.ResolveHref(href)] = true
 		}
 	}
 
@@ -1028,10 +1034,8 @@ func checkUnreferencedManifestItems(ep *epub.EPUB, r *report.Report) {
 	// 5. Manifest fallback chains are references.
 	for _, item := range pkg.Manifest {
 		if item.Fallback != "" {
-			for _, other := range pkg.Manifest {
-				if other.ID == item.Fallback && other.Href != "\x00MISSING" {
-					referenced[ep.ResolveHref(other.Href)] = true
-				}
+			if href, ok := idToHref[item.Fallback]; ok {
+				referenced[ep.ResolveHref(href)] = true
 			}
 		}
 	}

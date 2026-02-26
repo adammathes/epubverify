@@ -42,6 +42,21 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 		spineItemIDs[ref.IDRef] = true
 	}
 
+	// Pre-compute maps used by per-file checks to avoid O(n²) rebuilding.
+	remoteManifestURLs := make(map[string]bool)
+	remoteManifestItems := make(map[string]epub.ManifestItem)
+	manifestByPath := make(map[string]epub.ManifestItem)
+	for _, mItem := range ep.Package.Manifest {
+		if isRemoteURL(mItem.Href) {
+			remoteManifestURLs[mItem.Href] = true
+			remoteManifestItems[mItem.Href] = mItem
+		}
+		if mItem.Href != "\x00MISSING" {
+			manifestByPath[ep.ResolveHref(mItem.Href)] = mItem
+		}
+	}
+	spinePathSet := buildSpinePathSet(ep)
+
 	// Check SVG content documents for remote-resources property
 	for _, item := range ep.Package.Manifest {
 		if item.Href == "\x00MISSING" {
@@ -59,7 +74,7 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 			continue
 		}
 		checkSVGPropertyDeclarations(ep, data, fullPath, item, r)
-		checkNoRemoteResources(ep, data, fullPath, item, r)
+		checkNoRemoteResources(ep, data, fullPath, item, remoteManifestURLs, r)
 
 		// HTM-048: FXL SVG spine items must have viewBox on root svg element
 		if spineItemIDs[item.ID] {
@@ -182,12 +197,12 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 		// RSC-004: no remote resources (img src with http://)
 		// RSC-008: no remote stylesheets
-		checkNoRemoteResources(ep, data, fullPath, item, r)
+		checkNoRemoteResources(ep, data, fullPath, item, remoteManifestURLs, r)
 
 		// HTM-008 / RSC-007: check internal links and resource references
 		// Skip nav document - its links are checked by NAV-003/006/007
 		if !isNav {
-			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, r)
+			checkContentReferences(ep, data, fullPath, item.Href, manifestPaths, remoteManifestItems, manifestByPath, spinePathSet, r)
 			// RSC-014: hyperlinks to SVG symbol elements are not allowed
 			checkSVGSymbolLinks(data, fullPath, r)
 		}
@@ -1491,17 +1506,7 @@ func collectIDs(data []byte) map[string]bool {
 // - Remote audio/video are ALLOWED (just need remote-resources property)
 // - Remote fonts (in CSS/SVG) are ALLOWED
 // - Remote images, iframes, scripts, stylesheets, objects are NOT allowed (RSC-006)
-func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, r *report.Report) {
-	// Build map of remote manifest URLs for RSC-008 checks.
-	remoteManifestURLs := make(map[string]bool)
-	if ep.Package != nil {
-		for _, mItem := range ep.Package.Manifest {
-			if isRemoteURL(mItem.Href) {
-				remoteManifestURLs[mItem.Href] = true
-			}
-		}
-	}
-
+func checkNoRemoteResources(ep *epub.EPUB, data []byte, location string, item epub.ManifestItem, remoteManifestURLs map[string]bool, r *report.Report) {
 	// Detect external base URL (from <base href="..."> or xml:base="...") for RSC-006
 	_, isHTMLBase := detectExternalBaseURL(data)
 
@@ -1734,29 +1739,12 @@ func isNonHTTPSRemote(s string) bool {
 }
 
 // checkContentReferences finds href/src attributes in XHTML and validates them.
-func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref string, manifestPaths map[string]bool, r *report.Report) {
+func checkContentReferences(ep *epub.EPUB, data []byte, fullPath, itemHref string, manifestPaths map[string]bool, remoteManifestItems map[string]epub.ManifestItem, manifestByPath map[string]epub.ManifestItem, spinePathSet map[string]bool, r *report.Report) {
 	decoder := xml.NewDecoder(strings.NewReader(string(data)))
 	itemDir := path.Dir(fullPath)
 
 	// Detect external base URL for RSC-006 (relative paths become remote)
 	externalBase, _ := detectExternalBaseURL(data)
-
-	// Build map of remote manifest URLs (http/https hrefs) for RSC-006 checks on <a> links.
-	remoteManifestItems := make(map[string]epub.ManifestItem)
-	// Build manifest path → media type map for RSC-011
-	manifestByPath := make(map[string]epub.ManifestItem)
-	if ep.Package != nil {
-		for _, mItem := range ep.Package.Manifest {
-			if isRemoteURL(mItem.Href) {
-				remoteManifestItems[mItem.Href] = mItem
-			}
-			if mItem.Href != "\x00MISSING" {
-				manifestByPath[ep.ResolveHref(mItem.Href)] = mItem
-			}
-		}
-	}
-	// Build spine set for RSC-011: content doc hyperlinks must point to spine docs
-	spinePathSet := buildSpinePathSet(ep)
 
 	for {
 		tok, err := decoder.Token()

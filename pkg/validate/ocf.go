@@ -37,10 +37,8 @@ func checkOCF(ep *epub.EPUB, r *report.Report, opts Options) bool {
 	// PKG-005: mimetype must not have extra field in local header
 	checkMimetypeNoExtraField(ep, r)
 
-	// mimetype must be stored, not compressed (strict mode only)
-	if opts.Strict {
-		checkMimetypeStored(ep, r)
-	}
+	// PKG-007: mimetype must be stored, not compressed
+	checkMimetypeStored(ep, r)
 
 	// RSC-002: container.xml must be present
 	if !checkContainerPresent(ep, r) {
@@ -216,14 +214,15 @@ func mimetypeLocalHeaderHasExtra(path string) (bool, error) {
 	return extraLen > 0, nil
 }
 
-// mimetype must be stored, not compressed (strict mode only)
+// PKG-007: mimetype must be stored, not compressed.
 func checkMimetypeStored(ep *epub.EPUB, r *report.Report) {
 	f, exists := ep.Files["mimetype"]
 	if !exists {
 		return
 	}
 	if f.Method != zip.Store {
-		r.Add(report.Error, "PKG-005", "The mimetype file must be stored (not compressed) in the zip archive")
+		r.Add(report.Error, "PKG-007",
+			"Mimetype file should only contain the string \"application/epub+zip\" and should not be compressed.")
 	}
 }
 

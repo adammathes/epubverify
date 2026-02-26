@@ -237,13 +237,13 @@ func checkCSSForbiddenProperties(css string, location string, r *report.Report) 
 	commentRe := regexp.MustCompile(`/\*[\s\S]*?\*/`)
 	css = commentRe.ReplaceAllString(css, "")
 
-	// Match property name at start of a declaration (after whitespace or ;)
-	propRe := regexp.MustCompile(`(?m)(?:^|;)\s*(direction|unicode-bidi)\s*:`)
+	// Match property name at start of a declaration (after {, ;, or line start)
+	propRe := regexp.MustCompile(`(?m)(?:^|[;{])\s*(direction|unicode-bidi)\s*:`)
 	matches := propRe.FindAllStringSubmatch(css, -1)
 	for _, m := range matches {
 		prop := strings.TrimSpace(m[1])
 		r.AddWithLocation(report.Error, "CSS-001",
-			fmt.Sprintf("CSS property '%s' is not allowed in EPUB content documents", prop),
+			fmt.Sprintf("The \"%s\" property must not be included in an EPUB Style Sheet.", prop),
 			location)
 	}
 }
