@@ -70,6 +70,19 @@ Add Gherkin scenarios for doctor mode. Currently only tested via Go unit tests. 
 
 Extend `make bench` to run against the full stress test corpus. Track per-book validation time, memory usage, startup overhead (JVM vs native Go), and batch throughput.
 
+### Expand Crawl Sources
+
+The crawler currently covers Gutenberg, Standard Ebooks, and Feedbooks — all public domain, Western-centric, and mostly well-formed. Add more diverse sources to increase coverage of edge cases:
+
+- **OAPEN** — scholarly open-access EPUBs via OAI-PMH feed. Complex layouts, footnotes, citations.
+- **Internet Archive** — search API (`archive.org/advancedsearch.php`, `mediatype:texts`, `format:epub`). Huge variety, many poorly-formed EPUBs.
+- **Open Library** — lending library EPUBs via Open Library API. Modern publisher output.
+- **ManyBooks.net** — community-contributed EPUBs, varied quality.
+- **Smashwords/Draft2Digital** — indie-published EPUBs with diverse toolchain output.
+- **Non-English OPDS catalogs** — e.g. Gallica (French), Wikisource exports, Asian digital libraries.
+
+Goal: catch edge cases that well-curated sources don't exercise (broken metadata, unusual encodings, exotic CSS, deeply nested TOCs, very large files).
+
 ### Enable Scheduled EPUB Crawl Workflow
 
 The `.github/workflows/epub-crawl.yml` workflow is currently manual-only (`workflow_dispatch`). After manual testing confirms the crawl pipeline works end-to-end, uncomment the `schedule` block to enable weekly automated runs (Sundays 06:00 UTC).
