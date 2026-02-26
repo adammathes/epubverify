@@ -15,11 +15,14 @@ February 26, 2026
 | **Godog BDD scenarios** | 923/924 passing (1 pending) | 100% pass rate on non-pending scenarios |
 | **Unit tests** | All passing | 35 doctor tests, 39 content model tests, epub/validate tests |
 | **Stress tests** | 200+ EPUBs configured (prev 77/77 match) | 5 sources: Gutenberg, IDPF, Standard Ebooks, Feedbooks, EPUB2 |
+| **Crawl stress test** | Infrastructure complete | Crawler, validator, reporter, GH Actions workflow |
 | **Synthetic EPUBs** | 29/29 match epubcheck | Purpose-built edge cases |
 
 ### Where We Have Confidence
 
 **High confidence — EPUB 3.3 validation core.** The 923 passing BDD scenarios are ported directly from epubcheck's own test suite and cover OCF container checks, OPF package document validation, XHTML/SVG/SMIL content document checks, navigation document validation, CSS checks, media overlay validation, fixed-layout checks, accessibility checks, cross-reference resolution, encoding detection, EPUB Dictionary/Index/Preview collections, EDUPUB profile checks, and Search Key Map validation. The stress test corpus of 200+ real-world EPUBs (from Project Gutenberg, IDPF samples, Standard Ebooks, Feedbooks, and EPUB2 variants) is configured for comparison against epubcheck 5.1.0. Previous round of 77 EPUBs matched 100%.
+
+**High confidence — Continuous crawl stress testing.** Automated EPUB discovery and validation pipeline with three components: crawler (Gutenberg, Standard Ebooks, Feedbooks with SHA-256 dedup), validator (compares epubverify vs epubcheck verdicts), and reporter (summary generation, GitHub issue filing). Weekly GitHub Actions workflow for steady-state coverage, manual runs for deep dives.
 
 **High confidence — EPUB 2.0.1 validation.** 7 feature files covering NCX, OCF, OPF, and OPS checks for EPUB 2. The stress test corpus includes EPUB 2 books.
 
@@ -47,237 +50,7 @@ Started at 605/903 (67%) → 826/903 (91.6%) → 867/902 → 901/902 → **923/9
 
 ## APPROVED
 
-### Long-Running EPUB Scouring Stress Test
-
-**Goal:** Create an automated, long-running process that continuously discovers EPUBs on the internet, validates them with both epubverify and epubcheck, and files bugs when discrepancies are found.
-
-**Motivation:** Our current stress test (77 EPUBs) covers a good range of sources but is a point-in-time snapshot. A continuous scouring process would catch regressions, discover new edge cases, and build confidence that epubverify handles the full diversity of real-world EPUBs. We already have most of the infrastructure — download scripts, comparison runner, analysis tools.
-
-**Design:**
-
-The system has three components: a **crawler** that discovers and downloads EPUBs, a **validator** that runs both tools and compares results, and a **reporter** that logs results and files issues.
-
-**1. Crawler (`scripts/epub-crawler.sh` or `cmd/epubcrawl/`)**
-
-Sources to crawl (in order of reliability):
-- **Project Gutenberg** — bulk catalog at `gutenberg.org/cache/epub/feeds/`, thousands of EPUBs. Parse the catalog, download EPUBs we haven't seen before. Rate-limit to 1 request/second.
-- **Standard Ebooks GitHub releases** — each book has a GitHub release with the EPUB. Use the GitHub API to enumerate releases.
-- **OAPEN** — scholarly open-access EPUBs. OAPEN has an OAI-PMH feed and direct download links.
-- **Internet Archive** — search API at `archive.org/advancedsearch.php` with `mediatype:texts` and `format:epub`. Rate-limit carefully.
-- **Open Library** — lending library EPUBs via the Open Library API.
-- **Feedbooks public domain** — catalog at `feedbooks.com/publicdomain`.
-
-Each downloaded EPUB gets a SHA-256 hash. We maintain a manifest (`stress-test/crawl-manifest.json`) tracking:
-```json
-{
-  "sha256": "abc123...",
-  "source_url": "https://gutenberg.org/...",
-  "downloaded_at": "2026-02-25T12:00:00Z",
-  "size_bytes": 123456,
-  "epubcheck_verdict": "valid",
-  "epubverify_verdict": "valid",
-  "match": true,
-  "discrepancy_issue": null
-}
-```
-
-**EPUBs are never committed to the repo.** The manifest tracks what we've tested. EPUBs are stored in a local (gitignored) directory or a cloud bucket.
-
-**2. Validator (`scripts/crawl-validate.sh`)**
-
-For each new EPUB:
-1. Run `epubverify book.epub --json -` and capture output
-2. Run `java -jar epubcheck.jar book.epub --json -` and capture output
-3. Compare verdicts (valid/invalid) and error codes
-4. Log result to the manifest
-
-On discrepancy:
-- If epubverify says VALID but epubcheck says INVALID → **false negative** (we're missing checks). Log the specific error codes we missed.
-- If epubverify says INVALID but epubcheck says VALID → **false positive** (we're over-reporting). This is a bug in epubverify.
-
-**3. Reporter (`scripts/crawl-report.sh`)**
-
-- Generates a summary of all crawl runs: total EPUBs tested, match rate, discrepancies by category
-- For new discrepancies: edits a document in the repo with the EPUB source URL, both validator outputs, and the specific error code differences to review and fix
-- Optionally files an ISSUE in the github repo
-- Optionally: if the discrepancy involves an error code we've seen before, adds a comment to the existing issue instead of creating a new one
-- Optionally: for false negatives, generates a synthetic test fixture that reproduces the issue and adds it to `testdata/synthetic/`
-
-**Workflow Integration:**
-
-This could run as:
-- A **GitHub Actions scheduled workflow** (e.g., weekly) that downloads N new EPUBs, validates, and opens issues
-- A **local long-running script** for deeper testing sessions
-- Both — the scheduled workflow for steady-state coverage, manual runs for deep dives
-
-**What we already have:**
-- `stress-test/download-epubs.sh` — downloads from Gutenberg and IDPF
-- `stress-test/run-comparison.sh` — runs both validators
-- `stress-test/analyze-results.sh` — compares results
-- `stress-test/epub-sources.txt` — URL catalog
-- `cmd/epubcompare/` — Go tool for comparing outputs
-
-**What we'd need to build:**
-- Crawler logic that enumerates sources and discovers new EPUBs
-- Manifest tracking (what we've tested, deduplication by SHA-256)
-- GitHub issue filing (via `gh` CLI)
-- Scheduled GitHub Actions workflow
-- Optional: synthetic fixture generation from discrepancies
-
-**Estimated scope:** Medium. Most infrastructure exists. Main new work is the crawler and the automated issue filing.
-
----
-
-### Systematic Gap Extraction from Epubcheck's Three Validation Tiers ✅ ALL THREE TIERS COMPLETE
-
-**Goal:** Methodically analyze each of epubcheck's three validation tiers — RelaxNG schemas, Schematron rules, and Java code — to identify every check that epubverify doesn't currently implement, prioritize the gaps, and systematically close them.
-
-**Motivation:** We've already had success using the schematron audit (`scripts/schematron-audit.py`) to identify gaps. That audit found checks we were missing and led to new test fixtures. The same approach can be applied more thoroughly to all three tiers.
-
-**Background: Epubcheck's Three Validation Tiers**
-
-Epubcheck validates EPUBs using three complementary mechanisms:
-
-1. **RelaxNG schemas** (`src/main/resources/com/adobe/epubcheck/schema/`): XML grammar validation. These define what elements and attributes are allowed where. Epubcheck uses Jing to validate against these schemas and maps violations to error codes (primarily RSC-005). The schemas cover:
-   - EPUB 2 OPF (`20/`)
-   - EPUB 3 OPF (`30/`)
-   - EPUB 2/3 content documents (XHTML, SVG, DTBook)
-   - NCX, media overlays, OCF container
-   - Custom EPUB extensions of HTML5 (the `epub-xhtml-30.rnc` schema extends the base HTML5 schema with epub-specific attributes)
-
-2. **Schematron rules** (`src/main/resources/com/adobe/epubcheck/schema/`): Semantic constraint checking. These express rules that can't be captured in a grammar — things like "if attribute X is present, attribute Y must also be present" or "element Z must contain at least one child of type W." The schematron rules map to specific epubcheck error codes (OPF-xxx, HTM-xxx, etc.).
-
-3. **Java code** (`src/main/java/com/adobe/epubcheck/`): Programmatic checks. These handle everything the schemas can't — cross-file references, ZIP structure, encoding detection, media type sniffing, complex business logic.
-
-**Approach:**
-
-**Tier 1: RelaxNG Schema Analysis** ✅ DONE
-
-Audit script (`scripts/relaxng-audit.py`) parses epubcheck's 34 .rnc schemas, extracts 115 element definitions and 305 patterns, identified 63 content model gaps — **62 of 63 closed** (PR #27). See `testdata/fixtures/relaxng-gaps/gap-analysis.json` for the full machine-readable report.
-
-**Completed (Phase 1 + Phase 2):**
-- Schema inventory and parser (34 files, 115 elements, 87 content rules)
-- Block-in-phrasing detection: `<div>` in `<p>`, `<table>` in `<span>`, etc.
-- Restricted children: `<ul>`/`<ol>` → `<li>`, `<tr>` → `<td>`/`<th>`, `<select>` → `<option>`, etc.
-- Void element children (br/hr/img with content)
-- Table content model checks
-- dl/hgroup restricted children
-- Interactive nesting (button, input, select nested in `<a>`, etc.)
-- Transparent content model inheritance (a, ins, del, object)
-- Figcaption position checks
-- Picture element structure (source* then img)
-- 29 unit tests, 16 test fixtures, gap analysis JSON report
-
-**Remaining (low priority):**
-- SVG/MathML full content model
-- `<input>` type-specific attribute validation (13+ type variants)
-
-**Tier 2: Schematron Rule Analysis** ✅ DONE
-
-Audit script (`scripts/schematron-audit.py`) — parses epubcheck's 10 core Schematron .sch files, extracts 118 patterns and 180 checks, compares against epubverify implementation. **All 118 patterns accounted for: 167 implemented, 13 partial, 0 missing.**
-
-**Completed:**
-- Complete mapping of all Schematron assertions to KNOWN_CHECKS manifest
-- Cross-referenced with existing godog scenarios and implementation
-- Implemented 8 new check functions for 43 previously-missing XHTML patterns
-- 28 new unit tests, all passing
-- 0 regressions on initial implementation
-
-**New check functions (Tier 2):**
-
-| Check | What it catches |
-|-------|----------------|
-| `checkDisallowedDescendants` | address/form/progress/meter/caption/header/footer/label nesting |
-| `checkRequiredAncestor` | area without map ancestor, img[ismap] without a[href] ancestor |
-| `checkBdoDir` | bdo element missing required dir attribute |
-| `checkSSMLPhNesting` | Nested ssml:ph attributes |
-| `checkDuplicateMapName` | Multiple map elements with same name |
-| `checkSelectMultiple` | Multiple selected options without @multiple |
-| `checkMetaCharset` | More than one meta charset element |
-| `checkLinkSizes` | sizes attribute on link without rel=icon |
-
-**Already-implemented patterns now tracked:**
-- Interactive nesting patterns (a, button, audio, video) — `checkInteractiveNesting`
-- IDREF/IDREFS validation (13 patterns) — existing `checkIDReferences`
-
-**Remaining (wontfix — too niche):**
-- OCF metadata patterns (9): multi-rendition metadata.xml; OPF equivalents exist
-- distributable-object collection: very rare EDUPUB-specific feature
-- Multi-rendition selection/mapping (4): experimental multi-rendition container extensions
-
-**Tier 3: Java Code Analysis** ✅ DONE
-
-Audit script (`scripts/java-audit.py`) — parses epubcheck's `MessageId.java` (315 message IDs), `DefaultSeverities.java`, and `MessageBundle.properties`, then greps all Java source files for `MessageId.XXX` references to map every error code to its emitting Java class. Cross-references against epubverify's Go source and BDD feature files. **All 315 message IDs accounted for: 223 implemented, 9 suppressed, 83 wontfix, 0 missing.**
-
-**New check functions (Tier 3, Phase 1):**
-
-| Check | What it catches |
-|-------|----------------|
-| `checkLinkNotInManifest` | OPF-067: resource listed as both metadata link and manifest item |
-| `checkEmptyMetadataElements` | OPF-072: empty dc:source metadata elements |
-| `checkCSSFontFaceUsage` | CSS-028: use of @font-face declaration (USAGE report) |
-| `checkSpinePageMap` (extended) | OPF-062: Adobe page-map attribute on spine element |
-
-**New check functions (Tier 3, Phase 2 — Known Gaps Closure):**
-
-| Check | What it catches |
-|-------|----------------|
-| `checkCSSPositionFixed` | CSS-006: `position:fixed` usage (USAGE report) |
-| `checkEmptyHrefUsage` | HTM-045: empty href attribute encountered (USAGE) |
-| `checkRegionBasedProperty` | HTM-052: region-based epub:type on non-data-nav |
-| `checkNCXUIDWhitespace` | NCX-004: dtb:uid leading/trailing whitespace (USAGE) |
-| `checkUnreferencedManifestItems` | OPF-097: unreferenced manifest item (USAGE) |
-| `checkMultiRenditionMetadata` | RSC-019: multi-rendition EPUB missing metadata.xml |
-| `checkPaginationSourceMetadata` | OPF-066: missing pagination source metadata (EDUPUB) |
-| `checkDataNavNotInSpine` | OPF-077: Data Navigation Document in spine |
-| `checkCollections` (extended) | OPF-071/075/076: index, preview collection checks |
-| `checkDictionaryCollection` | OPF-081/082/083/084: dictionary collection validation |
-| `checkDictionaryHasContent` | OPF-078: dictionary collection needs dict content |
-| `checkDictionaryDCType` | OPF-079: dict content without dc:type "dictionary" |
-| `checkSKMFileExtension` | OPF-080: Search Key Map .xml extension |
-| `checkSKMSpineReferences` | RSC-021: SKM must point to spine content docs |
-| `checkMicrodataWithoutRDFa` | HTM-051: microdata without RDFa (EDUPUB) |
-
-**Deliverables:**
-- `scripts/java-audit.py` — comprehensive audit script (run with `--json` for machine-readable output)
-- 19 new check functions total, 22 new BDD scenarios, 0 regressions: 923/924 BDD scenarios passing
-
-**Consolidated known gaps (all tiers):**
-
-The following checks are intentionally skipped. They're grouped by reason so future work can target a category. Codes marked SUPPRESSED are disabled by default in epubcheck itself.
-
-**Could implement later (meaningful checks, deprioritized):**
-
-| Code | Sev | What it checks | Why skipped |
-|------|-----|----------------|-------------|
-| `<input>` types | ERROR | Type-specific attribute validation (13+ variants) | Tier 1 RelaxNG; large surface area, low real-world impact |
-| SVG/MathML models | ERROR | Full SVG/MathML content model enforcement | Tier 1 RelaxNG; complex schemas, rarely triggers |
-| HTM-044 | USAGE | Unused namespace URI declared | Dead code in epubcheck (not actively emitted) |
-
-**NAV-004 note:** Our NAV-004 implements "anchors must contain text" (ERROR), which differs from epubcheck's NAV-004 USAGE check for EDUPUB heading hierarchy. The EDUPUB version requires complex section/heading analysis for a defunct profile — not worth implementing.
-
-**Multi-rendition container (Tier 2 Schematron — experimental spec extension):**
-
-9 OCF metadata patterns + 4 selection/mapping patterns. OPF equivalents exist for single-rendition EPUBs (the common case).
-
-**Dead code / already covered:**
-
-| Code | Why skipped |
-|------|-------------|
-| OPF-011 | Commented out in epubcheck source (dead code); handled by OPF-088 |
-| OPF-021 | DTBook-only href check (DAISY; not EPUB content) |
-| OPF-047 | OEBPS 1.2 syntax info; already detected via `IsLegacyOEBPS12` |
-| PKG-001 | Version mismatch info; handled by OPF-001 |
-| PKG-015 | Unable to read contents; covered by PKG-008 |
-| PKG-018 | File not found; handled by Go `os.Open` |
-| PKG-020 | OPF not found; covered by OPF-002 |
-| RSC-022 | Java version check; not applicable to Go |
-
-**Epubcheck internal (CHK-001 through CHK-007):** Custom message override configuration errors. These are internal to epubcheck's message override system and have no equivalent in epubverify.
-
-**SUPPRESSED in epubcheck (51 codes):** These are disabled by default in epubcheck itself — they defined checks that were later deemed too noisy or not spec-required. Includes all 10 SCP (scripting) codes, 12 CSS property checks, and various HTM/OPF codes. Full list: run `python3 scripts/java-audit.py --json | jq '.messages[] | select(.status=="suppressed" or (.status=="wontfix" and .severity=="SUPPRESSED"))'`.
-
----
+(No items currently approved. See PROPOSED for candidates.)
 
 ---
 
@@ -297,6 +70,36 @@ Add Gherkin scenarios for doctor mode. Currently only tested via Go unit tests. 
 
 Extend `make bench` to run against the full stress test corpus. Track per-book validation time, memory usage, startup overhead (JVM vs native Go), and batch throughput.
 
+### Verify New Crawl Sources End-to-End
+
+The Internet Archive and OAPEN crawlers have been implemented but not yet tested against live endpoints (development sandbox blocks outbound requests). Run each source manually against the real APIs and verify:
+
+- `bash scripts/epub-crawler.sh --source internetarchive --limit 5` discovers and downloads EPUBs
+- `bash scripts/epub-crawler.sh --source oapen --limit 5` discovers and downloads EPUBs
+- Downloaded files are valid ZIP/EPUB containers
+- Manifest entries are created correctly
+- `crawl-validate.sh` runs both validators on the new files without errors
+- Static entries in `epub-sources.txt` resolve to real downloadable EPUBs (some may be guessed identifiers)
+
+Fix any URL patterns, API response parsing, or download issues found during live testing.
+
+### Expand Crawl Sources
+
+The crawler currently covers Gutenberg, Standard Ebooks, and Feedbooks — all public domain, Western-centric, and mostly well-formed. Add more diverse sources to increase coverage of edge cases:
+
+- **OAPEN** — scholarly open-access EPUBs via OAI-PMH feed. Complex layouts, footnotes, citations.
+- **Internet Archive** — search API (`archive.org/advancedsearch.php`, `mediatype:texts`, `format:epub`). Huge variety, many poorly-formed EPUBs.
+- **Open Library** — lending library EPUBs via Open Library API. Modern publisher output.
+- **ManyBooks.net** — community-contributed EPUBs, varied quality.
+- **Smashwords/Draft2Digital** — indie-published EPUBs with diverse toolchain output.
+- **Non-English OPDS catalogs** — e.g. Gallica (French), Wikisource exports, Asian digital libraries.
+
+Goal: catch edge cases that well-curated sources don't exercise (broken metadata, unusual encodings, exotic CSS, deeply nested TOCs, very large files).
+
+### Enable Scheduled EPUB Crawl Workflow
+
+The `.github/workflows/epub-crawl.yml` workflow is currently manual-only (`workflow_dispatch`). After manual testing confirms the crawl pipeline works end-to-end, uncomment the `schedule` block to enable weekly automated runs (Sundays 06:00 UTC).
+
 ### CI Integration for Stress Tests
 
 Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compares against cached epubcheck results, and fails if any new disagreements appear.
@@ -304,6 +107,77 @@ Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compare
 ---
 
 ## COMPLETED
+
+### Long-Running EPUB Scouring Stress Test — Complete
+
+Automated EPUB discovery, validation, and discrepancy reporting pipeline with three components and a scheduled GitHub Actions workflow.
+
+**Components:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Crawler** | `scripts/epub-crawler.sh` | Discovers and downloads EPUBs from Gutenberg, Standard Ebooks, Feedbooks |
+| **Validator** | `scripts/crawl-validate.sh` | Runs both epubverify and epubcheck, compares verdicts |
+| **Reporter** | `scripts/crawl-report.sh` | Generates summary reports, files GitHub issues for discrepancies |
+| **CI Workflow** | `.github/workflows/epub-crawl.yml` | Weekly scheduled crawl + validate + report pipeline |
+
+**Crawler features:**
+- SHA-256 deduplication — never re-downloads or re-tests the same EPUB
+- Rate limiting (configurable, default 2s between requests)
+- Respectful User-Agent header
+- JSON manifest tracking (`stress-test/crawl-manifest.json`, gitignored)
+- Day-seed rotation — each day crawls a different range of source IDs
+- EPUBs never committed to repo (stored in gitignored `stress-test/crawl-epubs/`)
+- Dry-run mode for testing
+
+**Validator features:**
+- Runs both epubverify and epubcheck on each EPUB
+- Classifies discrepancies: false positive (epubverify over-reports) vs false negative (epubverify misses errors)
+- Updates manifest with verdicts and match status
+- Handles crashes gracefully
+
+**Reporter features:**
+- Human-readable summary with agreement rates
+- Per-source breakdown
+- Error code frequency analysis
+- False positive/negative detail with specific check IDs
+- GitHub issue filing via `gh` CLI (`--file-issues` flag)
+
+**GitHub Actions workflow:**
+- Weekly schedule (Sundays 06:00 UTC) + manual dispatch
+- Configurable source and limit via workflow inputs
+- Caches manifest across runs
+- Uploads crawl results as artifacts (30-day retention)
+- Automatic issue filing on scheduled runs
+
+**Makefile targets:**
+- `make crawl` — run the crawler
+- `make crawl-validate` — validate crawled EPUBs
+- `make crawl-report` — generate discrepancy report
+- `make crawl-all` — full pipeline
+
+**Testing:**
+- 16 new Go tests in `test/stress/crawl_test.go` validating: script existence, executability, required features (sources, rate limiting, SHA-256, User-Agent), manifest schema roundtrip, workflow schedule, Makefile targets
+- All tests passing alongside existing 7 stress test source tests (23 total)
+
+### Systematic Gap Extraction from Epubcheck's Three Validation Tiers — Complete
+
+All three tiers analyzed and closed. See detailed notes in the APPROVED section history (moved here for reference).
+
+**Summary:**
+- **Tier 1 (RelaxNG):** 62/63 content model gaps closed. 8 new check functions, 29 unit tests.
+- **Tier 2 (Schematron):** 118/118 patterns accounted for (167 implemented, 13 partial). 8 new check functions, 28 unit tests.
+- **Tier 3 (Java):** 315/315 message IDs accounted for (223 implemented, 9 suppressed, 83 wontfix). 19 new check functions, 22 BDD scenarios.
+
+**Audit scripts:** `scripts/relaxng-audit.py`, `scripts/schematron-audit.py`, `scripts/java-audit.py` (all support `--json` for machine-readable output).
+
+**Consolidated known gaps (intentionally skipped):**
+- `<input>` type-specific attributes (13+ variants, low real-world impact)
+- SVG/MathML full content models (complex, rarely triggers)
+- Multi-rendition container patterns (experimental spec extension)
+- 51 codes SUPPRESSED in epubcheck itself
+- 8 dead code / already-covered codes
+- CHK-001 through CHK-007 (epubcheck internal)
 
 ### Increase Real-World EPUB Test Coverage — Complete
 

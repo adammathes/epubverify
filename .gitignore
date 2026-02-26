@@ -3,6 +3,10 @@
 /epubcompare
 stress-test/epubs/
 stress-test/results/
+stress-test/crawl-epubs/
+stress-test/crawl-results/
+stress-test/crawl-manifest.json
+stress-test/crawl-report.txt
 testdata/synthetic/synth_*.epub
 testdata/synthetic/manifest.json
 testdata/synthetic/comparison_results.json
