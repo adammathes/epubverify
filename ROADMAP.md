@@ -15,6 +15,7 @@ February 26, 2026
 | **Godog BDD scenarios** | 923/924 passing (1 pending) | 100% pass rate on non-pending scenarios |
 | **Unit tests** | All passing | 35 doctor tests, 39 content model tests, epub/validate tests |
 | **Stress tests** | 200+ EPUBs configured (prev 77/77 match) | 5 sources: Gutenberg, IDPF, Standard Ebooks, Feedbooks, EPUB2 |
+| **Diverse stress test** | 84 EPUBs from 10+ sources, 73/84 match (86.9%) | KBNL, Thorium, DAISY, Readium, bmaupin, pmstss, Pressbooks, manga, filesamples, hand-crafted edge cases |
 | **Crawl stress test** | 19 EPUBs crawled, 18/19 match (94.7%) | 4 sources live-tested: Gutenberg, Standard Ebooks, Feedbooks, OAPEN |
 | **Synthetic EPUBs** | 29/29 match epubcheck | Purpose-built edge cases |
 
@@ -80,6 +81,16 @@ The crawler currently covers Gutenberg, Standard Ebooks, Feedbooks, OAPEN, and I
 - **Non-English OPDS catalogs** — e.g. Gallica (French), Wikisource exports, Asian digital libraries.
 
 Goal: catch edge cases that well-curated sources don't exercise (broken metadata, unusual encodings, exotic CSS, deeply nested TOCs, very large files).
+
+### Install pandoc and calibre for EPUB generation testing
+
+Install pandoc and calibre (ebook-convert) in the CI/development environment to generate EPUBs from scratch using different toolchains. This would allow testing epubverify against:
+
+- **Pandoc-generated EPUBs** — Pandoc produces EPUB3 from Markdown/HTML/LaTeX with its own internal templates and metadata handling. Known for minimal but correct output.
+- **Calibre-generated EPUBs** — Calibre's ebook-convert produces EPUBs from various input formats (HTML, DOCX, PDF, etc.) with its own post-processing pipeline. Widely used, exercises many edge cases.
+- **Custom-built EPUBs** — Use these tools to create EPUBs with specific edge-case features (MathML via pandoc+LaTeX, complex CSS, multi-language content, etc.) that are hard to find in the wild.
+
+Goal: expand the stress test corpus with toolchain-diverse EPUBs that exercise different code paths than the public domain libraries we already test.
 
 ### Enable Scheduled EPUB Crawl Workflow
 

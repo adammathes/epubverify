@@ -2,6 +2,7 @@
 /epubfuzz
 /epubcompare
 stress-test/epubs/
+stress-test/diverse-epubs/
 stress-test/results/
 stress-test/crawl-epubs/
 stress-test/crawl-results/

@@ -313,3 +313,98 @@ GUTENBERG | https://www.gutenberg.org/ebooks/76.epub.images     | Huckleberry Fi
 GUTENBERG | https://www.gutenberg.org/ebooks/514.epub.images    | Little Women (EPUB2 variant)
 GUTENBERG | https://www.gutenberg.org/ebooks/120.epub.images    | Treasure Island (EPUB2 variant)
 GUTENBERG | https://www.gutenberg.org/ebooks/55.epub.images     | Wizard of Oz (EPUB2 variant)
+
+##############################################################################
+# KBNL RESEARCH — EPUB Policy Tests (https://github.com/KBNLresearch/epubPolicyTests)
+#
+# License: Various open licenses
+# Notes: Purpose-built for institutional preservation policies. Contains EPUBs
+#        with encryption, font obfuscation, DTBook content, foreign resources,
+#        Adobe Page Templates, missing fonts, and deliberately problematic FXL.
+##############################################################################
+
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_minimal.epub | Minimal valid EPUB2
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_minimal_encryption.epub | EPUB2 with encryption.xml
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub30_font_obfuscation.epub | EPUB3 with font obfuscation
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_foreign_resource_no_fallback.epub | JP2 image, no fallback
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_foreign_resource_with_fallback.epub | JP2 image with fallback
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_dtbook.epub | DTBook content inside EPUB
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_xpgt.epub | Adobe XPGT page templates
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_missingfontresource.epub | Missing font resource
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_crazy_fixed_layout.epub | Problematic fixed layout
+KBNL | https://raw.githubusercontent.com/KBNLresearch/epubPolicyTests/master/build/epub20_crazy_columns.epub | Impractical column CSS
+
+##############################################################################
+# THORIUM READER — Rare EPUB Test Suite (https://github.com/edrlab/thorium-reader-epub-tests)
+#
+# License: Various open licenses
+# Notes: EDRLab's rare/uncommon EPUB use cases. Large tables, interactive JS,
+#        accessibility metadata, custom ligatures, CSS edge cases.
+##############################################################################
+
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/large-tables.epub | Large HTML tables stress test
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/Test-hicharts-diagrams.epub | Interactive Highcharts JS
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/a11y_metadata.epub | Accessibility metadata
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/a11y_metadata_2025.epub | 2025 a11y metadata
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/custom-ligatures.epub | Custom typographic ligatures
+THORIUM | https://raw.githubusercontent.com/edrlab/thorium-reader-epub-tests/main/Rare_EPUB_test_suit/stylesfails.epub | CSS style edge cases
+
+##############################################################################
+# DAISY CONSORTIUM — Accessibility Tests (https://github.com/daisy/epub-accessibility-tests)
+#
+# License: Various open licenses
+# Notes: Purpose-built accessibility test EPUBs. ARIA roles, screen reader
+#        navigation, media overlays, MathML accessibility, extended descriptions.
+##############################################################################
+
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/fundamental-2.0/Fundamental-Accessibility-Tests-Basic-Functionality-v2.0.0.epub | Basic a11y functionality
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/non-visual-reading-2.0.1/Fundamental-Accessibility-Tests-Non-Visual-Reading-v2.0.1.epub | Non-visual reading
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/fundamental-2.0/Fundamental-Accessibility-Tests-Visual-Adjustments-v2.0.0.epub | Visual adjustments
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/fundamental-2.0/Fundamental-Accessibility-Tests-Read-Aloud-v2.0.0.epub | Read-aloud / TTS
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/media-overlays-1.0/Advanced-Accessibility-Tests-Media-Overlays-v1.0.0.epub | Media overlays a11y
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/math-extdesc-1.1.1/Accessibility-Tests-Mathematics-v1.1.1.epub | MathML accessibility
+DAISY | https://github.com/daisy/epub-accessibility-tests/releases/download/math-extdesc-1.1.1/Accessibility-Tests-Extended-Descriptions-v1.1.1.epub | Extended image descriptions
+
+##############################################################################
+# READIUM TEST FILES (https://github.com/readium/readium-test-files)
+#
+# License: Various open licenses
+# Notes: Designed to test reading systems with both valid and poorly-formed
+#        content. Smoke tests, FXL tests, MathML conformance.
+##############################################################################
+
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/functional/smoke-tests/SmokeTestFXL/SmokeTestFXL.epub | FXL smoke test
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/functional/smoke-tests/SmokeTest-EPUB2/SmokeTest-EPUB2.epub | EPUB2 smoke test
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/conformance/Tiny-MathML/Tiny-MathML.epub | Minimal MathML conformance
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/test-suite/build/epub30-test-0100.epub | EPUB3 content doc test
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/test-suite/build/epub30-test-0101.epub | EPUB3 test suite
+READIUM | https://raw.githubusercontent.com/readium/readium-test-files/master/test-suite/build/epub30-test-0102.epub | EPUB3 forms/scripting test
+
+##############################################################################
+# BMAUPIN — Minimal EPUB Samples (https://github.com/bmaupin/epub-samples)
+#
+# License: MIT
+# Notes: Intentionally minimal EPUBs. The v3plus2 is especially interesting —
+#        EPUB3 with dual EPUB2 NCX table of contents for backwards compat.
+##############################################################################
+
+BMAUPIN | https://github.com/bmaupin/epub-samples/releases/download/v0.3/minimal-v2.epub | Absolute minimum EPUB2
+BMAUPIN | https://github.com/bmaupin/epub-samples/releases/download/v0.3/minimal-v3.epub | Absolute minimum EPUB3
+BMAUPIN | https://github.com/bmaupin/epub-samples/releases/download/v0.3/minimal-v3plus2.epub | EPUB3 with NCX fallback
+BMAUPIN | https://github.com/bmaupin/epub-samples/releases/download/v0.3/basic-v3plus2.epub | EPUB3+2 with CSS, fonts, cover
+
+##############################################################################
+# MISCELLANEOUS — Security, obfuscation, manga, Pressbooks, filesamples
+##############################################################################
+
+SECURITY | https://raw.githubusercontent.com/johnfactotum/epub-test/master/epub-test.epub | JS, iframes, external resources security test
+PMSTSS | https://raw.githubusercontent.com/pmstss/epub-books/master/wasteland-otf-obf.epub | OTF fonts with IDPF obfuscation
+PMSTSS | https://raw.githubusercontent.com/pmstss/epub-books/master/mathjax_tests.epub | MathJax JS math rendering
+PMSTSS | https://raw.githubusercontent.com/pmstss/epub-books/master/quiz-bindings.epub | EPUB bindings (custom handlers)
+PMSTSS | https://raw.githubusercontent.com/pmstss/epub-books/master/GhV-oeb-page.epub | OEB page format — legacy
+PMSTSS | https://raw.githubusercontent.com/pmstss/epub-books/master/SoftwareWars.epub | Non-standard structure
+MANGA | https://raw.githubusercontent.com/toshiakikoike/comic-epub-sample/master/GiveMyRegards-to-BlackJack1.epub | Japanese manga FXL, RTL page progression
+PRESSBOOKS | https://opentextbc.ca/introductiontosociology/open/download?type=epub | Pressbooks WordPress toolchain
+PRESSBOOKS | https://opentextbc.ca/writingforsuccess/open/download?type=epub | Pressbooks large educational
+FILESAMPLES | https://filesamples.com/samples/ebook/epub/Sway.epub | Unknown provenance
+FILESAMPLES | https://filesamples.com/samples/ebook/epub/Around%20the%20World%20in%2028%20Languages.epub | 28-language multilingual
