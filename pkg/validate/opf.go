@@ -2882,7 +2882,7 @@ func checkMediaOverlayType(pkg *epub.Package, r *report.Report) {
 			continue // handled elsewhere
 		}
 		if target.MediaType != "application/smil+xml" {
-			r.Add(report.Error, "RSC-005",
+			r.Add(report.Error, "OPF-044",
 				fmt.Sprintf("The item referenced by media-overlay must be of the \"application/smil+xml\" type, but \"%s\" is \"%s\"",
 					target.ID, target.MediaType))
 		}
