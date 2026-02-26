@@ -12,7 +12,7 @@
 #   bash scripts/epub-crawler.sh [OPTIONS]
 #
 # Options:
-#   --source SOURCE    Crawl only this source (gutenberg, standardebooks, feedbooks)
+#   --source SOURCE    Crawl only this source (gutenberg, standardebooks, feedbooks, internetarchive, oapen)
 #   --limit N          Download at most N new EPUBs per source (default: 20)
 #   --epub-dir DIR     Directory to store EPUBs (default: stress-test/crawl-epubs)
 #   --manifest FILE    Manifest file path (default: stress-test/crawl-manifest.json)
@@ -20,9 +20,11 @@
 #   --help             Show this help
 #
 # Sources:
-#   gutenberg       — Project Gutenberg catalog (thousands of public domain EPUBs)
-#   standardebooks  — Standard Ebooks GitHub releases (high-quality EPUB3)
-#   feedbooks       — Feedbooks public domain catalog
+#   gutenberg        — Project Gutenberg catalog (thousands of public domain EPUBs)
+#   standardebooks   — Standard Ebooks GitHub releases (high-quality EPUB3)
+#   feedbooks        — Feedbooks public domain catalog
+#   internetarchive  — Internet Archive texts collection (huge variety, many rough)
+#   oapen            — OAPEN scholarly open-access EPUBs (footnotes, citations)
 #
 # Environment variables:
 #   CRAWL_DELAY       Seconds between requests (default: 2)
@@ -316,6 +318,182 @@ crawl_feedbooks() {
   echo "  Feedbooks: downloaded ${count} new EPUBs"
 }
 
+crawl_internetarchive() {
+  echo ""
+  echo "=== Crawling Internet Archive ==="
+  echo ""
+
+  local count=0
+
+  # Strategy: use the Advanced Search API to find items containing EPUB files.
+  # We page through results using the day-of-year as a seed so each run covers
+  # a different slice of the ~millions of text items.
+  local day_seed
+  day_seed=$(date +%j)
+  local page=$(( (day_seed * 13) % 200 + 1 ))
+
+  echo "  Searching page ${page} (day seed=${day_seed})"
+
+  local search_url="https://archive.org/advancedsearch.php?q=mediatype%3Atexts+format%3AEPUB&fl%5B%5D=identifier&sort%5B%5D=downloads+desc&rows=50&page=${page}&output=json"
+  local search_file="${EPUB_DIR}/.ia-search.json"
+
+  if ! curl -sL -o "${search_file}" "${search_url}" \
+       -H "User-Agent: ${UA}" \
+       --connect-timeout 30 \
+       --max-time 60; then
+    echo "  WARN: could not reach Internet Archive search API"
+    return 0
+  fi
+
+  # Extract identifiers from search results
+  local identifiers
+  identifiers=$(python3 -c "
+import json, sys
+try:
+    with open('${search_file}') as f:
+        data = json.load(f)
+    for doc in data.get('response', {}).get('docs', []):
+        print(doc['identifier'])
+except Exception:
+    pass
+" 2>/dev/null)
+
+  if [ -z "${identifiers}" ]; then
+    echo "  WARN: no results from Internet Archive search (page ${page})"
+    rm -f "${search_file}"
+    return 0
+  fi
+
+  for ia_id in ${identifiers}; do
+    [ "${count}" -ge "${LIMIT}" ] && break
+
+    # Fetch item metadata to find the actual EPUB filename
+    local meta_url="https://archive.org/metadata/${ia_id}/files"
+    local meta_file="${EPUB_DIR}/.ia-meta.json"
+
+    if ! curl -sL -o "${meta_file}" "${meta_url}" \
+         -H "User-Agent: ${UA}" \
+         --connect-timeout 30 \
+         --max-time 30; then
+      sleep "${CRAWL_DELAY}"
+      continue
+    fi
+
+    # Find first .epub file in the item
+    local epub_filename
+    epub_filename=$(python3 -c "
+import json, sys
+try:
+    with open('${meta_file}') as f:
+        data = json.load(f)
+    for entry in data.get('result', []):
+        name = entry.get('name', '')
+        if name.lower().endswith('.epub'):
+            print(name)
+            break
+except Exception:
+    pass
+" 2>/dev/null)
+
+    if [ -z "${epub_filename}" ]; then
+      sleep "${CRAWL_DELAY}"
+      continue
+    fi
+
+    local url="https://archive.org/download/${ia_id}/${epub_filename}"
+    local name="crawl-ia-${ia_id}"
+
+    if download_epub "${name}" "${url}" "INTERNETARCHIVE"; then
+      count=$((count + 1))
+    fi
+
+    sleep "${CRAWL_DELAY}"
+  done
+
+  rm -f "${search_file}" "${EPUB_DIR}/.ia-meta.json"
+  echo ""
+  echo "  Internet Archive: downloaded ${count} new EPUBs"
+}
+
+crawl_oapen() {
+  echo ""
+  echo "=== Crawling OAPEN (Open Access Publishing) ==="
+  echo ""
+
+  local count=0
+
+  # Strategy: use the OAI-PMH ListRecords endpoint to discover items, then
+  # check each handle page for downloadable EPUB bitstreams.
+  # We offset by day-of-year to rotate through different record batches.
+  local day_seed
+  day_seed=$(date +%j)
+
+  # OAPEN uses DSpace — fetch recent records via OAI-PMH
+  local oai_url="https://library.oapen.org/oai/request?verb=ListRecords&metadataPrefix=oai_dc"
+  local oai_file="${EPUB_DIR}/.oapen-oai.xml"
+
+  echo "  Fetching OAPEN OAI-PMH records..."
+  if ! curl -sL -o "${oai_file}" "${oai_url}" \
+       -H "User-Agent: ${UA}" \
+       --connect-timeout 30 \
+       --max-time 60; then
+    echo "  WARN: could not reach OAPEN OAI-PMH endpoint"
+    return 0
+  fi
+
+  # Extract handle IDs from OAI-PMH response
+  # Records contain identifiers like: oai:library.oapen.org:20.500.12657/12345
+  local handles
+  handles=$(grep -oP '20\.500\.12657/\K[0-9]+' "${oai_file}" 2>/dev/null | sort -u | head -100 || true)
+
+  if [ -z "${handles}" ]; then
+    echo "  WARN: no handles found in OAPEN OAI-PMH response"
+    rm -f "${oai_file}"
+    return 0
+  fi
+
+  echo "  Found $(echo "${handles}" | wc -w) unique handles"
+
+  for handle_id in ${handles}; do
+    [ "${count}" -ge "${LIMIT}" ] && break
+
+    # Fetch the handle page and look for EPUB bitstream links
+    local handle_url="https://library.oapen.org/handle/20.500.12657/${handle_id}"
+    local handle_file="${EPUB_DIR}/.oapen-handle.html"
+
+    if ! curl -sL -o "${handle_file}" "${handle_url}" \
+         -H "User-Agent: ${UA}" \
+         --connect-timeout 30 \
+         --max-time 30; then
+      sleep "${CRAWL_DELAY}"
+      continue
+    fi
+
+    # Look for EPUB download link in the page
+    # Bitstream links look like: /bitstream/handle/20.500.12657/{id}/{filename}.epub
+    local epub_path
+    epub_path=$(grep -oP '/bitstream/handle/20\.500\.12657/[^"]+\.epub' "${handle_file}" 2>/dev/null | head -1 || true)
+
+    if [ -z "${epub_path}" ]; then
+      sleep "${CRAWL_DELAY}"
+      continue
+    fi
+
+    local url="https://library.oapen.org${epub_path}"
+    local name="crawl-oapen-${handle_id}"
+
+    if download_epub "${name}" "${url}" "OAPEN"; then
+      count=$((count + 1))
+    fi
+
+    sleep "${CRAWL_DELAY}"
+  done
+
+  rm -f "${oai_file}" "${EPUB_DIR}/.oapen-handle.html"
+  echo ""
+  echo "  OAPEN: downloaded ${count} new EPUBs"
+}
+
 # --- Main ---
 
 init_manifest
@@ -331,17 +509,21 @@ echo "  Rate limit:     ${CRAWL_DELAY}s"
 echo "  Dry run:        ${DRY_RUN}"
 
 case "${SOURCE}" in
-  gutenberg)       crawl_gutenberg ;;
-  standardebooks)  crawl_standardebooks ;;
-  feedbooks)       crawl_feedbooks ;;
+  gutenberg)        crawl_gutenberg ;;
+  standardebooks)   crawl_standardebooks ;;
+  feedbooks)        crawl_feedbooks ;;
+  internetarchive)  crawl_internetarchive ;;
+  oapen)            crawl_oapen ;;
   all)
     crawl_gutenberg
     crawl_standardebooks
     crawl_feedbooks
+    crawl_internetarchive
+    crawl_oapen
     ;;
   *)
     echo "Unknown source: ${SOURCE}" >&2
-    echo "Available sources: gutenberg, standardebooks, feedbooks" >&2
+    echo "Available sources: gutenberg, standardebooks, feedbooks, internetarchive, oapen" >&2
     exit 1
     ;;
 esac

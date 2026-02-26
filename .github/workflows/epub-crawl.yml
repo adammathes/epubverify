@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: 'Source to crawl (gutenberg, standardebooks, feedbooks, all)'
+        description: 'Source to crawl (gutenberg, standardebooks, feedbooks, internetarchive, oapen, all)'
         required: false
         default: 'all'
       limit:

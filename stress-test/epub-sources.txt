@@ -245,6 +245,50 @@ FEEDBOOKS | https://www.feedbooks.com/book/715.epub     | Le Petit Prince — Fr
 FEEDBOOKS | https://www.feedbooks.com/book/928.epub     | Madame Bovary — French non-English
 
 ##############################################################################
+# INTERNET ARCHIVE (https://archive.org)
+#
+# Format: https://archive.org/download/{identifier}/{filename}.epub
+#
+# License: Various (public domain, Creative Commons, etc.)
+# Notes: Massive digital library with millions of texts. EPUBs are often
+#        auto-generated or user-contributed, so quality varies wildly.
+#        Many poorly-formed files exercise edge cases: broken metadata,
+#        unusual encodings, exotic CSS, deeply nested TOCs, very large files.
+#        Discovery via Advanced Search API (mediatype:texts, format:EPUB).
+#        Rate limit: be respectful, 2s delay between requests.
+##############################################################################
+
+INTERNETARCHIVE | https://archive.org/download/alicesadventuresinwonderland_2/Alice%27s+Adventures+in+Wonderland.epub | Alice in Wonderland — community upload
+INTERNETARCHIVE | https://archive.org/download/metamorphosis_1709_librivox/metamorphosis_1709.epub | Metamorphosis — LibriVox companion
+INTERNETARCHIVE | https://archive.org/download/thegreatgatsby_201603/The%20Great%20Gatsby.epub | The Great Gatsby — varied toolchain
+INTERNETARCHIVE | https://archive.org/download/warandpeace030164mbp/warandpeace030164mbp.epub | War and Peace — large, user upload
+INTERNETARCHIVE | https://archive.org/download/prideandprejudice_2101_librivox/prideandprejudice.epub | Pride and Prejudice — auto-generated
+INTERNETARCHIVE | https://archive.org/download/thebible_king_james_version/The%20Bible%20-%20King%20James%20Version.epub | KJV Bible — very large
+INTERNETARCHIVE | https://archive.org/download/quran-english/Quran-English.epub | Quran English — non-Western religious text
+INTERNETARCHIVE | https://archive.org/download/theartofwar_201405/The%20Art%20of%20War.epub | Art of War — short, simple
+INTERNETARCHIVE | https://archive.org/download/leschantsdemaldoror/LesChantsDesMaldoror.epub | Les Chants de Maldoror — French
+INTERNETARCHIVE | https://archive.org/download/therepublic_201508/The%20Republic.epub | The Republic — philosophy, user upload
+
+##############################################################################
+# OAPEN (https://library.oapen.org) — Open Access Publishing in European Networks
+#
+# Format: https://library.oapen.org/bitstream/handle/20.500.12657/{id}/{filename}
+#
+# License: Open Access (CC-BY, CC-BY-NC, etc.)
+# Notes: Scholarly monographs and edited volumes. Complex layouts with
+#        footnotes, citations, bibliographies, indexes. EPUBs generated
+#        by various academic publishers — exercises publisher toolchain
+#        output patterns not seen in public domain sources.
+#        Discovery via OAI-PMH endpoint or handle enumeration.
+##############################################################################
+
+OAPEN | https://library.oapen.org/bitstream/handle/20.500.12657/76580/9783038975526.epub | Open Access scholarly monograph
+OAPEN | https://library.oapen.org/bitstream/handle/20.500.12657/52448/9789048551668.epub | Academic volume — Amsterdam UP
+OAPEN | https://library.oapen.org/bitstream/handle/20.500.12657/89376/external_content.epub | Scholarly work — recent addition
+OAPEN | https://library.oapen.org/bitstream/handle/20.500.12657/60880/9789048553648.epub | European studies monograph
+OAPEN | https://library.oapen.org/bitstream/handle/20.500.12657/51980/9783030270124.epub | Springer open access
+
+##############################################################################
 # EPUB2 VARIANTS (EPUB 2.0.1 format for legacy path coverage)
 #
 # Format: https://www.gutenberg.org/ebooks/{ID}.epub.images (forces EPUB2)
