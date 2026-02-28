@@ -26,6 +26,7 @@
 # Environment variables:
 #   EPUBVERIFY      Path to epubverify binary (default: ./epubverify)
 #   EPUBCHECK_JAR   Path to epubcheck JAR (default: $HOME/tools/epubcheck-5.3.0/epubcheck.jar)
+#                   Install with: bash scripts/install-epubcheck.sh
 
 set -euo pipefail
 

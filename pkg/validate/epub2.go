@@ -267,7 +267,7 @@ func findNCXPath(ep *epub.EPUB) string {
 
 // E2-002: NCX must be well-formed XML
 func checkNCXWellFormed(data []byte, r *report.Report) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		_, err := decoder.Token()
 		if err == io.EOF {
@@ -284,7 +284,7 @@ func checkNCXWellFormed(data []byte, r *report.Report) bool {
 
 // E2-003: NCX must contain navMap
 func checkNCXHasNavMap(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	hasNavMap := false
 
 	for {
@@ -312,7 +312,7 @@ func checkNCXHasNavMap(data []byte, r *report.Report) {
 // E2-007: navPoint elements must have a content child element.
 // Uses a stack to correctly handle nested navPoint elements.
 func checkNCXNavPointContent(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	// Stack tracks whether each navPoint level has seen a <content> child
 	var hasContentStack []bool
 
@@ -345,7 +345,7 @@ func checkNCXNavPointContent(data []byte, r *report.Report) {
 // RSC-012: NCX content src fragment identifiers must exist in target documents
 func checkNCXFragmentIdentifiers(ep *epub.EPUB, data []byte, ncxFullPath string, r *report.Report) {
 	ncxDir := path.Dir(ncxFullPath)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 
 	for {
 		tok, err := decoder.Token()
@@ -383,7 +383,8 @@ func checkNCXFragmentIdentifiers(ep *epub.EPUB, data []byte, ncxFullPath string,
 
 // documentHasID returns true if the XML/HTML document has an element with the given id attribute.
 func documentHasID(data []byte, id string) bool {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
+	decoder.Entity = xhtmlEntities
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -404,7 +405,7 @@ func documentHasID(data []byte, id string) bool {
 
 // RSC-007: navPoint content src must point to an existing resource
 func checkNCXContentSrcResolves(ep *epub.EPUB, data []byte, ncxFullPath string, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	ncxDir := path.Dir(ncxFullPath)
 
 	for {
@@ -452,7 +453,7 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 
 	// Find NCX dtb:uid
 	ncxUID := ""
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -487,7 +488,7 @@ func checkNCXUIDMatchesOPF(ep *epub.EPUB, data []byte, r *report.Report) {
 
 // NCX-004: NCX dtb:uid should not contain leading or trailing whitespace.
 func checkNCXUIDWhitespace(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -518,7 +519,7 @@ func checkNCXUIDWhitespace(data []byte, r *report.Report) {
 
 // RSC-005: NCX id attributes must be unique (schema validation)
 func checkNCXUniqueIDs(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	idCount := make(map[string]int)
 
 	for {
@@ -570,7 +571,7 @@ func isValidNCXID(id string) bool {
 
 // RSC-005: NCX id attribute values must be syntactically valid XML NCNames
 func checkNCXIDSyntax(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -593,7 +594,7 @@ func checkNCXIDSyntax(data []byte, r *report.Report) {
 // RSC-005: NCX pageTarget type attribute must be "front", "normal", or "special"
 func checkNCXPageTargetType(data []byte, r *report.Report) {
 	validTypes := map[string]bool{"front": true, "normal": true, "special": true}
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -629,7 +630,7 @@ func checkNCXLinkToOPS(ep *epub.EPUB, data []byte, ncxFullPath string, r *report
 	}
 
 	ncxDir := path.Dir(ncxFullPath)
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	for {
 		tok, err := decoder.Token()
 		if err != nil {
@@ -776,7 +777,7 @@ func checkEPUB2OPFElementOrder(ep *epub.EPUB, r *report.Report) {
 
 // E2-015: NCX dtb:depth metadata must match actual navigation depth
 func checkNCXDepthValid(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	declaredDepth := ""
 	actualDepth := 0
 	currentDepth := 0
@@ -850,7 +851,7 @@ func checkLegacyNCXForAll(ep *epub.EPUB, r *report.Report) {
 
 // NCX-006: NCX text labels (docTitle/navLabel) must not be empty (usage)
 func checkNCXEmptyTextLabels(data []byte, r *report.Report) {
-	decoder := xml.NewDecoder(strings.NewReader(string(data)))
+	decoder := newXHTMLDecoder(strings.NewReader(string(data)))
 	inTextLabel := false // inside docTitle or navLabel
 	inText := false
 	textHasContent := false

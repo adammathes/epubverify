@@ -23,9 +23,43 @@ bash stress-test/analyze-results.sh
 
 - **Go 1.24+** (to build epubverify)
 - **Java 11+** (to run epubcheck)
-- **epubcheck JAR** — set `EPUBCHECK_JAR` environment variable, or place at
-  `$HOME/tools/epubcheck-5.1.0/epubcheck.jar` (the default)
+- **epubcheck 5.3.0 JAR** — see [Installing epubcheck](#installing-epubcheck) below
 - **curl** (for downloading EPUBs)
+- **python3** (for the crawl pipeline scripts)
+
+### Installing epubcheck
+
+The crawl validation pipeline compares epubverify against the reference
+[epubcheck](https://www.w3.org/publishing/epubcheck/) Java validator. Without
+it, `crawl-validate.sh` still runs but can only test epubverify in isolation
+(no false-positive/false-negative detection).
+
+**Quick install** (downloads to the default location):
+
+```bash
+bash scripts/install-epubcheck.sh
+```
+
+**Manual install**:
+
+```bash
+EPUBCHECK_VERSION="5.3.0"
+mkdir -p ~/tools
+curl -sL -o /tmp/epubcheck.zip \
+  "https://github.com/w3c/epubcheck/releases/download/v${EPUBCHECK_VERSION}/epubcheck-${EPUBCHECK_VERSION}.zip"
+unzip -q -o /tmp/epubcheck.zip -d ~/tools/
+rm /tmp/epubcheck.zip
+
+# Verify it works
+java -jar ~/tools/epubcheck-${EPUBCHECK_VERSION}/epubcheck.jar --version
+```
+
+The default path is `$HOME/tools/epubcheck-5.3.0/epubcheck.jar`. To use a
+different location, set the `EPUBCHECK_JAR` environment variable:
+
+```bash
+export EPUBCHECK_JAR=/path/to/epubcheck.jar
+```
 
 ## Corpus (200+ EPUBs from 5 sources)
 
@@ -44,16 +78,72 @@ bash stress-test/analyze-results.sh
 - **Legacy**: 17 EPUB2 variants for NCX/OPF 2.0/OPS coverage
 - **Tool output**: Gutenberg Ebookmaker, Calibre/Feedbooks, Standard Ebooks toolchain
 
+## Crawl Workflow (Recommended)
+
+The crawl pipeline automatically discovers, downloads, and validates EPUBs from
+public sources, then compares epubverify against epubcheck to find bugs.
+
+```bash
+# 1. Build epubverify
+make build
+
+# 2. Install epubcheck (one-time)
+bash scripts/install-epubcheck.sh
+
+# 3. Crawl new EPUBs from public sources
+bash scripts/epub-crawler.sh --limit 10
+
+# 4. Validate with both epubverify and epubcheck
+bash scripts/crawl-validate.sh
+
+# 5. Generate discrepancy report
+bash scripts/crawl-report.sh
+```
+
+Crawled EPUBs are deduplicated by SHA-256 hash and tracked in
+`stress-test/crawl-manifest.json`. The manifest accumulates across runs so
+the corpus grows over time.
+
+### Crawl options
+
+```bash
+# Target a specific source
+bash scripts/epub-crawler.sh --source gutenberg --limit 20
+bash scripts/epub-crawler.sh --source standardebooks --limit 10
+bash scripts/epub-crawler.sh --source feedbooks --limit 10
+bash scripts/epub-crawler.sh --source oapen --limit 5
+
+# Preview without downloading
+bash scripts/epub-crawler.sh --dry-run
+
+# File GitHub issues for any discrepancies found
+bash scripts/crawl-report.sh --file-issues
+```
+
+### Crawl sources
+
+| Source | What it tests |
+|--------|---------------|
+| **Project Gutenberg** | Ebookmaker EPUB3, diverse public domain content |
+| **Standard Ebooks** | High-quality EPUB3, accessibility metadata |
+| **Feedbooks** | Calibre-generated EPUB2 with urn:uuid: identifiers |
+| **OAPEN** | Scholarly open-access EPUBs with footnotes and citations |
+| **Internet Archive** | Huge variety (requires archive.org network access) |
+
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `download-epubs.sh` | Download EPUBs from public domain sources |
-| `run-comparison.sh` | Run both validators and save JSON results |
-| `analyze-results.sh` | Compare results and report discrepancies |
-| `epub-sources.txt` | Catalog of EPUB URLs and sources |
+| `scripts/epub-crawler.sh` | Discover and download EPUBs from public sources |
+| `scripts/crawl-validate.sh` | Validate crawled EPUBs with epubverify + epubcheck |
+| `scripts/crawl-report.sh` | Generate discrepancy report from validation results |
+| `scripts/install-epubcheck.sh` | Download and install epubcheck 5.3.0 |
+| `stress-test/download-epubs.sh` | Download static EPUB corpus (legacy) |
+| `stress-test/run-comparison.sh` | Run both validators on static corpus (legacy) |
+| `stress-test/analyze-results.sh` | Compare static corpus results (legacy) |
+| `stress-test/epub-sources.txt` | Catalog of EPUB URLs for static corpus |
 
-### Download options
+### Static corpus download options (legacy)
 
 ```bash
 bash stress-test/download-epubs.sh --all            # All sources (default)
