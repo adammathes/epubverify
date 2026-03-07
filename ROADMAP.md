@@ -87,6 +87,27 @@ Goal: catch edge cases that well-curated sources don't exercise (broken metadata
 
 The `.github/workflows/epub-crawl.yml` workflow is currently manual-only (`workflow_dispatch`). After manual testing confirms the crawl pipeline works end-to-end, uncomment the `schedule` block to enable weekly automated runs (Sundays 06:00 UTC).
 
+### Additional Toolchain EPUB Generation Testing
+
+Extend the toolchain test suite (pandoc + calibre) with more EPUB generators to increase structural diversity. Each tool produces different OPF layouts, metadata patterns, and content document structures.
+
+**High value (easy to install, widely used):**
+
+- **ebooklib** (Python, `pip install ebooklib`) — Popular programmatic EPUB library used by many server-side apps. Writes its own OPF, NCX, and content documents from scratch with a distinct internal structure.
+- **asciidoctor-epub3** (Ruby, `gem install asciidoctor-epub3`) — Generates EPUB 3 from AsciiDoc markup. Entirely different toolchain (Ruby) with its own nav/OPF generation path.
+- **Sphinx** (Python, `pip install sphinx`) — Python documentation tool with EPUB builder. Common in technical documentation; exercises RST-to-EPUB conversion.
+
+**Medium value (heavier install, more niche):**
+
+- **tex4ebook** — LaTeX to EPUB via TeX4ht. Requires full TeX installation (~2GB+). Produces very different output: math-heavy content, complex CSS, unusual element structures.
+- **WeasyPrint** / other HTML-to-EPUB converters — Various smaller tools with their own quirks.
+
+**Difficult to automate (GUI-based):**
+
+- **Sigil** — Most popular open-source EPUB editor. Qt GUI app, hard to automate headlessly. Could manually export a few representative test EPUBs.
+
+Goal: each new tool exercises different code paths and structural patterns, increasing the chance of catching false positives/negatives in epubverify.
+
 ### CI Integration for Stress Tests
 
 Add a CI job that downloads a cached set of test EPUBs, runs epubverify, compares against cached epubcheck results, and fails if any new disagreements appear.
