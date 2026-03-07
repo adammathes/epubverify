@@ -1,5 +1,5 @@
 #!/bin/bash
-# Generate EPUBs using pandoc and calibre (ebook-convert) from source content.
+# Generate EPUBs using multiple toolchains from source content.
 #
 # Creates EPUBs with different toolchains and configurations to test
 # epubverify against diverse real-world output.
@@ -7,13 +7,19 @@
 # Usage: bash stress-test/toolchain-epubs/generate-epubs.sh [OPTIONS]
 #
 # Options:
-#   --pandoc-only     Only generate pandoc EPUBs
-#   --calibre-only    Only generate calibre EPUBs
-#   --help            Show this help
+#   --pandoc-only        Only generate pandoc EPUBs
+#   --calibre-only       Only generate calibre EPUBs
+#   --ebooklib-only      Only generate ebooklib EPUBs
+#   --asciidoctor-only   Only generate asciidoctor-epub3 EPUBs
+#   --sphinx-only        Only generate Sphinx EPUBs
+#   --help               Show this help
 #
 # Prerequisites:
 #   - pandoc (apt install pandoc)
 #   - calibre (apt install calibre) for ebook-convert
+#   - ebooklib (pip install ebooklib)
+#   - asciidoctor-epub3 (gem install asciidoctor-epub3)
+#   - sphinx (pip install sphinx)
 
 set -euo pipefail
 
@@ -23,11 +29,18 @@ OUTPUT_DIR="${SCRIPT_DIR}/epubs"
 
 DO_PANDOC=true
 DO_CALIBRE=true
+DO_EBOOKLIB=true
+DO_ASCIIDOCTOR=true
+DO_SPHINX=true
+ONLY_MODE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --pandoc-only)  DO_CALIBRE=false; shift ;;
-    --calibre-only) DO_PANDOC=false; shift ;;
+    --pandoc-only)      ONLY_MODE=true; DO_PANDOC=true; DO_CALIBRE=false; DO_EBOOKLIB=false; DO_ASCIIDOCTOR=false; DO_SPHINX=false; shift ;;
+    --calibre-only)     ONLY_MODE=true; DO_PANDOC=false; DO_CALIBRE=true; DO_EBOOKLIB=false; DO_ASCIIDOCTOR=false; DO_SPHINX=false; shift ;;
+    --ebooklib-only)    ONLY_MODE=true; DO_PANDOC=false; DO_CALIBRE=false; DO_EBOOKLIB=true; DO_ASCIIDOCTOR=false; DO_SPHINX=false; shift ;;
+    --asciidoctor-only) ONLY_MODE=true; DO_PANDOC=false; DO_CALIBRE=false; DO_EBOOKLIB=false; DO_ASCIIDOCTOR=true; DO_SPHINX=false; shift ;;
+    --sphinx-only)      ONLY_MODE=true; DO_PANDOC=false; DO_CALIBRE=false; DO_EBOOKLIB=false; DO_ASCIIDOCTOR=false; DO_SPHINX=true; shift ;;
     --help)
       sed -n '2,/^$/{ s/^# //; s/^#$//; p }' "$0"
       exit 0
@@ -46,6 +59,18 @@ if ${DO_PANDOC} && ! command -v pandoc &>/dev/null; then
 fi
 if ${DO_CALIBRE} && ! command -v ebook-convert &>/dev/null; then
   echo "ERROR: ebook-convert (calibre) not found. Install with: apt install calibre" >&2
+  exit 1
+fi
+if ${DO_EBOOKLIB} && ! python3 -c "import ebooklib" &>/dev/null; then
+  echo "ERROR: ebooklib not found. Install with: pip install ebooklib" >&2
+  exit 1
+fi
+if ${DO_ASCIIDOCTOR} && ! command -v asciidoctor-epub3 &>/dev/null; then
+  echo "ERROR: asciidoctor-epub3 not found. Install with: gem install asciidoctor-epub3" >&2
+  exit 1
+fi
+if ${DO_SPHINX} && ! command -v sphinx-build &>/dev/null; then
+  echo "ERROR: sphinx-build not found. Install with: pip install sphinx" >&2
   exit 1
 fi
 
@@ -256,6 +281,87 @@ if ${DO_CALIBRE}; then
       --comments "A test book with full metadata." \
       --tags "test,epub,validation" \
       --input-encoding utf-8
+
+  echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# ebooklib EPUBs (Python)
+# ---------------------------------------------------------------------------
+if ${DO_EBOOKLIB}; then
+  echo "--- ebooklib EPUBs ---"
+  EBOOKLIB_SCRIPT="${SCRIPT_DIR}/generate-ebooklib.py"
+
+  # Count existing ebooklib EPUBs to detect new ones
+  existing_count=0
+  for epub_file in "${OUTPUT_DIR}"/ebooklib-*.epub; do
+    [ -f "$epub_file" ] && existing_count=$((existing_count + 1))
+  done
+
+  if python3 "${EBOOKLIB_SCRIPT}" "${OUTPUT_DIR}" 2>/dev/null >/dev/null; then
+    # Count generated ebooklib EPUBs
+    for epub_file in "${OUTPUT_DIR}"/ebooklib-*.epub; do
+      [ -f "$epub_file" ] || continue
+      total=$((total + 1))
+      local_name=$(basename "$epub_file" .epub)
+      size=$(stat -c%s "$epub_file" 2>/dev/null || stat -f%z "$epub_file" 2>/dev/null)
+      echo "  [${total}] ebooklib: ${local_name}... OK ($(( size / 1024 ))KB)"
+    done
+  else
+    echo "  FAIL: ebooklib generation script failed"
+    failed=$((failed + 1))
+  fi
+  echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# asciidoctor-epub3 EPUBs (Ruby)
+# ---------------------------------------------------------------------------
+if ${DO_ASCIIDOCTOR}; then
+  echo "--- asciidoctor-epub3 EPUBs ---"
+
+  # 1. Basic prose from AsciiDoc
+  generate "asciidoctor" "asciidoctor-basic-prose" \
+    asciidoctor-epub3 "${SOURCE_DIR}/basic-prose.adoc" \
+      -o "${OUTPUT_DIR}/asciidoctor-basic-prose.epub"
+
+  # 2. Multilingual content
+  generate "asciidoctor" "asciidoctor-multilingual" \
+    asciidoctor-epub3 "${SOURCE_DIR}/multilingual.adoc" \
+      -o "${OUTPUT_DIR}/asciidoctor-multilingual.epub"
+
+  echo ""
+fi
+
+# ---------------------------------------------------------------------------
+# Sphinx EPUBs (Python)
+# ---------------------------------------------------------------------------
+if ${DO_SPHINX}; then
+  echo "--- Sphinx EPUBs ---"
+
+  SPHINX_SRC="${SOURCE_DIR}/sphinx-project"
+  SPHINX_BUILD="${SCRIPT_DIR}/_sphinx-build"
+
+  # 1. Default Sphinx EPUB
+  total=$((total + 1))
+  echo -n "  [${total}] sphinx: sphinx-default... "
+  rm -rf "${SPHINX_BUILD}"
+  if sphinx-build -b epub "${SPHINX_SRC}" "${SPHINX_BUILD}" -q 2>/dev/null; then
+    SPHINX_EPUB=$(find "${SPHINX_BUILD}" -name "*.epub" -type f | head -1)
+    if [ -n "${SPHINX_EPUB}" ] && [ -f "${SPHINX_EPUB}" ]; then
+      cp "${SPHINX_EPUB}" "${OUTPUT_DIR}/sphinx-default.epub"
+      size=$(stat -c%s "${OUTPUT_DIR}/sphinx-default.epub" 2>/dev/null || stat -f%z "${OUTPUT_DIR}/sphinx-default.epub" 2>/dev/null)
+      echo "OK ($(( size / 1024 ))KB)"
+    else
+      echo "FAIL (no .epub produced)"
+      failed=$((failed + 1))
+    fi
+  else
+    echo "FAIL (sphinx-build error)"
+    failed=$((failed + 1))
+  fi
+
+  rm -rf "${SPHINX_BUILD}"
 
   echo ""
 fi

@@ -1,0 +1,36 @@
+= Multilingual Content Test
+Test Author
+:doctype: book
+:lang: en
+
+== English
+
+This chapter is written in English. It includes standard prose and formatting.
+
+== Fran&ccedil;ais
+
+Ceci est un chapitre en fran&ccedil;ais. Les caract&egrave;res sp&eacute;ciaux incluent: &eacute;, &egrave;, &ecirc;, &euml;, &agrave;, &ccedil;, &ocirc;, &ucirc;.
+
+La litt&eacute;rature fran&ccedil;aise est riche et vari&eacute;e.
+
+== Deutsch
+
+Dies ist ein Kapitel auf Deutsch. Besondere Zeichen: ä, ö, ü, ß, Ä, Ö, Ü.
+
+Die deutsche Sprache hat viele zusammengesetzte Wörter wie Donaudampfschifffahrtsgesellschaftskapitän.
+
+== 日本語
+
+これは日本語で書かれた章です。漢字、ひらがな、カタカナを含みます。
+
+日本語のテキストは、エンコーディングのテストに役立ちます。
+
+== 中文
+
+这是用中文写的一章。它包含简体中文字符。
+
+中文文本用于测试Unicode处理。
+
+== العربية
+
+هذا فصل مكتوب باللغة العربية. النص العربي يُكتب من اليمين إلى اليسار.

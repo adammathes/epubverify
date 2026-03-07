@@ -326,6 +326,9 @@ func checkContentWithSkips(ep *epub.EPUB, r *report.Report, skipFiles map[string
 
 		// RSC-005: id attribute values must be valid XML NCNames (no colons)
 		checkInvalidIDValues(data, fullPath, r)
+
+		// RSC-016: undeclared entity references (e.g. &ccedil; with <!DOCTYPE html>)
+		checkUnknownEntityRefs(data, fullPath, r)
 	}
 }
 
@@ -3761,7 +3764,9 @@ func checkInteractiveNesting(data []byte, location string, r *report.Report) {
 				if len(interactiveStack) > 0 {
 					parent := interactiveStack[len(interactiveStack)-1]
 					// Don't re-report nested <a> — checkNestedAnchors handles that
-					if !(name == "a" && parent == "a") {
+					// <summary> is the required first child of <details>, not interactive nesting
+					if !(name == "a" && parent == "a") &&
+						!(name == "summary" && parent == "details") {
 						r.AddWithLocation(report.Error, "RSC-005",
 							fmt.Sprintf("element \"%s\" not allowed inside interactive element \"%s\"",
 								name, parent),
@@ -5043,20 +5048,26 @@ func checkInvalidIDValues(data []byte, location string, r *report.Report) {
 func checkUnknownEntityRefs(data []byte, location string, r *report.Report) {
 	content := string(data)
 
-	// Extract entity declarations from internal DTD subset if present.
-	// Go's XML decoder skips the DOCTYPE declaration but doesn't know about
-	// entities declared inside it. We need to pre-populate decoder.Entity.
-	// Start with standard XHTML entities, then overlay any inline DTD declarations.
-	declaredEntities := make(map[string]string, len(xhtmlEntities))
-	for k, v := range xhtmlEntities {
-		declaredEntities[k] = v
+	// Determine if the document has a proper XHTML DTD that declares named entities.
+	// With <!DOCTYPE html> (HTML5), only the 5 XML predefined entities are valid.
+	// With a full DTD reference (XHTML 1.0/1.1), XHTML named entities are available.
+	hasXHTMLDTD := strings.Contains(content, "PUBLIC") &&
+		(strings.Contains(content, "DTD XHTML") || strings.Contains(content, "dtd"))
+
+	// Build entity map: start with inline DTD declarations only.
+	// If the document references a proper XHTML DTD, also include XHTML entities.
+	declaredEntities := make(map[string]string)
+	if hasXHTMLDTD {
+		for k, v := range xhtmlEntities {
+			declaredEntities[k] = v
+		}
 	}
 	entityDeclRe := regexp.MustCompile(`<!ENTITY\s+(\w+)\s+(?:"[^"]*"|'[^']*')`)
 	for _, m := range entityDeclRe.FindAllStringSubmatch(content, -1) {
 		declaredEntities[m[1]] = m[1]
 	}
 
-	decoder := newXHTMLDecoder(strings.NewReader(content))
+	decoder := xml.NewDecoder(strings.NewReader(content))
 	decoder.Entity = declaredEntities
 
 	for {

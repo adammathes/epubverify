@@ -1,0 +1,79 @@
+= Basic Prose Document
+Test Author <test@example.com>
+:doctype: book
+:lang: en
+:toc:
+
+== Chapter One: Introduction
+
+This is a basic prose document written in AsciiDoc format.
+It covers _standard formatting_ features and tests the *asciidoctor-epub3* toolchain.
+
+Here is a paragraph with **bold text**, _italic text_, `monospace text`, and a https://example.com[hyperlink].
+
+=== Section 1.1: Lists
+
+An unordered list:
+
+* First item
+* Second item with *bold*
+* Third item with `code`
+
+An ordered list:
+
+. Step one
+. Step two
+. Step three
+
+=== Section 1.2: Block Elements
+
+A blockquote:
+
+[quote, Famous Person]
+____
+The only way to do great work is to love what you do.
+____
+
+A code block:
+
+[source,python]
+----
+def fibonacci(n):
+    if n <= 1:
+        return n
+    return fibonacci(n-1) + fibonacci(n-2)
+----
+
+== Chapter Two: Tables and More
+
+.A simple table
+[cols="1,2,3"]
+|===
+|Header 1 |Header 2 |Header 3
+
+|Cell A1
+|Cell A2
+|Cell A3
+
+|Cell B1
+|Cell B2
+|Cell B3
+|===
+
+=== Section 2.1: Admonitions
+
+NOTE: This is a note admonition.
+
+WARNING: This is a warning admonition.
+
+TIP: This is a tip admonition.
+
+== Chapter Three: Conclusion
+
+This chapter wraps up the basic prose document.
+
+A horizontal rule follows:
+
+'''
+
+The end.
